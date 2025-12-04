@@ -491,8 +491,9 @@ if [ -z "$ADGUARD_PASS_HASH" ] || [ "$ADGUARD_PASS_HASH" = "YOUR_BCRYPT_HASH_HER
         exit 1
     fi
 
-    # Save to .env
-    update_env_value "ADGUARD_PASS_HASH" "$ADGUARD_PASS_HASH"
+    # Save to .env (escape $ for Docker Compose)
+    ADGUARD_PASS_HASH_ESCAPED=$(echo "$ADGUARD_PASS_HASH" | sed 's/\$/\$\$/g')
+    update_env_value "ADGUARD_PASS_HASH" "$ADGUARD_PASS_HASH_ESCAPED"
 
     echo -e "${GREEN}✓ Generated secure password${NC}"
 fi
