@@ -34,28 +34,39 @@ A unified web dashboard for managing WireGuard, Headscale (Tailscale-compatible)
 
 ### Prerequisites
 
-- Linux server with root access
+- The management script will automatically check and offer to install:
 - Docker & Docker Compose
 - WireGuard kernel module
+- Required utilities (curl, envsubst)
 
 ### Installation
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/YOUR_USERNAME/wireguard-admin-panel.git
+git clone https://github.com/packalyst/wireguard-admin-panel.git
 cd wireguard-admin-panel
 ```
 
-2. Copy and configure environment:
+2. Run the management script:
 ```bash
-cp .env.example .env
-nano .env  # Set YOUR_SERVER_IP and other values
+chmod +x manage.sh
+./manage.sh
 ```
 
-3. Start the stack:
-```bash
-./start.sh
-```
+The script will:
+- Check and install missing dependencies
+- Auto-detect your public IP
+- Guide you through interactive setup
+- Ask if you want development or production mode
+- Start all services
+### Management
+
+Run `./manage.sh` anytime to:
+ - **Start/Stop** containers
+ - **Restart** services
+ - **View logs** for specific services
+ - **Clean** everything (containers, volumes, images)
+ - **Reconfigure** and restart 
 
 ### Access
 
@@ -72,14 +83,11 @@ Default credentials (change immediately):
 
 ## Development Mode
 
-Enable hot reload for UI development:
+The management script will ask if you want to enable hot reload during setup:
 
 ```bash
-# In .env
-DEV_MODE=true
-
-# Start
-./start.sh
+./manage.sh
+# Choose "y" when asked: "Enable development mode with hot reload?"
 ```
 
 Changes to `.svelte` files will reflect instantly without rebuilding.

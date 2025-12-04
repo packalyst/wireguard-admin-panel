@@ -418,21 +418,41 @@ fi
 echo ""
 
 # 3. Check AdGuard credentials
-echo -e "${YELLOW}[3/3] Checking configuration...${NC}"
+echo -e "${YELLOW}[3/3] Checking AdGuard credentials...${NC}"
 
-if [ -z "$ADGUARD_USER" ] || [ "$ADGUARD_USER" = "admin" ]; then
-    echo -e "${YELLOW}⚠ Using default AdGuard credentials (admin/admin)${NC}"
-    echo -e "${YELLOW}  You should change these after first login!${NC}"
-fi
+GENERATED_PASSWORD=""
 
 if [ -z "$ADGUARD_PASS_HASH" ] || [ "$ADGUARD_PASS_HASH" = "YOUR_BCRYPT_HASH_HERE" ]; then
-    echo -e "${RED}ERROR: ADGUARD_PASS_HASH not set${NC}"
-    echo "Please set a bcrypt password hash in .env"
-    echo "Generate with: htpasswd -nbB admin yourpassword | cut -d: -f2"
-    exit 1
+    echo -e "${YELLOW}AdGuard password not configured. Generating secure password...${NC}"
+
+    # Generate random 16-character password
+    GENERATED_PASSWORD=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 16)
+
+    # Generate bcrypt hash using htpasswd or python
+    if command -v htpasswd &> /dev/null; then
+        ADGUARD_PASS_HASH=$(htpasswd -nbB admin "$GENERATED_PASSWORD" | cut -d: -f2)
+    elif command -v python3 &> /dev/null; then
+        ADGUARD_PASS_HASH=$(python3 -c "import bcrypt; print(bcrypt.hashpw('$GENERATED_PASSWORD'.encode(), bcrypt.gensalt()).decode())" 2>/dev/null)
+    else
+        echo -e "${RED}ERROR: Cannot generate password hash${NC}"
+        echo "Please install apache2-utils (htpasswd) or python3 with bcrypt"
+        echo "  Ubuntu/Debian: sudo apt install apache2-utils"
+        echo "  Or: pip3 install bcrypt"
+        exit 1
+    fi
+
+    # Save to .env
+    update_env_value "ADGUARD_PASS_HASH" "$ADGUARD_PASS_HASH"
+
+    echo -e "${GREEN}✓ Generated secure password${NC}"
 fi
 
-echo -e "${GREEN}✓ Configuration validated${NC}"
+if [ -z "$ADGUARD_USER" ]; then
+    ADGUARD_USER="admin"
+    update_env_value "ADGUARD_USER" "$ADGUARD_USER"
+fi
+
+echo -e "${GREEN}✓ AdGuard credentials configured${NC}"
 echo ""
 
 # ===========================================
@@ -554,8 +574,20 @@ echo -e "  ${GREEN}Traefik:${NC}     http://${SERVER_IP}:${TRAEFIK_PORT}"
 echo -e "  ${GREEN}AdGuard:${NC}     http://${SERVER_IP}:${ADGUARD_PORT}"
 echo -e "  ${GREEN}API:${NC}         http://${SERVER_IP}:${API_PORT}"
 echo ""
-echo -e "${YELLOW}Default credentials:${NC} admin / admin"
-echo -e "${YELLOW}⚠ Change password after first login!${NC}"
-echo ""
-echo -e "${CYAN}Tip: Run ./start.sh again to manage running containers${NC}"
+
+if [ -n "$GENERATED_PASSWORD" ]; then
+    echo -e "${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║${NC}  ${YELLOW}AdGuard Credentials (SAVE THESE!)${NC}                        ${GREEN}║${NC}"
+    echo -e "${GREEN}║${NC}                                                            ${GREEN}║${NC}"
+    echo -e "${GREEN}║${NC}  Username: ${CYAN}${ADGUARD_USER}${NC}                                        ${GREEN}║${NC}"
+    echo -e "${GREEN}║${NC}  Password: ${CYAN}${GENERATED_PASSWORD}${NC}                            ${GREEN}║${NC}"
+    echo -e "${GREEN}║${NC}                                                            ${GREEN}║${NC}"
+    echo -e "${GREEN}║${NC}  ${RED}⚠ This password will not be shown again!${NC}                 ${GREEN}║${NC}"
+    echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+else
+    echo -e "${YELLOW}AdGuard credentials:${NC} ${ADGUARD_USER} / (password in .env)"
+fi
+
+echo -e "${CYAN}Tip: Run ./manage.sh again to manage running containers${NC}"
 echo ""
