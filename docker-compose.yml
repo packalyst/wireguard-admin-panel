@@ -76,8 +76,11 @@ services:
       # AdGuard settings
       - ADGUARD_PORT=${ADGUARD_PORT}
       - ADGUARD_CONFIG=/adguard/AdGuardHome.yaml
+      - DNS_PORT=${DNS_PORT}
       # Firewall settings
       - IGNORE_NETWORKS=${IGNORE_NETWORKS}
+      - HTTP_PORT=${HTTP_PORT}
+      - HTTPS_PORT=${HTTPS_PORT}
     volumes:
       - api_data:/data
       - /var/log:/var/log:ro
@@ -101,9 +104,7 @@ services:
   # UI - Unified Web Dashboard
   # ============================================
   ui:
-    build:
-      context: ./ui
-      target: production
+    build: ./ui
     container_name: ui
     restart: unless-stopped
     networks:
