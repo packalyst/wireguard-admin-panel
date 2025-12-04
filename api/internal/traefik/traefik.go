@@ -43,6 +43,8 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"GetConfig":      s.handleGetConfig,
 		"UpdateConfig":   s.handleUpdateConfig,
 		"GetLogs":        s.handleLogs,
+		"GetVPNOnly":     s.handleGetVPNOnly,
+		"SetVPNOnly":     s.handleSetVPNOnly,
 		"Health":         s.handleHealth,
 	}
 }
@@ -203,7 +205,7 @@ func (s *Service) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 
 // updateTraefikDashboardAddress updates the traefik entrypoint address in traefik.yml
 // enabled=true: 0.0.0.0:port (accessible externally)
-// enabled=false: 127.0.0.1:port (local only)
+// enabled=false: container_ip:port (internal only, accessible via docker network)
 func updateTraefikDashboardAddress(configPath string, enabled bool) error {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
@@ -216,13 +218,18 @@ func updateTraefikDashboardAddress(configPath string, enabled bool) error {
 		return fmt.Errorf("TRAEFIK_PORT environment variable not set")
 	}
 
+	containerIP := os.Getenv("TRAEFIK_CONTAINER_IP")
+	if containerIP == "" {
+		containerIP = "172.18.0.2" // fallback
+	}
+
 	// Replace the traefik entrypoint address
 	if enabled {
 		// Enable: bind to 0.0.0.0:port (public)
-		content = strings.ReplaceAll(content, `address: "127.0.0.1:`+port+`"`, `address: ":`+port+`"`)
+		content = strings.ReplaceAll(content, `address: "`+containerIP+`:`+port+`"`, `address: ":`+port+`"`)
 	} else {
-		// Disable: bind to 127.0.0.1:port (localhost only)
-		content = strings.ReplaceAll(content, `address: ":`+port+`"`, `address: "127.0.0.1:`+port+`"`)
+		// Disable: bind to container IP only (accessible from API via docker network)
+		content = strings.ReplaceAll(content, `address: ":`+port+`"`, `address: "`+containerIP+`:`+port+`"`)
 	}
 
 	return os.WriteFile(configPath, []byte(content), 0644)
@@ -418,4 +425,263 @@ func updateIPAllowlist(content string, ips []string) string {
 	}
 
 	return content[:absoluteIdx] + newSection.String() + "\n" + content[endIdx:]
+}
+
+// middlewareExists checks if a middleware is defined in the config
+func middlewareExists(content, middlewareName string) bool {
+	// Look for middleware definition under "middlewares:" section
+	idx := strings.Index(content, "middlewares:")
+	if idx == -1 {
+		return false
+	}
+	// Check if middleware name exists as a key (with colon after it)
+	return strings.Contains(content[idx:], middlewareName+":")
+}
+
+// routerHasMiddleware checks if a router has a specific middleware
+func routerHasMiddleware(content, routerName, middlewareName string) bool {
+	// Find the router section
+	routerKey := routerName + ":"
+	idx := strings.Index(content, routerKey)
+	if idx == -1 {
+		return false
+	}
+
+	// Find the end of this router section (next router or services/middlewares section)
+	routerSection := content[idx:]
+	endIdx := len(routerSection)
+
+	// Look for next section at same indentation level
+	lines := strings.Split(routerSection, "\n")
+	for i, line := range lines[1:] {
+		// If line starts with non-space and contains ":", it's a new section
+		if len(line) > 0 && line[0] != ' ' && line[0] != '\t' && strings.Contains(line, ":") {
+			endIdx = strings.Index(routerSection, "\n"+line)
+			break
+		}
+		// If line has same indentation as router name (4 spaces for routers), it's a new router
+		if strings.HasPrefix(line, "    ") && !strings.HasPrefix(line, "      ") && strings.Contains(line, ":") && i > 0 {
+			endIdx = strings.Index(routerSection, "\n"+line)
+			break
+		}
+	}
+
+	if endIdx == -1 {
+		endIdx = len(routerSection)
+	}
+
+	routerContent := routerSection[:endIdx]
+
+	// Check if middlewares section exists and contains the middleware
+	if !strings.Contains(routerContent, "middlewares:") {
+		return false
+	}
+
+	return strings.Contains(routerContent, "- "+middlewareName)
+}
+
+// addMiddlewareToRouter adds a middleware to a router's middleware list
+func (s *Service) addMiddlewareToRouter(routerName, middlewareName string) error {
+	data, err := os.ReadFile(s.configPath)
+	if err != nil {
+		return fmt.Errorf("failed to read config: %w", err)
+	}
+
+	content := string(data)
+
+	// Check if middleware exists
+	if !middlewareExists(content, middlewareName) {
+		return fmt.Errorf("middleware '%s' does not exist", middlewareName)
+	}
+
+	// Check if router already has middleware
+	if routerHasMiddleware(content, routerName, middlewareName) {
+		return nil // Already has it
+	}
+
+	// Find the router section
+	routerKey := "    " + routerName + ":"
+	idx := strings.Index(content, routerKey)
+	if idx == -1 {
+		return fmt.Errorf("router '%s' not found", routerName)
+	}
+
+	// Find end of router section
+	routerStart := idx
+	routerSection := content[idx:]
+	lines := strings.Split(routerSection, "\n")
+
+	// Check if router has middlewares section
+	hasMiddlewares := false
+	middlewaresLineIdx := -1
+	entryPointsLineIdx := -1
+
+	for i, line := range lines[1:] {
+		trimmed := strings.TrimSpace(line)
+		// Check for new router (4 spaces indentation)
+		if strings.HasPrefix(line, "    ") && !strings.HasPrefix(line, "      ") && strings.HasSuffix(trimmed, ":") && i > 0 {
+			break
+		}
+		// Check for new top-level section
+		if len(line) > 0 && line[0] != ' ' && strings.Contains(line, ":") {
+			break
+		}
+		if trimmed == "middlewares:" {
+			hasMiddlewares = true
+			middlewaresLineIdx = i + 1
+		}
+		if trimmed == "entryPoints:" {
+			entryPointsLineIdx = i + 1
+		}
+	}
+
+	var newContent string
+	if hasMiddlewares {
+		// Add to existing middlewares list
+		insertIdx := routerStart
+		for i := 0; i <= middlewaresLineIdx; i++ {
+			nlIdx := strings.Index(content[insertIdx:], "\n")
+			if nlIdx == -1 {
+				break
+			}
+			insertIdx += nlIdx + 1
+		}
+		newContent = content[:insertIdx] + "        - " + middlewareName + "\n" + content[insertIdx:]
+	} else {
+		// Add middlewares section before entryPoints
+		if entryPointsLineIdx == -1 {
+			return fmt.Errorf("router '%s' has no entryPoints section", routerName)
+		}
+		insertIdx := routerStart
+		for i := 0; i < entryPointsLineIdx; i++ {
+			nlIdx := strings.Index(content[insertIdx:], "\n")
+			if nlIdx == -1 {
+				break
+			}
+			insertIdx += nlIdx + 1
+		}
+		newContent = content[:insertIdx] + "      middlewares:\n        - " + middlewareName + "\n" + content[insertIdx:]
+	}
+
+	if err := os.WriteFile(s.configPath, []byte(newContent), 0644); err != nil {
+		return fmt.Errorf("failed to write config: %w", err)
+	}
+
+	log.Printf("Added middleware '%s' to router '%s'", middlewareName, routerName)
+	return nil
+}
+
+// removeMiddlewareFromRouter removes a middleware from a router's middleware list
+func (s *Service) removeMiddlewareFromRouter(routerName, middlewareName string) error {
+	data, err := os.ReadFile(s.configPath)
+	if err != nil {
+		return fmt.Errorf("failed to read config: %w", err)
+	}
+
+	content := string(data)
+
+	// Check if router has middleware
+	if !routerHasMiddleware(content, routerName, middlewareName) {
+		return nil // Doesn't have it
+	}
+
+	// Find and remove the middleware line
+	routerKey := "    " + routerName + ":"
+	idx := strings.Index(content, routerKey)
+	if idx == -1 {
+		return fmt.Errorf("router '%s' not found", routerName)
+	}
+
+	// Find the middleware line within this router section
+	routerSection := content[idx:]
+	middlewareLine := "        - " + middlewareName
+	mwIdx := strings.Index(routerSection, middlewareLine)
+	if mwIdx == -1 {
+		return nil
+	}
+
+	absoluteIdx := idx + mwIdx
+	lineEnd := strings.Index(content[absoluteIdx:], "\n")
+	if lineEnd == -1 {
+		lineEnd = len(content) - absoluteIdx
+	}
+
+	// Remove the line (including newline)
+	newContent := content[:absoluteIdx] + content[absoluteIdx+lineEnd+1:]
+
+	// Check if middlewares section is now empty and remove it
+	if !strings.Contains(newContent[idx:idx+500], "        - ") {
+		// Find and remove empty middlewares section
+		mwSectionIdx := strings.Index(newContent[idx:], "      middlewares:\n")
+		if mwSectionIdx != -1 {
+			absIdx := idx + mwSectionIdx
+			lineLen := len("      middlewares:\n")
+			newContent = newContent[:absIdx] + newContent[absIdx+lineLen:]
+		}
+	}
+
+	if err := os.WriteFile(s.configPath, []byte(newContent), 0644); err != nil {
+		return fmt.Errorf("failed to write config: %w", err)
+	}
+
+	log.Printf("Removed middleware '%s' from router '%s'", middlewareName, routerName)
+	return nil
+}
+
+// handleGetVPNOnly returns VPN-only mode status for the UI
+// mode: "off", "403", or "silent"
+func (s *Service) handleGetVPNOnly(w http.ResponseWriter, r *http.Request) {
+	data, err := os.ReadFile(s.configPath)
+	if err != nil {
+		router.JSONError(w, "failed to read config", http.StatusInternalServerError)
+		return
+	}
+
+	content := string(data)
+	mode := "off"
+	if routerHasMiddleware(content, "ui", "vpn-only-silent") {
+		mode = "silent"
+	} else if routerHasMiddleware(content, "ui", "vpn-only") {
+		mode = "403"
+	}
+
+	router.JSON(w, map[string]string{"mode": mode})
+}
+
+// handleSetVPNOnly sets VPN-only mode for the UI
+// mode: "off", "403", or "silent"
+func (s *Service) handleSetVPNOnly(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		router.JSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Validate mode
+	if req.Mode != "off" && req.Mode != "403" && req.Mode != "silent" {
+		router.JSONError(w, "invalid mode: must be 'off', '403', or 'silent'", http.StatusBadRequest)
+		return
+	}
+
+	// Remove both middlewares first
+	s.removeMiddlewareFromRouter("ui", "vpn-only")
+	s.removeMiddlewareFromRouter("ui", "vpn-only-silent")
+
+	// Add the appropriate middleware
+	var err error
+	switch req.Mode {
+	case "403":
+		err = s.addMiddlewareToRouter("ui", "vpn-only")
+	case "silent":
+		err = s.addMiddlewareToRouter("ui", "vpn-only-silent")
+	}
+
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	router.JSON(w, map[string]string{"mode": req.Mode})
 }

@@ -97,12 +97,18 @@ http:
         browserXssFilter: true
         referrerPolicy: "strict-origin-when-cross-origin"
 
-    # IP whitelist - only VPN clients (customize as needed)
+    # VPN-only with custom error page
     vpn-only:
-      ipAllowList:
-        sourceRange:
-          - "100.64.0.0/10"
-          - "10.0.0.0/8"
-          - "172.16.0.0/12"
-          - "192.168.0.0/16"
-          - "127.0.0.1/32"
+      plugin:
+        silentdrop:
+          sourceRange:
+${VPN_SOURCE_RANGE}
+          mode: "error"
+
+    # VPN-only silent drop (closes connection silently)
+    vpn-only-silent:
+      plugin:
+        silentdrop:
+          sourceRange:
+${VPN_SOURCE_RANGE}
+          mode: "silent"

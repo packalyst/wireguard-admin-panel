@@ -14,11 +14,12 @@ services:
       - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
       - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
       - ./traefik/logs:/var/log/traefik
+      - ./traefik/plugins-local/src:/plugins-local/src:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
       vpn-network:
-        ipv4_address: 172.18.0.2
+        ipv4_address: ${TRAEFIK_CONTAINER_IP}
 
   # ============================================
   # HEADSCALE - VPN Control Server (for Tailscale clients)
@@ -38,7 +39,7 @@ services:
       - NET_ADMIN
     networks:
       vpn-network:
-        ipv4_address: 172.18.0.3
+        ipv4_address: ${HEADSCALE_CONTAINER_IP}
 
   # ============================================
   # UNIFIED API - All services in one container
@@ -73,11 +74,15 @@ services:
       # Traefik settings
       - TRAEFIK_API=${TRAEFIK_API}
       - TRAEFIK_PORT=${TRAEFIK_PORT}
+      - TRAEFIK_CONTAINER_IP=${TRAEFIK_CONTAINER_IP}
       # AdGuard settings
       - ADGUARD_PORT=${ADGUARD_PORT}
       - ADGUARD_CONFIG=/adguard/AdGuardHome.yaml
+      - DNS_PORT=${DNS_PORT}
       # Firewall settings
       - IGNORE_NETWORKS=${IGNORE_NETWORKS}
+      - HTTP_PORT=${HTTP_PORT}
+      - HTTPS_PORT=${HTTPS_PORT}
     volumes:
       - api_data:/data
       - /var/log:/var/log:ro
@@ -101,14 +106,12 @@ services:
   # UI - Unified Web Dashboard
   # ============================================
   ui:
-    build:
-      context: ./ui
-      target: production
+    build: ./ui
     container_name: ui
     restart: unless-stopped
     networks:
       vpn-network:
-        ipv4_address: 172.18.0.4
+        ipv4_address: ${UI_CONTAINER_IP}
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.ui.rule=PathPrefix(`/`)"
@@ -124,5 +127,5 @@ networks:
     ipam:
       driver: default
       config:
-        - subnet: 172.18.0.0/24
-          gateway: 172.18.0.1
+        - subnet: ${DOCKER_SUBNET}
+          gateway: ${DOCKER_GATEWAY}
