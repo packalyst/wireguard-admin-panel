@@ -338,6 +338,56 @@ echo -e "${GREEN}✓ All dependencies satisfied${NC}"
 echo ""
 
 # ===========================================
+# Check Port 53 (DNS) Availability
+# ===========================================
+
+echo -e "${BLUE}Checking port 53 availability...${NC}"
+
+if ss -tulpn 2>/dev/null | grep -q ':53 ' || netstat -tulpn 2>/dev/null | grep -q ':53 '; then
+    echo -e "${YELLOW}⚠ Port 53 is already in use${NC}"
+
+    # Check if it's systemd-resolved
+    if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
+        echo -e "  ${YELLOW}systemd-resolved is running and using port 53${NC}"
+        echo ""
+        echo "AdGuard needs port 53 for DNS. systemd-resolved must be disabled."
+        echo ""
+
+        if prompt_yes_no "Disable systemd-resolved to free port 53?" "y"; then
+            echo -e "${YELLOW}Disabling systemd-resolved...${NC}"
+
+            sudo systemctl stop systemd-resolved
+            sudo systemctl disable systemd-resolved
+
+            # Backup and replace resolv.conf
+            if [ -L /etc/resolv.conf ]; then
+                sudo rm /etc/resolv.conf
+            elif [ -f /etc/resolv.conf ]; then
+                sudo mv /etc/resolv.conf /etc/resolv.conf.backup
+            fi
+
+            echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf > /dev/null
+            echo "nameserver 1.1.1.1" | sudo tee -a /etc/resolv.conf > /dev/null
+
+            echo -e "${GREEN}✓ systemd-resolved disabled${NC}"
+            echo -e "${GREEN}✓ DNS temporarily set to 8.8.8.8 and 1.1.1.1${NC}"
+        else
+            echo -e "${RED}Cannot proceed - port 53 is required for AdGuard DNS${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${RED}Port 53 is in use by another service${NC}"
+        echo "Please stop the service using port 53 and try again."
+        echo "Check with: sudo ss -tulpn | grep :53"
+        exit 1
+    fi
+else
+    echo -e "  ${GREEN}✓${NC} Port 53 is available"
+fi
+
+echo ""
+
+# ===========================================
 # Environment File Setup
 # ===========================================
 
