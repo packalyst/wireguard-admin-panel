@@ -2,8 +2,8 @@
 set -e
 
 # ===========================================
-# VPN Stack Startup Script
-# Interactive setup with auto-detection
+# VPN Stack Smart Management Script
+# Dependency checking, Docker management, and interactive setup
 # ===========================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -14,9 +14,10 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-echo -e "${GREEN}=== VPN Stack Interactive Setup ===${NC}"
+echo -e "${GREEN}=== VPN Stack Management ===${NC}"
 echo ""
 
 # ===========================================
@@ -61,6 +62,281 @@ update_env_value() {
     fi
 }
 
+check_dependency() {
+    local cmd="$1"
+    local name="$2"
+
+    if command -v "$cmd" &> /dev/null; then
+        echo -e "  ${GREEN}✓${NC} $name"
+        return 0
+    else
+        echo -e "  ${RED}✗${NC} $name ${YELLOW}(missing)${NC}"
+        return 1
+    fi
+}
+
+install_docker() {
+    echo -e "${YELLOW}Installing Docker...${NC}"
+
+    # Detect OS
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        OS=$ID
+    else
+        echo -e "${RED}Cannot detect OS${NC}"
+        return 1
+    fi
+
+    case "$OS" in
+        ubuntu|debian)
+            sudo apt-get update
+            sudo apt-get install -y ca-certificates curl gnupg
+            sudo install -m 0755 -d /etc/apt/keyrings
+            curl -fsSL https://download.docker.com/linux/$OS/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+            sudo chmod a+r /etc/apt/keyrings/docker.gpg
+            echo \
+              "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$OS \
+              $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+              sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+            sudo apt-get update
+            sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+            ;;
+        centos|rhel|fedora)
+            sudo yum install -y yum-utils
+            sudo yum-config-manager --add-repo https://download.docker.com/linux/$OS/docker-ce.repo
+            sudo yum install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+            sudo systemctl start docker
+            sudo systemctl enable docker
+            ;;
+        *)
+            echo -e "${RED}Unsupported OS: $OS${NC}"
+            echo "Please install Docker manually: https://docs.docker.com/engine/install/"
+            return 1
+            ;;
+    esac
+
+    echo -e "${GREEN}✓ Docker installed${NC}"
+}
+
+install_wireguard() {
+    echo -e "${YELLOW}Installing WireGuard...${NC}"
+
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        OS=$ID
+    else
+        echo -e "${RED}Cannot detect OS${NC}"
+        return 1
+    fi
+
+    case "$OS" in
+        ubuntu|debian)
+            sudo apt-get update
+            sudo apt-get install -y wireguard wireguard-tools
+            ;;
+        centos|rhel|fedora)
+            sudo yum install -y epel-release elrepo-release
+            sudo yum install -y kmod-wireguard wireguard-tools
+            ;;
+        *)
+            echo -e "${RED}Unsupported OS: $OS${NC}"
+            echo "Please install WireGuard manually: https://www.wireguard.com/install/"
+            return 1
+            ;;
+    esac
+
+    echo -e "${GREEN}✓ WireGuard installed${NC}"
+}
+
+# ===========================================
+# Check if Docker is already running
+# ===========================================
+
+DOCKER_RUNNING=false
+if command -v docker &> /dev/null; then
+    if docker compose ps 2>/dev/null | grep -q "Up\|running"; then
+        DOCKER_RUNNING=true
+    fi
+fi
+
+if [ "$DOCKER_RUNNING" = true ]; then
+    echo -e "${CYAN}Docker containers are already running.${NC}"
+    echo ""
+    docker compose ps
+    echo ""
+
+    echo -e "${YELLOW}What would you like to do?${NC}"
+    echo "  1) Stop containers"
+    echo "  2) Restart containers"
+    echo "  3) View logs"
+    echo "  4) Clean everything (stop, remove containers, volumes, images)"
+    echo "  5) Continue to reconfigure and restart"
+    echo "  6) Exit"
+    echo ""
+
+    read -p "Enter your choice [1-6]: " choice
+
+    case "$choice" in
+        1)
+            echo -e "${YELLOW}Stopping containers...${NC}"
+            docker compose down
+            echo -e "${GREEN}✓ Containers stopped${NC}"
+            exit 0
+            ;;
+        2)
+            echo -e "${YELLOW}Restarting containers...${NC}"
+            docker compose restart
+            echo -e "${GREEN}✓ Containers restarted${NC}"
+            docker compose ps
+            exit 0
+            ;;
+        3)
+            echo -e "${YELLOW}Choose service to view logs:${NC}"
+            echo "  1) All services"
+            echo "  2) UI"
+            echo "  3) API"
+            echo "  4) Traefik"
+            echo "  5) Headscale"
+            echo "  6) AdGuard"
+            echo ""
+            read -p "Enter your choice [1-6]: " log_choice
+
+            case "$log_choice" in
+                1) docker compose logs -f ;;
+                2) docker compose logs -f ui ;;
+                3) docker compose logs -f api ;;
+                4) docker compose logs -f traefik ;;
+                5) docker compose logs -f headscale ;;
+                6) docker compose logs -f adguard ;;
+                *) echo -e "${RED}Invalid choice${NC}"; exit 1 ;;
+            esac
+            exit 0
+            ;;
+        4)
+            echo -e "${RED}⚠ WARNING: This will remove all containers, volumes, and images!${NC}"
+            if prompt_yes_no "Are you sure?" "n"; then
+                echo -e "${YELLOW}Cleaning everything...${NC}"
+                docker compose down -v --rmi all
+
+                # Clean generated configs
+                rm -f headscale/config/config.yaml
+                rm -f traefik/traefik.yml
+                rm -f traefik/dynamic.yml
+                rm -f adguard/conf/AdGuardHome.yaml
+
+                # Clean data directories
+                rm -rf headscale/data/*
+                rm -rf adguard/work/*
+                rm -rf traefik/logs/*
+
+                echo -e "${GREEN}✓ Everything cleaned${NC}"
+            fi
+            exit 0
+            ;;
+        5)
+            echo -e "${YELLOW}Stopping containers for reconfiguration...${NC}"
+            docker compose down
+            echo ""
+            ;;
+        6)
+            echo -e "${BLUE}Exiting...${NC}"
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}Invalid choice${NC}"
+            exit 1
+            ;;
+    esac
+fi
+
+# ===========================================
+# Check Dependencies
+# ===========================================
+
+echo -e "${BLUE}Checking dependencies...${NC}"
+MISSING_DEPS=()
+
+if ! check_dependency "docker" "Docker"; then
+    MISSING_DEPS+=("docker")
+fi
+
+# Check Docker Compose (plugin or standalone)
+if command -v docker &> /dev/null; then
+    if docker compose version &> /dev/null 2>&1; then
+        echo -e "  ${GREEN}✓${NC} Docker Compose"
+    elif command -v docker-compose &> /dev/null; then
+        echo -e "  ${GREEN}✓${NC} Docker Compose (standalone)"
+    else
+        echo -e "  ${RED}✗${NC} Docker Compose ${YELLOW}(missing)${NC}"
+        MISSING_DEPS+=("docker-compose")
+    fi
+else
+    echo -e "  ${RED}✗${NC} Docker Compose ${YELLOW}(missing)${NC}"
+    MISSING_DEPS+=("docker-compose")
+fi
+
+if ! check_dependency "envsubst" "envsubst (gettext)"; then
+    MISSING_DEPS+=("envsubst")
+fi
+
+if ! check_dependency "curl" "curl"; then
+    MISSING_DEPS+=("curl")
+fi
+
+# Check WireGuard
+if ! lsmod | grep -q wireguard && ! check_dependency "wg" "WireGuard"; then
+    MISSING_DEPS+=("wireguard")
+fi
+
+echo ""
+
+# Install missing dependencies
+if [ ${#MISSING_DEPS[@]} -gt 0 ]; then
+    echo -e "${YELLOW}Missing dependencies detected:${NC}"
+    for dep in "${MISSING_DEPS[@]}"; do
+        echo "  - $dep"
+    done
+    echo ""
+
+    if prompt_yes_no "Install missing dependencies?" "y"; then
+        for dep in "${MISSING_DEPS[@]}"; do
+            case "$dep" in
+                docker|docker-compose)
+                    install_docker || exit 1
+                    ;;
+                wireguard)
+                    install_wireguard || exit 1
+                    ;;
+                envsubst)
+                    echo -e "${YELLOW}Installing gettext...${NC}"
+                    if [ -f /etc/debian_version ]; then
+                        sudo apt-get update && sudo apt-get install -y gettext-base
+                    elif [ -f /etc/redhat-release ]; then
+                        sudo yum install -y gettext
+                    fi
+                    echo -e "${GREEN}✓ gettext installed${NC}"
+                    ;;
+                curl)
+                    echo -e "${YELLOW}Installing curl...${NC}"
+                    if [ -f /etc/debian_version ]; then
+                        sudo apt-get update && sudo apt-get install -y curl
+                    elif [ -f /etc/redhat-release ]; then
+                        sudo yum install -y curl
+                    fi
+                    echo -e "${GREEN}✓ curl installed${NC}"
+                    ;;
+            esac
+        done
+        echo ""
+    else
+        echo -e "${RED}Cannot proceed without required dependencies${NC}"
+        exit 1
+    fi
+fi
+
+echo -e "${GREEN}✓ All dependencies satisfied${NC}"
+echo ""
+
 # ===========================================
 # Environment File Setup
 # ===========================================
@@ -69,7 +345,7 @@ if [ ! -f ".env" ]; then
     echo -e "${YELLOW}No .env file found. Creating from template...${NC}"
     if [ -f ".env.example" ]; then
         cp .env.example .env
-        echo -e "${GREEN}Created .env from .env.example${NC}"
+        echo -e "${GREEN}✓ Created .env from .env.example${NC}"
     else
         echo -e "${RED}ERROR: .env.example not found${NC}"
         exit 1
@@ -98,7 +374,7 @@ if [ -n "$DETECTED_IP" ]; then
         echo -e "Current IP in .env: ${YELLOW}${SERVER_IP}${NC}"
     fi
 
-    if prompt_yes_no "Use detected IP ($DETECTED_IP)?"; then
+    if prompt_yes_no "Use detected IP ($DETECTED_IP)?" "y"; then
         SERVER_IP="$DETECTED_IP"
         update_env_value "SERVER_IP" "$SERVER_IP"
         echo -e "${GREEN}✓ SERVER_IP set to: ${SERVER_IP}${NC}"
@@ -118,8 +394,7 @@ else
     fi
 fi
 
-# Update TRAEFIK_API with SERVER_IP (it uses container IP, keep as is)
-# Just reload the env after SERVER_IP update
+# Reload environment
 set -a
 source .env
 set +a
@@ -264,10 +539,10 @@ echo -e "${YELLOW}Starting docker compose...${NC}"
 
 if [ "$DEV_MODE" = "true" ]; then
     echo -e "${BLUE}Mode: Development (hot reload enabled)${NC}"
-    docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d "$@"
+    docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build "$@"
 else
     echo -e "${BLUE}Mode: Production (optimized build)${NC}"
-    docker compose up -d "$@"
+    docker compose up -d --build "$@"
 fi
 
 echo ""
@@ -281,4 +556,6 @@ echo -e "  ${GREEN}API:${NC}         http://${SERVER_IP}:${API_PORT}"
 echo ""
 echo -e "${YELLOW}Default credentials:${NC} admin / admin"
 echo -e "${YELLOW}⚠ Change password after first login!${NC}"
+echo ""
+echo -e "${CYAN}Tip: Run ./start.sh again to manage running containers${NC}"
 echo ""
