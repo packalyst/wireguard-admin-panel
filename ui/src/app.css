@@ -1,0 +1,189 @@
+@import "tailwindcss";
+@plugin "@iconify/tailwind4" {
+  prefixes: tabler;
+}
+
+/* Safelist all used icons - Tailwind needs static class names */
+@source inline("icon-[tabler--activity] icon-[tabler--alert-circle] icon-[tabler--alert-triangle] icon-[tabler--arrow-left] icon-[tabler--arrow-right] icon-[tabler--ban] icon-[tabler--book] icon-[tabler--box] icon-[tabler--brand-github] icon-[tabler--check] icon-[tabler--check-circle] icon-[tabler--chevron-left] icon-[tabler--chevron-right] icon-[tabler--chevrons-left] icon-[tabler--chevrons-right] icon-[tabler--clock] icon-[tabler--cloud] icon-[tabler--copy] icon-[tabler--device-desktop] icon-[tabler--device-floppy] icon-[tabler--device-laptop] icon-[tabler--device-mobile] icon-[tabler--device-tablet] icon-[tabler--dots] icon-[tabler--download] icon-[tabler--edit] icon-[tabler--eye] icon-[tabler--eye-off] icon-[tabler--file-text] icon-[tabler--filter] icon-[tabler--git-branch] icon-[tabler--globe] icon-[tabler--hand-off] icon-[tabler--hand-stop] icon-[tabler--info] icon-[tabler--info-circle] icon-[tabler--key] icon-[tabler--key-round] icon-[tabler--layout] icon-[tabler--link] icon-[tabler--list] icon-[tabler--lock] icon-[tabler--lock-open] icon-[tabler--log-in] icon-[tabler--login] icon-[tabler--logout] icon-[tabler--mail] icon-[tabler--menu] icon-[tabler--monitor] icon-[tabler--moon] icon-[tabler--network] icon-[tabler--play] icon-[tabler--player-play] icon-[tabler--player-stop] icon-[tabler--plug] icon-[tabler--plus] icon-[tabler--refresh] icon-[tabler--refresh-cw] icon-[tabler--route] icon-[tabler--save] icon-[tabler--search] icon-[tabler--server] icon-[tabler--settings] icon-[tabler--shield] icon-[tabler--shield-check] icon-[tabler--shield-off] icon-[tabler--sun] icon-[tabler--trash] icon-[tabler--user] icon-[tabler--user-plus] icon-[tabler--users] icon-[tabler--wand] icon-[tabler--world] icon-[tabler--x]");
+@import "@keenthemes/ktui/src/components/modal/modal.css";
+@import "@keenthemes/ktui/src/components/input/input.css";
+@import "@keenthemes/ktui/src/components/input/input-group.css";
+@import "@keenthemes/ktui/src/components/alert/alert.css";
+@import "@keenthemes/ktui/src/components/form/form.css";
+@import "@keenthemes/ktui/src/components/badge/badge.css";
+@import "@keenthemes/ktui/src/components/link/link.css";
+@import "@keenthemes/ktui/src/components/btn/btn.css";
+@import "@keenthemes/ktui/src/components/card/card.css";
+@import "@keenthemes/ktui/src/components/pagination/pagination.css";
+@import "@keenthemes/ktui/src/components/datatable/datatable.css";
+@import "@keenthemes/ktui/src/components/toast/toast.css";
+@import "@keenthemes/ktui/src/components/switch/switch.css";
+@import "@keenthemes/ktui/src/components/table/table.css";
+@import "@keenthemes/ktui/src/components/skeleton/skeleton.css";
+@import "@keenthemes/ktui/src/components/toggle-group/toggle-group.css";
+/* ============================================================================
+   KTUI THEME - Dark theme for Headscale Admin
+   @import "@keenthemes/ktui/dist/styles.css";
+
+   ============================================================================ */
+
+:root {
+  --background: oklch(98% 0.01 250);
+  --foreground: oklch(15% 0.02 250);
+  --card: oklch(100% 0 0);
+  --card-foreground: oklch(15% 0.02 250);
+  --popover: oklch(100% 0 0);
+  --popover-foreground: oklch(15% 0.02 250);
+  --primary: oklch(55% 0.25 270);
+  --primary-foreground: oklch(100% 0 0);
+  --secondary: oklch(95% 0.01 250);
+  --secondary-foreground: oklch(25% 0.02 250);
+  --muted: oklch(95% 0.01 250);
+  --muted-foreground: oklch(50% 0.02 250);
+  --accent: oklch(95% 0.01 250);
+  --accent-foreground: oklch(25% 0.02 250);
+  --destructive: oklch(55% 0.25 25);
+  --destructive-foreground: oklch(100% 0 0);
+  --mono: oklch(14.1% 0.005 285.823);
+	--mono-foreground: oklch(1 0 0);
+  --success: oklch(65% 0.2 160);
+  --success-foreground: oklch(100% 0 0);
+  --warning: oklch(75% 0.15 85);
+  --warning-foreground: oklch(20% 0.02 85);
+  --info: oklch(60% 0.2 250);
+  --info-foreground: oklch(100% 0 0);
+  --border: oklch(90% 0.01 250);
+  --input: oklch(92% 0.01 250);
+  --ring: oklch(55% 0.25 270);
+  --radius: 0.5rem;
+}
+
+.dark {
+  --background: oklch(10% 0.02 270);
+  --foreground: oklch(95% 0.01 270);
+  --card: oklch(14% 0.02 270);
+  --card-foreground: oklch(95% 0.01 270);
+  --popover: oklch(14% 0.02 270);
+  --popover-foreground: oklch(95% 0.01 270);
+  --primary: oklch(62% 0.22 270);
+  --primary-foreground: oklch(100% 0 0);
+  --secondary: oklch(22% 0.02 270);
+  --secondary-foreground: oklch(95% 0.01 270);
+  --muted: oklch(22% 0.02 270);
+  --muted-foreground: oklch(55% 0.02 270);
+  --accent: oklch(22% 0.02 270);
+  --accent-foreground: oklch(95% 0.01 270);
+  --destructive: oklch(60% 0.22 25);
+  --destructive-foreground: oklch(100% 0 0);
+  --mono: oklch(87.1% 0.006 286.286);
+	--mono-foreground: oklch(0 0 0);
+  --success: oklch(70% 0.18 160);
+  --success-foreground: oklch(100% 0 0);
+  --warning: oklch(78% 0.15 85);
+  --warning-foreground: oklch(20% 0.02 85);
+  --info: oklch(65% 0.18 250);
+  --info-foreground: oklch(100% 0 0);
+  --border: oklch(25% 0.02 270);
+  --input: oklch(22% 0.02 270);
+  --ring: oklch(62% 0.22 270);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-mono: var(--mono);
+  --color-mono-foreground: var(--mono-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+}
+
+@custom-variant dark (&:is(.dark *));
+
+/* Base styles */
+html, body, #app {
+  @apply h-full;
+}
+
+body {
+  @apply bg-background text-foreground font-sans text-sm antialiased m-0;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-border rounded-full hover:bg-muted-foreground;
+}
+
+/* KTUI Modal overrides */
+.kt-modal-content {
+  max-height: 90vh;
+  overflow: hidden;
+}
+
+/* KTUI Button variants */
+.kt-btn-info {
+  /*@apply bg-success/10 text-success hover:bg-success/20;*/
+  @apply bg-info/10 text-info hover:bg-info/20;
+}
+.kt-btn-success {
+  @apply bg-success text-success-foreground hover:bg-success/90;
+}
+.kt-btn-danger,.kt-badge-danger {
+  @apply bg-destructive/10 text-destructive hover:bg-destructive/20;
+}
+.kt-badge-success {
+  @apply bg-success/10 text-success;
+}
+
+/* Extra small button size */
+.kt-btn-xs {
+  @apply h-6 px-2 text-[10px] gap-1;
+}
+.kt-btn-xs[data-icon-only] {
+  @apply w-6 px-0;
+}
+
+/* Remove focus ring from clickable badges */
+button.kt-badge {
+  @apply focus:ring-0 focus:ring-offset-0 outline-none;
+}
+
+/* Small focus outline for inputs */
+.kt-input:has(input:focus-visible) {
+  @apply ring-1 ring-ring/5 border-ring/50;
+}
+.kt-input input:focus-visible,
+input.kt-input:focus-visible {
+  @apply ring-0 outline-none;
+}

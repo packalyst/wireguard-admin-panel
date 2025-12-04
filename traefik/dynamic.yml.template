@@ -1,0 +1,108 @@
+# Traefik Dynamic Configuration
+http:
+  routers:
+    # UI - catch all (lowest priority)
+    ui:
+      rule: "PathPrefix(`/`)"
+      service: ui
+      priority: 1
+      entryPoints:
+        - web
+
+    # Unified API - all /api/* routes (except /api/v1 for headscale direct)
+    unified-api:
+      rule: "PathPrefix(`/api/wg`) || PathPrefix(`/api/fw`) || PathPrefix(`/api/traefik`) || PathPrefix(`/api/adguard`) || PathPrefix(`/api/hs`) || PathPrefix(`/api/auth`) || PathPrefix(`/api/setup`) || PathPrefix(`/api/settings`) || PathPrefix(`/api/docker`)"
+      service: unified-api
+      priority: 100
+      middlewares:
+        - rate-limit
+        - security-headers
+      entryPoints:
+        - web
+
+    # Headscale control plane - HTTP (for Tailscale clients)
+    headscale-control:
+      rule: "PathPrefix(`/ts2021`) || PathPrefix(`/machine`) || PathPrefix(`/key`) || PathPrefix(`/noise`)"
+      service: headscale
+      priority: 100
+      entryPoints:
+        - web
+
+    # Headscale control plane - HTTPS (for Tailscale clients)
+    headscale-control-secure:
+      rule: "PathPrefix(`/ts2021`) || PathPrefix(`/machine`) || PathPrefix(`/key`) || PathPrefix(`/noise`)"
+      service: headscale
+      priority: 100
+      entryPoints:
+        - websecure
+      tls: {}
+
+    # Headscale API - BLOCKED for external access (UI uses /api/hs via unified API)
+    # This prevents direct API access - all admin goes through unified API with server-side auth
+    headscale-api-blocked:
+      rule: "PathPrefix(`/api/v1`)"
+      service: headscale
+      priority: 100
+      middlewares:
+        - vpn-only
+        - rate-limit-strict
+        - security-headers
+      entryPoints:
+        - web
+
+    # API info endpoint
+    api-info:
+      rule: "Path(`/api`) || Path(`/api/`)"
+      service: unified-api
+      priority: 99
+      middlewares:
+        - rate-limit
+      entryPoints:
+        - web
+
+  services:
+    ui:
+      loadBalancer:
+        servers:
+          - url: "http://ui:80"
+
+    unified-api:
+      loadBalancer:
+        servers:
+          - url: "http://host.docker.internal:${API_PORT}"
+
+    headscale:
+      loadBalancer:
+        servers:
+          - url: "http://headscale:8080"
+
+  middlewares:
+    # Rate limiting - requests per second average, burst
+    rate-limit:
+      rateLimit:
+        average: ${RATE_LIMIT_AVERAGE}
+        burst: ${RATE_LIMIT_BURST}
+
+    # Strict rate limiting for sensitive APIs
+    rate-limit-strict:
+      rateLimit:
+        average: ${RATE_LIMIT_STRICT_AVERAGE}
+        burst: ${RATE_LIMIT_STRICT_BURST}
+
+    # Security headers
+    security-headers:
+      headers:
+        frameDeny: true
+        contentTypeNosniff: true
+        browserXssFilter: true
+        referrerPolicy: "strict-origin-when-cross-origin"
+
+    # IP whitelist - only VPN clients (customize as needed)
+    vpn-only:
+      ipAllowList:
+        sourceRange:
+          - "100.64.0.0/10"
+          - "10.0.0.0/8"
+          - "172.16.0.0/12"
+          - "192.168.0.0/16"
+          - "127.0.0.1/32"

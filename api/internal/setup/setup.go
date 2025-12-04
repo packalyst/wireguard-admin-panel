@@ -1,0 +1,500 @@
+package setup
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"strings"
+	"time"
+
+	"api/internal/auth"
+	"api/internal/router"
+	"api/internal/settings"
+)
+
+// Service handles initial setup
+type Service struct {
+	auth *auth.Service
+}
+
+// requireAuthIfCompleted validates authentication if setup is completed
+// Returns true if request should continue, false if an error response was sent
+func (s *Service) requireAuthIfCompleted(w http.ResponseWriter, r *http.Request) bool {
+	status, _ := s.GetStatus()
+	if !status.Completed {
+		return true // No auth required during setup
+	}
+
+	token := r.Header.Get("Authorization")
+	if token == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return false
+	}
+	token = strings.TrimPrefix(token, "Bearer ")
+
+	if s.auth == nil {
+		http.Error(w, "Auth service not available", http.StatusInternalServerError)
+		return false
+	}
+
+	if _, err := s.auth.ValidateSession(token); err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return false
+	}
+
+	return true
+}
+
+// SetupStatus represents the setup state
+type SetupStatus struct {
+	Completed    bool `json:"completed"`
+	HasAdmin     bool `json:"hasAdmin"`
+	HasHeadscale bool `json:"hasHeadscale"`
+}
+
+// SetupRequest represents the setup wizard data
+type SetupRequest struct {
+	// Admin user
+	AdminUsername string `json:"adminUsername"`
+	AdminPassword string `json:"adminPassword"`
+
+	// Headscale configuration
+	HeadscaleAPIURL string `json:"headscaleApiUrl"` // Internal API URL (auto-detected)
+	HeadscaleURL    string `json:"headscaleUrl"`    // Public URL for Tailscale clients
+	HeadscaleAPIKey string `json:"headscaleApiKey"`
+}
+
+// New creates a new setup service
+func New() *Service {
+	return &Service{
+		auth: auth.GetService(),
+	}
+}
+
+// Handlers returns the handler map for the router
+func (s *Service) Handlers() router.ServiceHandlers {
+	return router.ServiceHandlers{
+		"GetStatus":        s.handleGetStatus,
+		"TestHeadscale":    s.handleTestHeadscale,
+		"CompleteSetup":    s.handleCompleteSetup,
+		"Health":           s.handleHealth,
+		"DetectHeadscale":  s.handleDetectHeadscale,
+		"GenerateAPIKey":   s.handleGenerateAPIKey,
+	}
+}
+
+// detectHeadscaleURL finds headscale by querying Docker socket
+func detectHeadscaleURL() (string, error) {
+	// Create HTTP client that connects via Unix socket
+	client := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return net.Dial("unix", "/var/run/docker.sock")
+			},
+		},
+		Timeout: 5 * time.Second,
+	}
+
+	// Query Docker API for headscale container
+	resp, err := client.Get("http://localhost/containers/headscale/json")
+	if err != nil {
+		return "", fmt.Errorf("failed to query Docker: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("headscale container not found")
+	}
+
+	var container struct {
+		NetworkSettings struct {
+			Ports map[string][]struct {
+				HostIP   string `json:"HostIp"`
+				HostPort string `json:"HostPort"`
+			} `json:"Ports"`
+		} `json:"NetworkSettings"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&container); err != nil {
+		return "", fmt.Errorf("failed to parse container info: %v", err)
+	}
+
+	// Find the port mapping for 8080/tcp (headscale's internal port)
+	if ports, ok := container.NetworkSettings.Ports["8080/tcp"]; ok && len(ports) > 0 {
+		hostPort := ports[0].HostPort
+		hostIP := ports[0].HostIP
+		if hostIP == "" || hostIP == "0.0.0.0" {
+			hostIP = "127.0.0.1"
+		}
+		return fmt.Sprintf("http://%s:%s", hostIP, hostPort), nil
+	}
+
+	return "", fmt.Errorf("headscale port mapping not found")
+}
+
+// generateHeadscaleAPIKey creates a new API key via Docker API exec
+func generateHeadscaleAPIKey() (string, error) {
+	output, err := dockerExec("headscale", []string{"headscale", "apikeys", "create", "-o", "json"})
+	if err != nil {
+		return "", err
+	}
+
+	// Output is a JSON string like "key_value_here"
+	key := strings.Trim(strings.TrimSpace(output), "\"")
+	if key == "" {
+		return "", fmt.Errorf("empty API key returned")
+	}
+
+	return key, nil
+}
+
+// demuxDockerStream reads Docker's multiplexed stream format
+func demuxDockerStream(r io.Reader) (string, error) {
+	var result strings.Builder
+	header := make([]byte, 8)
+
+	for {
+		_, err := io.ReadFull(r, header)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return result.String(), nil // Return what we have
+		}
+
+		// header[0] = stream type (0=stdin, 1=stdout, 2=stderr)
+		// header[4:8] = size (big endian)
+		size := int(header[4])<<24 | int(header[5])<<16 | int(header[6])<<8 | int(header[7])
+
+		if size > 0 {
+			data := make([]byte, size)
+			_, err := io.ReadFull(r, data)
+			if err != nil {
+				return result.String(), nil
+			}
+			result.Write(data)
+		}
+	}
+
+	return result.String(), nil
+}
+
+func (s *Service) handleDetectHeadscale(w http.ResponseWriter, r *http.Request) {
+	url, err := detectHeadscaleURL()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"url": url})
+}
+
+func (s *Service) handleGenerateAPIKey(w http.ResponseWriter, r *http.Request) {
+	status, _ := s.GetStatus()
+
+	if status.Completed {
+		// After setup - require authentication
+		if !s.requireAuthIfCompleted(w, r) {
+			return
+		}
+
+		// Check if current key expires in more than 7 days
+		expiresIn, err := getHeadscaleKeyExpiration()
+		if err == nil && expiresIn > 7*24*time.Hour {
+			http.Error(w, fmt.Sprintf("API key still valid for %d days, regeneration not needed", int(expiresIn.Hours()/24)), http.StatusBadRequest)
+			return
+		}
+		log.Printf("Regenerating API key (current expires in %v)", expiresIn)
+	} else {
+		// Before setup - check if we already have a pending key in DB
+		if existingKey, err := settings.GetSettingEncrypted("headscale_api_key_pending"); err == nil && existingKey != "" {
+			// Return existing pending key
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{"apiKey": existingKey})
+			return
+		}
+	}
+
+	// Generate new key
+	key, err := generateHeadscaleAPIKey()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if !status.Completed {
+		// Before setup - save as pending key (will be moved to headscale_api_key on complete)
+		if err := settings.SetSettingEncrypted("headscale_api_key_pending", key); err != nil {
+			log.Printf("Warning: failed to save pending API key: %v", err)
+		}
+	} else {
+		// After setup - save directly as the active key
+		if err := settings.SetSettingEncrypted("headscale_api_key", key); err != nil {
+			http.Error(w, "Failed to save API key: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		log.Printf("API key regenerated and saved")
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"apiKey": key})
+}
+
+// getHeadscaleKeyExpiration checks when the current API key expires
+func getHeadscaleKeyExpiration() (time.Duration, error) {
+	// Get current key from DB
+	currentKey, err := settings.GetSettingEncrypted("headscale_api_key")
+	if err != nil {
+		return 0, fmt.Errorf("no API key configured")
+	}
+
+	// Extract prefix (first part before the dot)
+	parts := strings.Split(currentKey, ".")
+	if len(parts) < 1 {
+		return 0, fmt.Errorf("invalid key format")
+	}
+	prefix := parts[0]
+
+	// Query headscale for key info via Docker API
+	output, err := dockerExec("headscale", []string{"headscale", "apikeys", "list", "-o", "json"})
+	if err != nil {
+		return 0, fmt.Errorf("failed to list API keys: %v", err)
+	}
+
+	var keys []struct {
+		Prefix     string `json:"prefix"`
+		Expiration struct {
+			Seconds int64 `json:"seconds"`
+		} `json:"expiration"`
+	}
+	if err := json.Unmarshal([]byte(output), &keys); err != nil {
+		return 0, fmt.Errorf("failed to parse API keys: %v", err)
+	}
+
+	for _, k := range keys {
+		if k.Prefix == prefix {
+			expiresAt := time.Unix(k.Expiration.Seconds, 0)
+			return time.Until(expiresAt), nil
+		}
+	}
+
+	return 0, fmt.Errorf("key not found in headscale")
+}
+
+// dockerExec runs a command in a container via Docker API
+func dockerExec(container string, cmd []string) (string, error) {
+	client := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return net.Dial("unix", "/var/run/docker.sock")
+			},
+		},
+		Timeout: 30 * time.Second,
+	}
+
+	// Build exec create body
+	cmdJSON, _ := json.Marshal(cmd)
+	execCreateBody := fmt.Sprintf(`{"AttachStdout":true,"AttachStderr":true,"Cmd":%s}`, cmdJSON)
+
+	resp, err := client.Post(
+		fmt.Sprintf("http://localhost/containers/%s/exec", container),
+		"application/json",
+		strings.NewReader(execCreateBody),
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to create exec: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 201 {
+		return "", fmt.Errorf("failed to create exec: status %d", resp.StatusCode)
+	}
+
+	var execCreate struct {
+		Id string `json:"Id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&execCreate); err != nil {
+		return "", fmt.Errorf("failed to parse exec response: %v", err)
+	}
+
+	// Start exec
+	resp2, err := client.Post(
+		fmt.Sprintf("http://localhost/exec/%s/start", execCreate.Id),
+		"application/json",
+		strings.NewReader(`{"Detach":false,"Tty":false}`),
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to start exec: %v", err)
+	}
+	defer resp2.Body.Close()
+
+	return demuxDockerStream(resp2.Body)
+}
+
+// GetStatus returns the current setup status
+func (s *Service) GetStatus() (*SetupStatus, error) {
+	status := &SetupStatus{}
+
+	// Check if admin user exists
+	if s.auth != nil {
+		status.HasAdmin = s.auth.HasUsers()
+	}
+
+	// Check if headscale is configured (check for api_url which is the internal one)
+	_, err := settings.GetSetting("headscale_api_url")
+	status.HasHeadscale = err == nil
+
+	// Setup is complete if we have admin and headscale
+	status.Completed = status.HasAdmin && status.HasHeadscale
+
+	return status, nil
+}
+
+// CompleteSetup runs the initial setup
+func (s *Service) CompleteSetup(req *SetupRequest) error {
+	// Validate required fields
+	if req.AdminUsername == "" || req.AdminPassword == "" {
+		return fmt.Errorf("admin username and password are required")
+	}
+	if req.HeadscaleAPIURL == "" || req.HeadscaleAPIKey == "" {
+		return fmt.Errorf("headscale API URL and API key are required")
+	}
+	if req.HeadscaleURL == "" {
+		return fmt.Errorf("headscale public URL is required")
+	}
+
+	// Create admin user (if not exists)
+	if s.auth != nil && !s.auth.HasUsers() {
+		_, err := s.auth.CreateUser(req.AdminUsername, req.AdminPassword)
+		if err != nil {
+			return fmt.Errorf("failed to create admin user: %v", err)
+		}
+		log.Printf("Created admin user: %s", req.AdminUsername)
+	}
+
+	// Store headscale settings (encrypted)
+	if err := settings.SetSettingEncrypted("headscale_api_key", req.HeadscaleAPIKey); err != nil {
+		return fmt.Errorf("failed to store headscale API key: %v", err)
+	}
+
+	// Store internal API URL
+	if err := settings.SetSetting("headscale_api_url", req.HeadscaleAPIURL); err != nil {
+		return fmt.Errorf("failed to store headscale API URL: %v", err)
+	}
+
+	// Store public URL for Tailscale clients
+	if err := settings.SetSetting("headscale_url", req.HeadscaleURL); err != nil {
+		return fmt.Errorf("failed to store headscale URL: %v", err)
+	}
+
+	// Clean up pending key if exists
+	_ = settings.DeleteSetting("headscale_api_key_pending")
+
+	log.Printf("Setup completed successfully")
+	return nil
+}
+
+// HTTP Handlers
+
+func (s *Service) handleGetStatus(w http.ResponseWriter, r *http.Request) {
+	status, err := s.GetStatus()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(status)
+}
+
+func (s *Service) handleCompleteSetup(w http.ResponseWriter, r *http.Request) {
+	// Check if already setup
+	status, _ := s.GetStatus()
+	if status.Completed {
+		http.Error(w, "Setup already completed", http.StatusBadRequest)
+		return
+	}
+
+	var req SetupRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.CompleteSetup(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"message": "Setup completed"})
+}
+
+func (s *Service) handleHealth(w http.ResponseWriter, r *http.Request) {
+	status, _ := s.GetStatus()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":    "ok",
+		"completed": status.Completed,
+	})
+}
+
+// TestHeadscaleRequest for testing headscale connection
+type TestHeadscaleRequest struct {
+	URL    string `json:"url"`
+	APIKey string `json:"apiKey"`
+}
+
+func (s *Service) handleTestHeadscale(w http.ResponseWriter, r *http.Request) {
+	var req TestHeadscaleRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.URL == "" || req.APIKey == "" {
+		http.Error(w, "URL and API key are required", http.StatusBadRequest)
+		return
+	}
+
+	// Ensure URL has /api/v1 suffix
+	baseURL := req.URL
+	if !strings.HasSuffix(baseURL, "/api/v1") {
+		baseURL = strings.TrimSuffix(baseURL, "/") + "/api/v1"
+	}
+	testURL := baseURL + "/user"
+
+	// Test connection to headscale
+	client := &http.Client{Timeout: 10 * time.Second}
+	testReq, err := http.NewRequest("GET", testURL, nil)
+	if err != nil {
+		http.Error(w, "Invalid URL: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	testReq.Header.Set("Authorization", "Bearer "+req.APIKey)
+
+	resp, err := client.Do(testReq)
+	if err != nil {
+		http.Error(w, "Connection failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 401 || resp.StatusCode == 403 {
+		http.Error(w, "Invalid API key", http.StatusUnauthorized)
+		return
+	}
+
+	if resp.StatusCode >= 400 {
+		http.Error(w, fmt.Sprintf("Headscale returned error: %d", resp.StatusCode), http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
