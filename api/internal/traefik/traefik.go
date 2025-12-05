@@ -205,7 +205,7 @@ func (s *Service) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 
 // updateTraefikDashboardAddress updates the traefik entrypoint address in traefik.yml
 // enabled=true: 0.0.0.0:port (accessible externally)
-// enabled=false: 127.0.0.1:port (local only)
+// enabled=false: container_ip:port (internal only, accessible via docker network)
 func updateTraefikDashboardAddress(configPath string, enabled bool) error {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
@@ -218,13 +218,18 @@ func updateTraefikDashboardAddress(configPath string, enabled bool) error {
 		return fmt.Errorf("TRAEFIK_PORT environment variable not set")
 	}
 
+	containerIP := os.Getenv("TRAEFIK_CONTAINER_IP")
+	if containerIP == "" {
+		containerIP = "172.18.0.2" // fallback
+	}
+
 	// Replace the traefik entrypoint address
 	if enabled {
 		// Enable: bind to 0.0.0.0:port (public)
-		content = strings.ReplaceAll(content, `address: "127.0.0.1:`+port+`"`, `address: ":`+port+`"`)
+		content = strings.ReplaceAll(content, `address: "`+containerIP+`:`+port+`"`, `address: ":`+port+`"`)
 	} else {
-		// Disable: bind to 127.0.0.1:port (localhost only)
-		content = strings.ReplaceAll(content, `address: ":`+port+`"`, `address: "127.0.0.1:`+port+`"`)
+		// Disable: bind to container IP only (accessible from API via docker network)
+		content = strings.ReplaceAll(content, `address: ":`+port+`"`, `address: "`+containerIP+`:`+port+`"`)
 	}
 
 	return os.WriteFile(configPath, []byte(content), 0644)
