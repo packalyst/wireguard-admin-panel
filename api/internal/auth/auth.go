@@ -17,6 +17,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	"api/internal/database"
 	"api/internal/helper"
@@ -116,6 +117,43 @@ func (s *Service) Handlers() router.ServiceHandlers {
 	}
 }
 
+// validatePassword checks password strength
+// Requires: 8+ chars, uppercase, lowercase, number, special char
+func validatePassword(password string) error {
+	if len(password) < 8 {
+		return errors.New("password must be at least 8 characters")
+	}
+
+	var hasUpper, hasLower, hasNumber, hasSpecial bool
+	for _, c := range password {
+		switch {
+		case unicode.IsUpper(c):
+			hasUpper = true
+		case unicode.IsLower(c):
+			hasLower = true
+		case unicode.IsNumber(c):
+			hasNumber = true
+		case unicode.IsPunct(c) || unicode.IsSymbol(c):
+			hasSpecial = true
+		}
+	}
+
+	if !hasUpper {
+		return errors.New("password must contain at least one uppercase letter")
+	}
+	if !hasLower {
+		return errors.New("password must contain at least one lowercase letter")
+	}
+	if !hasNumber {
+		return errors.New("password must contain at least one number")
+	}
+	if !hasSpecial {
+		return errors.New("password must contain at least one special character")
+	}
+
+	return nil
+}
+
 // CreateUser creates a new user account
 func (s *Service) CreateUser(username, password string) (*User, error) {
 	// Validate input
@@ -123,8 +161,8 @@ func (s *Service) CreateUser(username, password string) (*User, error) {
 	if len(username) < 3 {
 		return nil, errors.New("username must be at least 3 characters")
 	}
-	if len(password) < 12 {
-		return nil, errors.New("password must be at least 12 characters")
+	if err := validatePassword(password); err != nil {
+		return nil, err
 	}
 
 	// Hash password
