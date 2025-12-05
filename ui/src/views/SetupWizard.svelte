@@ -28,13 +28,56 @@
     theme.update(t => t === 'dark' ? 'light' : 'dark')
   }
 
+  // Password strength calculation
+  function getPasswordStrength(password) {
+    if (!password) return { score: 0, label: '', color: '' }
+
+    let score = 0
+    const checks = {
+      length: password.length >= 8,
+      upper: /[A-Z]/.test(password),
+      lower: /[a-z]/.test(password),
+      number: /[0-9]/.test(password),
+      special: /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)
+    }
+
+    if (checks.length) score++
+    if (checks.upper) score++
+    if (checks.lower) score++
+    if (checks.number) score++
+    if (checks.special) score++
+
+    const labels = ['', 'Very Weak', 'Weak', 'Fair', 'Good', 'Strong']
+    const colors = ['', 'bg-red-500', 'bg-orange-500', 'bg-yellow-500', 'bg-blue-500', 'bg-green-500']
+
+    return { score, label: labels[score], color: colors[score], checks }
+  }
+
+  let passwordStrength = $derived(getPasswordStrength(adminPassword))
+
   function validateStep1() {
     if (adminUsername.length < 3) {
       error = 'Username must be at least 3 characters'
       return false
     }
-    if (adminPassword.length < 12) {
-      error = 'Password must be at least 12 characters'
+    if (adminPassword.length < 8) {
+      error = 'Password must be at least 8 characters'
+      return false
+    }
+    if (!/[A-Z]/.test(adminPassword)) {
+      error = 'Password must contain at least one uppercase letter'
+      return false
+    }
+    if (!/[a-z]/.test(adminPassword)) {
+      error = 'Password must contain at least one lowercase letter'
+      return false
+    }
+    if (!/[0-9]/.test(adminPassword)) {
+      error = 'Password must contain at least one number'
+      return false
+    }
+    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(adminPassword)) {
+      error = 'Password must contain at least one special character'
       return false
     }
     if (adminPassword !== adminPasswordConfirm) {
@@ -310,12 +353,35 @@
             labelClass="block text-sm font-medium mb-1.5"
             type="password"
             bind:value={adminPassword}
-            placeholder="Minimum 12 characters"
+            placeholder="Min 8 chars, upper, lower, number, special"
             prefixIcon="lock"
             class="w-full"
             autocomplete="new-password"
             required
           />
+
+          <!-- Password Strength Indicator -->
+          {#if adminPassword}
+            <div class="space-y-2">
+              <div class="flex gap-1">
+                {#each [1, 2, 3, 4, 5] as i}
+                  <div class="h-1 flex-1 rounded-full transition-colors {i <= passwordStrength.score ? passwordStrength.color : 'bg-muted'}"></div>
+                {/each}
+              </div>
+              <div class="flex justify-between items-center">
+                <span class="text-xs {passwordStrength.score >= 4 ? 'text-green-500' : passwordStrength.score >= 3 ? 'text-yellow-500' : 'text-red-500'}">
+                  {passwordStrength.label}
+                </span>
+                <div class="flex gap-2 text-[10px] text-muted-foreground">
+                  <span class={passwordStrength.checks?.length ? 'text-green-500' : ''}>8+</span>
+                  <span class={passwordStrength.checks?.upper ? 'text-green-500' : ''}>A-Z</span>
+                  <span class={passwordStrength.checks?.lower ? 'text-green-500' : ''}>a-z</span>
+                  <span class={passwordStrength.checks?.number ? 'text-green-500' : ''}>0-9</span>
+                  <span class={passwordStrength.checks?.special ? 'text-green-500' : ''}>!@#</span>
+                </div>
+              </div>
+            </div>
+          {/if}
 
           <Input
             id="adminPasswordConfirm"

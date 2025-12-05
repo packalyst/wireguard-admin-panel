@@ -70,6 +70,8 @@
         {"path": "/config", "methods": ["GET"], "handler": "GetConfig", "description": "Get configuration"},
         {"path": "/config", "methods": ["PUT"], "handler": "UpdateConfig", "description": "Update configuration"},
         {"path": "/apply", "methods": ["POST"], "handler": "ApplyRules", "description": "Apply firewall rules"},
+        {"path": "/ssh", "methods": ["GET"], "handler": "GetSSHPort", "description": "Get current SSH port"},
+        {"path": "/ssh", "methods": ["POST"], "handler": "ChangeSSHPort", "description": "Change SSH port"},
         {"path": "/health", "methods": ["GET"], "handler": "Health", "description": "Health check"}
       ]
     },

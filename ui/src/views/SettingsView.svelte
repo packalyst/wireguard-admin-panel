@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { theme, toast, apiGet, apiPost, apiPut } from '../stores/app.js'
+  import { theme, toast, apiGet, apiPost, apiPut, generateAdguardCredentials } from '../stores/app.js'
   import Icon from '../components/Icon.svelte'
   import Input from '../components/Input.svelte'
   import Button from '../components/Button.svelte'
@@ -299,24 +299,10 @@
   }
 
   // Generate random secure credentials for AdGuard
-  function generateAdguardCredentials() {
-    // Generate random username (8 characters, alphanumeric)
-    const usernameChars = 'abcdefghijklmnopqrstuvwxyz0123456789'
-    let username = 'admin_'
-    for (let i = 0; i < 8; i++) {
-      username += usernameChars.charAt(Math.floor(Math.random() * usernameChars.length))
-    }
-
-    // Generate secure random password (16 characters with special chars)
-    const passwordChars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*'
-    let password = ''
-    for (let i = 0; i < 16; i++) {
-      password += passwordChars.charAt(Math.floor(Math.random() * passwordChars.length))
-    }
-
-    adguardUsername = username
-    adguardPassword = password
-
+  function regenerateAdguardCredentials() {
+    const creds = generateAdguardCredentials()
+    adguardUsername = creds.username
+    adguardPassword = creds.password
     toast('Credentials generated', 'success')
   }
 
@@ -437,7 +423,7 @@
               <h3 class="text-sm font-semibold text-foreground">AdGuard Home</h3>
             </div>
             <Button
-              onclick={generateAdguardCredentials}
+              onclick={regenerateAdguardCredentials}
               variant="ghost"
               size="xs"
               icon="wand"

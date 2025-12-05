@@ -100,7 +100,7 @@
           {readonly}
           {required}
           {autocomplete}
-          class="kt-input w-full"
+          class="w-full"
           {onkeydown}
           {onclick}
           {oninput}
@@ -188,7 +188,7 @@
         {readonly}
         {required}
         {autocomplete}
-        class="kt-input w-full"
+        class="w-full"
         {onkeydown}
         {onclick}
         {oninput}

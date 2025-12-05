@@ -114,3 +114,20 @@ export async function apiGetBlob(endpoint) {
   }
   return res.blob()
 }
+
+// Generate random secure credentials for AdGuard
+export function generateAdguardCredentials() {
+  const usernameChars = 'abcdefghijklmnopqrstuvwxyz0123456789'
+  let username = 'admin_'
+  for (let i = 0; i < 8; i++) {
+    username += usernameChars.charAt(Math.floor(Math.random() * usernameChars.length))
+  }
+
+  const passwordChars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*'
+  let password = ''
+  for (let i = 0; i < 16; i++) {
+    password += passwordChars.charAt(Math.floor(Math.random() * passwordChars.length))
+  }
+
+  return { username, password }
+}

@@ -840,7 +840,6 @@
   </div>
 
   {#if addFilterMode === 'list'}
-    <!-- Search -->
     <div class="mb-4">
       <Input
         type="text"
@@ -850,7 +849,6 @@
       />
     </div>
 
-    <!-- List selection -->
     <div class="max-h-[400px] overflow-y-auto space-y-4 pr-2">
       {#each filteredBlocklists as category}
         <div>
@@ -883,48 +881,33 @@
         </div>
       {/each}
     </div>
-
-    <div class="flex justify-between items-center mt-6 pt-4 border-t border-border">
-      <span class="text-sm text-muted-foreground">
-        {selectedLists.length} selected
-      </span>
-      <div class="flex gap-2">
-        <Button onclick={() => { showAddFilterModal = false; selectedLists = []; filterSearchQuery = '' }} variant="secondary">
-          Cancel
-        </Button>
-        <Button onclick={addFilter} disabled={selectedLists.length === 0}>
-          Add {selectedLists.length} Blocklist{selectedLists.length !== 1 ? 's' : ''}
-        </Button>
-      </div>
-    </div>
   {:else}
-    <!-- Manual entry -->
     <div class="space-y-4">
       <Input
         label="Filter Name"
-        labelClass="block text-sm font-medium text-foreground mb-1.5"
         bind:value={newFilterName}
-        class="w-full"
         placeholder="e.g., My Custom Blocklist"
       />
       <Input
         label="Filter URL"
-        labelClass="block text-sm font-medium text-foreground mb-1.5"
         helperText="Enter a URL to a hosts file or AdBlock-style filter list"
-        helperClass="text-xs text-muted-foreground mt-1"
         bind:value={newFilterUrl}
-        class="w-full"
         placeholder="https://example.com/blocklist.txt"
       />
     </div>
-    <div class="flex justify-end gap-2 mt-6">
-      <Button onclick={() => showAddFilterModal = false} variant="secondary">
-        Cancel
-      </Button>
-      <Button onclick={addFilter} disabled={!newFilterName || !newFilterUrl}>
-        Add Filter
-      </Button>
-    </div>
   {/if}
+
+  {#snippet footer()}
+    {#if addFilterMode === 'list'}
+      <span class="text-sm text-muted-foreground mr-auto">{selectedLists.length} selected</span>
+      <Button onclick={() => { showAddFilterModal = false; selectedLists = []; filterSearchQuery = '' }} variant="secondary">Cancel</Button>
+      <Button onclick={addFilter} disabled={selectedLists.length === 0}>
+        Add {selectedLists.length} Blocklist{selectedLists.length !== 1 ? 's' : ''}
+      </Button>
+    {:else}
+      <Button onclick={() => showAddFilterModal = false} variant="secondary">Cancel</Button>
+      <Button onclick={addFilter} disabled={!newFilterName || !newFilterUrl}>Add Filter</Button>
+    {/if}
+  {/snippet}
 </Modal>
 

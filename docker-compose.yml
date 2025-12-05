@@ -89,6 +89,7 @@ services:
       - ./traefik:/traefik
       - ./adguard/conf:/adguard
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /etc/ssh/sshd_config:/etc/ssh/sshd_config
 
   # ============================================
   # ADGUARD HOME - DNS Server with Query Logging

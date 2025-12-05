@@ -388,6 +388,129 @@ fi
 echo ""
 
 # ===========================================
+# Check Firewall Conflicts (UFW/Fail2ban)
+# ===========================================
+
+echo -e "${BLUE}Checking for firewall conflicts...${NC}"
+
+FIREWALL_CONFLICTS=()
+
+# Check UFW
+if command -v ufw &> /dev/null; then
+    UFW_STATUS=$(sudo ufw status 2>/dev/null | head -1)
+    if [[ "$UFW_STATUS" == *"active"* ]]; then
+        FIREWALL_CONFLICTS+=("ufw")
+        echo -e "  ${YELLOW}⚠${NC} UFW is active"
+    else
+        echo -e "  ${GREEN}✓${NC} UFW is inactive"
+    fi
+else
+    echo -e "  ${GREEN}✓${NC} UFW not installed"
+fi
+
+# Check Fail2ban
+if command -v fail2ban-client &> /dev/null; then
+    if systemctl is-active --quiet fail2ban 2>/dev/null; then
+        FIREWALL_CONFLICTS+=("fail2ban")
+        echo -e "  ${YELLOW}⚠${NC} Fail2ban is running"
+    else
+        echo -e "  ${GREEN}✓${NC} Fail2ban is inactive"
+    fi
+else
+    echo -e "  ${GREEN}✓${NC} Fail2ban not installed"
+fi
+
+# Check iptables rules (that might conflict with nftables)
+IPTABLES_RULES=$(sudo iptables -L -n 2>/dev/null | grep -v "^Chain\|^target\|^$" | wc -l)
+if [ "$IPTABLES_RULES" -gt 0 ]; then
+    echo -e "  ${YELLOW}⚠${NC} iptables has $IPTABLES_RULES active rules"
+fi
+
+echo ""
+
+# Handle conflicts
+if [ ${#FIREWALL_CONFLICTS[@]} -gt 0 ]; then
+    echo -e "${YELLOW}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${YELLOW}║${NC}  ${RED}⚠ FIREWALL CONFLICT DETECTED${NC}                              ${YELLOW}║${NC}"
+    echo -e "${YELLOW}╠════════════════════════════════════════════════════════════╣${NC}"
+    echo -e "${YELLOW}║${NC}                                                            ${YELLOW}║${NC}"
+    echo -e "${YELLOW}║${NC}  Wireguard Admin uses nftables for its firewall.          ${YELLOW}║${NC}"
+    echo -e "${YELLOW}║${NC}  The following services may conflict:                     ${YELLOW}║${NC}"
+    echo -e "${YELLOW}║${NC}                                                            ${YELLOW}║${NC}"
+    for conflict in "${FIREWALL_CONFLICTS[@]}"; do
+        printf "${YELLOW}║${NC}    • %-50s ${YELLOW}║${NC}\n" "$conflict"
+    done
+    echo -e "${YELLOW}║${NC}                                                            ${YELLOW}║${NC}"
+    echo -e "${YELLOW}║${NC}  Running both may cause:                                   ${YELLOW}║${NC}"
+    echo -e "${YELLOW}║${NC}    - Rule conflicts and unexpected blocking               ${YELLOW}║${NC}"
+    echo -e "${YELLOW}║${NC}    - Performance issues                                   ${YELLOW}║${NC}"
+    echo -e "${YELLOW}║${NC}    - Duplicate firewall management                        ${YELLOW}║${NC}"
+    echo -e "${YELLOW}║${NC}                                                            ${YELLOW}║${NC}"
+    echo -e "${YELLOW}╚════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+
+    echo -e "${CYAN}What would you like to do?${NC}"
+    echo "  1) Disable conflicting services (recommended)"
+    echo "  2) Continue anyway (may cause issues)"
+    echo "  3) Exit and resolve manually"
+    echo ""
+
+    read -p "Enter your choice [1-3]: " fw_choice
+
+    case "$fw_choice" in
+        1)
+            echo ""
+            for conflict in "${FIREWALL_CONFLICTS[@]}"; do
+                case "$conflict" in
+                    ufw)
+                        echo -e "${YELLOW}Disabling UFW...${NC}"
+                        sudo ufw disable
+                        echo -e "${GREEN}✓ UFW disabled${NC}"
+                        ;;
+                    fail2ban)
+                        echo -e "${YELLOW}Stopping Fail2ban...${NC}"
+                        sudo systemctl stop fail2ban
+                        sudo systemctl disable fail2ban
+                        echo -e "${GREEN}✓ Fail2ban stopped and disabled${NC}"
+                        ;;
+                esac
+            done
+            echo ""
+            echo -e "${GREEN}✓ Firewall conflicts resolved${NC}"
+            echo -e "${CYAN}Note: Wireguard Admin will manage firewall rules via nftables${NC}"
+            ;;
+        2)
+            echo -e "${YELLOW}Continuing with potential conflicts...${NC}"
+            echo -e "${RED}⚠ You may experience firewall issues${NC}"
+            ;;
+        3)
+            echo -e "${BLUE}Exiting...${NC}"
+            echo ""
+            echo "To resolve manually:"
+            for conflict in "${FIREWALL_CONFLICTS[@]}"; do
+                case "$conflict" in
+                    ufw)
+                        echo "  sudo ufw disable"
+                        ;;
+                    fail2ban)
+                        echo "  sudo systemctl stop fail2ban && sudo systemctl disable fail2ban"
+                        ;;
+                esac
+            done
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}Invalid choice${NC}"
+            exit 1
+            ;;
+    esac
+    echo ""
+else
+    echo -e "${GREEN}✓ No firewall conflicts detected${NC}"
+    echo ""
+fi
+
+# ===========================================
 # Environment File Setup
 # ===========================================
 
@@ -467,8 +590,19 @@ fi
 
 echo ""
 
-# 3. Check AdGuard credentials
-echo -e "${YELLOW}[3/3] Checking AdGuard credentials...${NC}"
+# 3. Admin Panel Domain
+echo -e "${YELLOW}[3/4] Admin Panel Domain:${NC}"
+echo "  Configure a custom domain for the admin panel (requires VPN connection)"
+echo ""
+
+read -p "Enter domain name [manage.me]: " ADMIN_DOMAIN
+ADMIN_DOMAIN=${ADMIN_DOMAIN:-manage.me}
+update_env_value "ADMIN_DOMAIN" "$ADMIN_DOMAIN"
+echo -e "${GREEN}✓ Admin domain set to: ${ADMIN_DOMAIN}${NC}"
+echo ""
+
+# 4. Check AdGuard credentials
+echo -e "${YELLOW}[4/4] Checking AdGuard credentials...${NC}"
 
 GENERATED_PASSWORD=""
 
@@ -542,6 +676,7 @@ REQUIRED_VARS=(
     "ADGUARD_PASS_HASH"
     "ADGUARD_PPROF_PORT"
     "IGNORE_NETWORKS"
+    "ADMIN_DOMAIN"
     "TRAEFIK_API"
     "RATE_LIMIT_AVERAGE"
     "RATE_LIMIT_BURST"
@@ -627,7 +762,7 @@ echo ""
 echo -e "${GREEN}=== VPN Stack Started ===${NC}"
 echo ""
 echo -e "${BLUE}Access your services:${NC}"
-echo -e "  ${GREEN}Dashboard:${NC}   http://${SERVER_IP}/"
+echo -e "  ${GREEN}Dashboard:${NC}   http://${SERVER_IP}/ (or http://${ADMIN_DOMAIN} via VPN)"
 echo -e "  ${GREEN}Traefik:${NC}     http://${SERVER_IP}:${TRAEFIK_PORT}"
 echo -e "  ${GREEN}AdGuard:${NC}     http://${SERVER_IP}:${ADGUARD_PORT}"
 echo -e "  ${GREEN}API:${NC}         http://${SERVER_IP}:${API_PORT}"

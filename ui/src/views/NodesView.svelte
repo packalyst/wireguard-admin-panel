@@ -933,7 +933,6 @@
 <Modal bind:open={showCreateModal} title="Add WireGuard Node" size="md">
   {#if createdPeer}
     <div class="space-y-4">
-      <!-- Success message -->
       <div class="p-4 bg-success/10 border border-success/20 rounded-lg flex items-center gap-3">
         <div class="w-10 h-10 rounded-full bg-success/20 flex items-center justify-center shrink-0">
           <Icon name="check" size={20} class="text-success" />
@@ -944,10 +943,6 @@
         </div>
       </div>
 
-      <!-- Divider -->
-      <div class="border-t border-border"></div>
-
-      <!-- Peer info -->
       <div class="grid grid-cols-2 gap-4">
         <div class="p-3 bg-muted/50 rounded-lg">
           <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Name</div>
@@ -964,66 +959,48 @@
           </div>
         </div>
       </div>
-
-      <!-- Divider -->
-      <div class="border-t border-border"></div>
-
-      <!-- Action buttons -->
-      <div class="flex gap-2">
-        <Button
-          onclick={async () => {
-            const config = await apiGetText(`/api/wg/peers/${createdPeer.id}/config`)
-            const blob = new Blob([config], { type: 'text/plain' })
-            const url = URL.createObjectURL(blob)
-            const a = document.createElement('a')
-            a.href = url
-            a.download = `${createdPeer.name}.conf`
-            a.click()
-            URL.revokeObjectURL(url)
-            toast('Config downloaded', 'success')
-          }}
-          icon="download"
-          class="flex-1 justify-center"
-        >
-          Download
-        </Button>
-        <Button
-          onclick={async () => {
-            const config = await apiGetText(`/api/wg/peers/${createdPeer.id}/config`)
-            copyToClipboard(config)
-          }}
-          variant="secondary"
-          icon="copy"
-          class="flex-1 justify-center"
-        >
-          Copy Config
-        </Button>
-      </div>
-
-      <Button onclick={() => showCreateModal = false} variant="secondary" class="w-full justify-center">
-        Done
-      </Button>
     </div>
   {:else}
-    <form onsubmit={(e) => { e.preventDefault(); createWgPeer() }}>
-      <Input
-        label="Device Name"
-        labelClass="block text-sm font-medium text-foreground mb-1.5"
-        helperText="A friendly name to identify this device"
-        helperClass="text-xs text-muted-foreground mt-1.5"
-        bind:value={newPeerName}
-        placeholder="e.g., iPhone, Laptop, Home Router"
-        class="w-full mb-4"
-        required
-      />
-      <div class="flex justify-end gap-2">
-        <Button type="button" onclick={() => showCreateModal = false} variant="secondary">
-          Cancel
-        </Button>
-        <Button type="submit">
-          Create WireGuard Device
-        </Button>
-      </div>
-    </form>
+    <Input
+      label="Device Name"
+      helperText="A friendly name to identify this device"
+      bind:value={newPeerName}
+      placeholder="e.g., iPhone, Laptop, Home Router"
+    />
   {/if}
+
+  {#snippet footer()}
+    {#if createdPeer}
+      <Button
+        onclick={async () => {
+          const config = await apiGetText(`/api/wg/peers/${createdPeer.id}/config`)
+          const blob = new Blob([config], { type: 'text/plain' })
+          const url = URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = url
+          a.download = `${createdPeer.name}.conf`
+          a.click()
+          URL.revokeObjectURL(url)
+          toast('Config downloaded', 'success')
+        }}
+        icon="download"
+      >
+        Download
+      </Button>
+      <Button
+        onclick={async () => {
+          const config = await apiGetText(`/api/wg/peers/${createdPeer.id}/config`)
+          copyToClipboard(config)
+        }}
+        variant="secondary"
+        icon="copy"
+      >
+        Copy Config
+      </Button>
+      <Button onclick={() => showCreateModal = false} variant="secondary">Done</Button>
+    {:else}
+      <Button onclick={() => showCreateModal = false} variant="secondary">Cancel</Button>
+      <Button onclick={createWgPeer}>Create WireGuard Device</Button>
+    {/if}
+  {/snippet}
 </Modal>

@@ -334,40 +334,26 @@
 
 <!-- Create User Modal -->
 <Modal bind:open={showCreateModal} title="Create User" size="sm">
-  <form onsubmit={(e) => { e.preventDefault(); createUser() }}>
-    <div class="mb-4">
-      <Input
-        bind:value={newUserName}
-        label="Username"
-        labelClass="block text-sm font-medium text-foreground mb-1.5"
-        placeholder="Enter username"
-        class="w-full"
-        required
-      />
-    </div>
-    <div class="flex justify-end gap-2">
-      <Button type="button" onclick={() => showCreateModal = false} variant="secondary">
-        Cancel
-      </Button>
-      <Button type="submit" disabled={creating}>
-        {#if creating}
-          <span class="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
-          Creating...
-        {:else}
-          Create
-        {/if}
-      </Button>
-    </div>
-  </form>
+  <Input
+    bind:value={newUserName}
+    label="Username"
+    placeholder="Enter username"
+  />
+
+  {#snippet footer()}
+    <Button onclick={() => showCreateModal = false} variant="secondary">Cancel</Button>
+    <Button onclick={createUser} disabled={creating}>
+      {creating ? 'Creating...' : 'Create'}
+    </Button>
+  {/snippet}
 </Modal>
 
 <!-- Edit User Modal -->
 <Modal bind:open={showEditModal} title={editingUser ? `Customize "${editingUser.name}"` : 'Customize User'} size="sm">
   {#if editingUser}
     <div class="space-y-6">
-      <!-- Color Picker -->
       <div>
-        <label class="block text-sm font-medium text-foreground mb-2">Color</label>
+        <label class="kt-label">Color</label>
         <div class="grid grid-cols-8 gap-2">
           {#each colors as color}
             <button
@@ -380,11 +366,9 @@
         </div>
       </div>
 
-      <!-- Emoji Picker -->
       <div>
-        <label class="block text-sm font-medium text-foreground mb-2">Avatar (optional)</label>
+        <label class="kt-label">Avatar (optional)</label>
         <div class="grid grid-cols-8 gap-2">
-          <!-- Default letter option -->
           <button
             type="button"
             onclick={() => selectedAvatar = ''}
@@ -405,9 +389,8 @@
         </div>
       </div>
 
-      <!-- Preview -->
       <div>
-        <label class="block text-sm font-medium text-foreground mb-2">Preview</label>
+        <label class="kt-label">Preview</label>
         <div class="flex items-center gap-3 p-3 bg-muted/50 rounded-lg">
           <div
             class="w-12 h-12 rounded-full flex items-center justify-center text-xl font-medium text-white"
@@ -419,66 +402,37 @@
         </div>
       </div>
     </div>
-
-    <div class="flex justify-end gap-2 mt-6">
-      <Button type="button" onclick={() => showEditModal = false} variant="secondary">
-        Cancel
-      </Button>
-      <Button type="button" onclick={saveCustomization}>
-        Save
-      </Button>
-    </div>
   {/if}
+
+  {#snippet footer()}
+    <Button onclick={() => showEditModal = false} variant="secondary">Cancel</Button>
+    <Button onclick={saveCustomization}>Save</Button>
+  {/snippet}
 </Modal>
 
 <!-- Delete Confirmation Modal -->
 <Modal bind:open={showDeleteModal} title="Delete User" size="sm">
   {#if deletingUser}
     {@const userNodeCount = getNodeCount(deletingUser.name)}
-    <div class="space-y-4">
-      <div class="p-4 bg-destructive/10 border border-destructive/20 rounded-lg">
-        <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-lg flex items-center justify-center bg-destructive/15 text-destructive shrink-0">
-            <Icon name="alert-triangle" size={20} />
-          </div>
-          <div>
-            <p class="font-medium text-foreground">Delete {deletingUser.name}?</p>
-            <p class="text-sm text-muted-foreground mt-0.5">
-              {#if userNodeCount > 0}
-                This will also delete {userNodeCount} node{userNodeCount > 1 ? 's' : ''}. This action cannot be undone.
-              {:else}
-                This action cannot be undone.
-              {/if}
-            </p>
-          </div>
-        </div>
-      </div>
-
-      <div class="flex gap-2">
-        <Button
-          type="button"
-          onclick={() => { showDeleteModal = false; deletingUser = null }}
-          variant="secondary"
-          class="flex-1 justify-center"
-          disabled={deleting}
-        >
-          Cancel
-        </Button>
-        <Button
-          type="button"
-          onclick={deleteUser}
-          variant="destructive"
-          class="flex-1 justify-center"
-          disabled={deleting}
-        >
-          {#if deleting}
-            <span class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+    <div class="kt-alert kt-alert-destructive">
+      <Icon name="alert-triangle" size={18} />
+      <div>
+        <p class="font-medium">Delete {deletingUser.name}?</p>
+        <p class="text-sm opacity-80 mt-0.5">
+          {#if userNodeCount > 0}
+            This will also delete {userNodeCount} node{userNodeCount > 1 ? 's' : ''}. This action cannot be undone.
           {:else}
-            <Icon name="trash" size={16} />
+            This action cannot be undone.
           {/if}
-          Delete
-        </Button>
+        </p>
       </div>
     </div>
   {/if}
+
+  {#snippet footer()}
+    <Button onclick={() => { showDeleteModal = false; deletingUser = null }} variant="secondary" disabled={deleting}>Cancel</Button>
+    <Button onclick={deleteUser} variant="destructive" icon="trash" disabled={deleting}>
+      {deleting ? 'Deleting...' : 'Delete'}
+    </Button>
+  {/snippet}
 </Modal>

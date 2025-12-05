@@ -190,6 +190,8 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"GetConfig":       s.handleGetConfig,
 		"UpdateConfig":    s.handleUpdateConfig,
 		"ApplyRules":      s.handleApplyRules,
+		"GetSSHPort":      s.handleGetSSHPort,
+		"ChangeSSHPort":   s.handleChangeSSHPort,
 		"Health":          s.handleHealth,
 	}
 }
@@ -1436,4 +1438,109 @@ func (s *Service) handleApplyRules(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) handleHealth(w http.ResponseWriter, r *http.Request) {
 	router.JSON(w, map[string]string{"status": "ok"})
+}
+
+func (s *Service) handleGetSSHPort(w http.ResponseWriter, r *http.Request) {
+	port := helper.GetSSHPort()
+	router.JSON(w, map[string]interface{}{
+		"port": port,
+	})
+}
+
+func (s *Service) handleChangeSSHPort(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Port int `json:"port"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		router.JSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Validate port
+	if req.Port < 1 || req.Port > 65535 {
+		router.JSONError(w, "invalid port number (must be 1-65535)", http.StatusBadRequest)
+		return
+	}
+
+	// Reserved ports check
+	if req.Port < 1024 && req.Port != 22 {
+		// Allow changing to standard SSH port, but warn about other privileged ports
+		log.Printf("Warning: changing SSH to privileged port %d", req.Port)
+	}
+
+	oldPort := helper.GetSSHPort()
+	if oldPort == req.Port {
+		router.JSON(w, map[string]interface{}{
+			"status":  "unchanged",
+			"port":    req.Port,
+			"message": "SSH is already on this port",
+		})
+		return
+	}
+
+	// Step 1: Add the new port to firewall allowed ports
+	_, err := s.db.Exec("INSERT OR IGNORE INTO allowed_ports (port, protocol, essential, service) VALUES (?, 'tcp', 1, 'SSH')",
+		req.Port)
+	if err != nil {
+		router.JSONError(w, "failed to add new port to firewall: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Apply firewall rules to allow the new port
+	if err := s.ApplyRules(); err != nil {
+		router.JSONError(w, "failed to apply firewall rules: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("SSH port change: added port %d to firewall", req.Port)
+
+	// Step 2: Update sshd_config
+	_, err = helper.SetSSHPort(req.Port)
+	if err != nil {
+		// Rollback: remove the new port from firewall
+		s.db.Exec("DELETE FROM allowed_ports WHERE port = ? AND service = 'SSH'", req.Port)
+		s.ApplyRules()
+		router.JSONError(w, "failed to update sshd_config: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("SSH port change: updated sshd_config from port %d to %d", oldPort, req.Port)
+
+	// Step 3: Restart SSH service
+	// Use nsenter to run systemctl in the host's namespace (since we run with pid: host and privileged: true)
+	cmd := exec.Command("nsenter", "-t", "1", "-m", "-u", "-i", "-n", "-p", "--", "systemctl", "restart", "sshd")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		// Try alternative service name (some systems use 'ssh' instead of 'sshd')
+		cmd = exec.Command("nsenter", "-t", "1", "-m", "-u", "-i", "-n", "-p", "--", "systemctl", "restart", "ssh")
+		if out2, err2 := cmd.CombinedOutput(); err2 != nil {
+			// Rollback: revert sshd_config
+			helper.SetSSHPort(oldPort)
+			// Rollback: remove new port from firewall
+			s.db.Exec("DELETE FROM allowed_ports WHERE port = ? AND service = 'SSH'", req.Port)
+			s.ApplyRules()
+			router.JSONError(w, fmt.Sprintf("failed to restart SSH: %v - %s / %s", err, string(out), string(out2)), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	log.Printf("SSH port change: restarted SSH service")
+
+	// Step 4: Remove old port from firewall (only if different from new port)
+	if oldPort != req.Port {
+		s.db.Exec("DELETE FROM allowed_ports WHERE port = ? AND service = 'SSH'", oldPort)
+		// Update essential ports list
+		s.config.EssentialPorts = helper.BuildEssentialPorts()
+		s.ApplyRules()
+		log.Printf("SSH port change: removed old port %d from firewall", oldPort)
+	}
+
+	// Update the sshd jail to monitor the new port
+	s.db.Exec("UPDATE jails SET port = ? WHERE name = 'sshd'", strconv.Itoa(req.Port))
+
+	router.JSON(w, map[string]interface{}{
+		"status":  "success",
+		"oldPort": oldPort,
+		"newPort": req.Port,
+		"message": fmt.Sprintf("SSH port changed from %d to %d", oldPort, req.Port),
+	})
 }

@@ -304,22 +304,10 @@
         {/if}
       </p>
     </div>
-
-    <div class="flex justify-end gap-2 mt-6">
-      <Button
-        type="button"
-        onclick={() => { showDeleteModal = false; deletingRoute = null }}
-        variant="secondary"
-      >
-        Cancel
-      </Button>
-      <Button
-        type="button"
-        onclick={deleteRoute}
-        variant="destructive"
-      >
-        Delete
-      </Button>
-    </div>
   {/if}
+
+  {#snippet footer()}
+    <Button onclick={() => { showDeleteModal = false; deletingRoute = null }} variant="secondary">Cancel</Button>
+    <Button onclick={deleteRoute} variant="destructive">Delete</Button>
+  {/snippet}
 </Modal>

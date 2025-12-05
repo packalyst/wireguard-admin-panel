@@ -11,7 +11,8 @@
     headerClass = '',
     bodyClass = '',
     children,
-    header
+    header,
+    footer
   } = $props()
 
   const sizes = {
@@ -102,5 +103,10 @@
     <div class="kt-modal-body {bodyClass}">
       {@render children()}
     </div>
+    {#if footer}
+      <div class="kt-modal-footer">
+        {@render footer()}
+      </div>
+    {/if}
   </div>
 </div>
