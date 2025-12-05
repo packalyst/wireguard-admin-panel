@@ -101,6 +101,8 @@
         {"path": "/config", "methods": ["GET"], "handler": "GetConfig", "description": "Get dynamic config"},
         {"path": "/config", "methods": ["PUT"], "handler": "UpdateConfig", "description": "Update dynamic config"},
         {"path": "/logs", "methods": ["GET"], "handler": "GetLogs", "description": "Get access logs"},
+        {"path": "/vpn-only", "methods": ["GET"], "handler": "GetVPNOnly", "description": "Get VPN-only mode status"},
+        {"path": "/vpn-only", "methods": ["POST"], "handler": "SetVPNOnly", "description": "Set VPN-only mode"},
         {"path": "/health", "methods": ["GET"], "handler": "Health", "description": "Health check"}
       ]
     },

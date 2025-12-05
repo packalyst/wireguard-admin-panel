@@ -38,6 +38,10 @@
   })
   let originalTraefik = $state(null)
 
+  // VPN-only mode: "off", "403", or "silent"
+  let vpnOnlyMode = $state('off')
+  let vpnOnlyLoading = $state(false)
+
   // Session settings
   let sessionTimeout = $state('24')
   let sessionChanged = $state(false)
@@ -52,10 +56,14 @@
   async function loadSettings() {
     loading = true
     try {
-      const [settings, traefikConfig] = await Promise.all([
+      const [settings, traefikConfig, vpnOnlyStatus] = await Promise.all([
         apiGet('/api/settings'),
-        apiGet('/api/traefik/config').catch(() => null)
+        apiGet('/api/traefik/config').catch(() => null),
+        apiGet('/api/traefik/vpn-only').catch(() => ({ enabled: false }))
       ])
+
+      // VPN-only mode
+      vpnOnlyMode = vpnOnlyStatus?.mode || 'off'
 
       // Headscale
       headscaleApiUrl = settings.headscale_api_url || ''
@@ -269,6 +277,25 @@
 
   function toggleTheme() {
     theme.update(t => t === 'dark' ? 'light' : 'dark')
+  }
+
+  // Set VPN-only mode
+  async function setVPNOnlyMode(mode) {
+    vpnOnlyLoading = true
+    try {
+      await apiPost('/api/traefik/vpn-only', { mode })
+      vpnOnlyMode = mode
+      const messages = {
+        'off': 'VPN-only mode disabled',
+        '403': 'VPN-only mode enabled (403 Forbidden)',
+        'silent': 'VPN-only mode enabled (Silent Drop)'
+      }
+      toast(messages[mode], 'success')
+    } catch (e) {
+      toast('Failed to set VPN-only mode: ' + e.message, 'error')
+    } finally {
+      vpnOnlyLoading = false
+    }
   }
 
   // Generate random secure credentials for AdGuard
@@ -608,6 +635,29 @@
             <div class="text-[10px] text-muted-foreground">Enable Traefik dashboard on port 8080 (requires restart)</div>
           </div>
           <input type="checkbox" class="kt-switch" bind:checked={traefikForm.dashboardEnabled} />
+        </div>
+
+        <!-- VPN-Only Mode Dropdown -->
+        <div class="flex items-center justify-between py-2 border-t border-border">
+          <div>
+            <div class="text-xs font-medium text-foreground">VPN-Only Mode</div>
+            <div class="text-[10px] text-muted-foreground">Restrict admin UI access to VPN clients only</div>
+          </div>
+          <div class="flex items-center gap-2">
+            {#if vpnOnlyLoading}
+              <span class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
+            {/if}
+            <select
+              class="kt-input text-xs py-1 px-2"
+              value={vpnOnlyMode}
+              onchange={(e) => setVPNOnlyMode(e.target.value)}
+              disabled={vpnOnlyLoading}
+            >
+              <option value="off">Disabled</option>
+              <option value="403">403 Forbidden</option>
+              <option value="silent">Silent Drop</option>
+            </select>
+          </div>
         </div>
 
         <!-- IP Allowlist -->

@@ -14,6 +14,7 @@ services:
       - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
       - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
       - ./traefik/logs:/var/log/traefik
+      - ./traefik/plugins-local/src:/plugins-local/src:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:

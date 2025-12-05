@@ -590,6 +590,13 @@ if [ -f "traefik/traefik.yml.template" ]; then
 fi
 
 if [ -f "traefik/dynamic.yml.template" ]; then
+    # Convert IGNORE_NETWORKS from comma-separated to YAML list format
+    IFS=',' read -ra NETS <<< "$IGNORE_NETWORKS"
+    VPN_SOURCE_RANGE=""
+    for net in "${NETS[@]}"; do
+        VPN_SOURCE_RANGE+="            - \"$net\""$'\n'
+    done
+    export VPN_SOURCE_RANGE="${VPN_SOURCE_RANGE%$'\n'}"  # Remove trailing newline
     envsubst < traefik/dynamic.yml.template > traefik/dynamic.yml
     echo "  ✓ traefik/dynamic.yml"
 fi
