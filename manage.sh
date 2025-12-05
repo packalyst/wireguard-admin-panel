@@ -467,8 +467,19 @@ fi
 
 echo ""
 
-# 3. Check AdGuard credentials
-echo -e "${YELLOW}[3/3] Checking AdGuard credentials...${NC}"
+# 3. Admin Panel Domain
+echo -e "${YELLOW}[3/4] Admin Panel Domain:${NC}"
+echo "  Configure a custom domain for the admin panel (requires VPN connection)"
+echo ""
+
+read -p "Enter domain name [manage.me]: " ADMIN_DOMAIN
+ADMIN_DOMAIN=${ADMIN_DOMAIN:-manage.me}
+update_env_value "ADMIN_DOMAIN" "$ADMIN_DOMAIN"
+echo -e "${GREEN}✓ Admin domain set to: ${ADMIN_DOMAIN}${NC}"
+echo ""
+
+# 4. Check AdGuard credentials
+echo -e "${YELLOW}[4/4] Checking AdGuard credentials...${NC}"
 
 GENERATED_PASSWORD=""
 
@@ -542,6 +553,7 @@ REQUIRED_VARS=(
     "ADGUARD_PASS_HASH"
     "ADGUARD_PPROF_PORT"
     "IGNORE_NETWORKS"
+    "ADMIN_DOMAIN"
     "TRAEFIK_API"
     "RATE_LIMIT_AVERAGE"
     "RATE_LIMIT_BURST"
@@ -627,7 +639,7 @@ echo ""
 echo -e "${GREEN}=== VPN Stack Started ===${NC}"
 echo ""
 echo -e "${BLUE}Access your services:${NC}"
-echo -e "  ${GREEN}Dashboard:${NC}   http://${SERVER_IP}/"
+echo -e "  ${GREEN}Dashboard:${NC}   http://${SERVER_IP}/ (or http://${ADMIN_DOMAIN} via VPN)"
 echo -e "  ${GREEN}Traefik:${NC}     http://${SERVER_IP}:${TRAEFIK_PORT}"
 echo -e "  ${GREEN}AdGuard:${NC}     http://${SERVER_IP}:${ADGUARD_PORT}"
 echo -e "  ${GREEN}API:${NC}         http://${SERVER_IP}:${API_PORT}"
