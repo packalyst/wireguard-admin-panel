@@ -21,7 +21,7 @@
     'adguard-logs': () => import('./AdGuardLogsView.svelte')
   }
 
-  let { onLogout } = $props()
+  let { onLogout, showAdguardBanner = false, onDismissAdguardBanner } = $props()
 
   let sidebarOpen = $state(false)
   let loading = $state(true)
@@ -363,6 +363,22 @@
         </a>
       </div>
     </header>
+
+    <!-- AdGuard Banner -->
+    {#if showAdguardBanner}
+      <div class="bg-warning/10 border-b border-warning/20 px-4 py-2.5 flex items-center justify-between gap-3">
+        <div class="flex items-center gap-2 text-sm">
+          <Icon name="alert-triangle" size={16} class="text-warning" />
+          <span class="text-warning font-medium">AdGuard credentials not configured.</span>
+          <button onclick={() => currentView.set('settings')} class="underline hover:no-underline text-warning">
+            Go to Settings
+          </button>
+        </div>
+        <button onclick={onDismissAdguardBanner} class="text-warning/70 hover:text-warning p-1" title="Dismiss">
+          <Icon name="x" size={14} />
+        </button>
+      </div>
+    {/if}
 
     <!-- Content area -->
     <section class="flex-1 overflow-auto bg-slate-100/80 p-3 dark:bg-zinc-950 lg:p-4">

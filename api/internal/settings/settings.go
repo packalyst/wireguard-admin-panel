@@ -152,6 +152,8 @@ func (s *Service) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Failed to save adguard_password: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		// Mark that adguard password has been configured
+		_ = setSetting("adguard_pass_changed", "true")
 		log.Printf("Updated adguard_password")
 	}
 

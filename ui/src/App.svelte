@@ -8,6 +8,7 @@
   let user = $state(null)
   let checking = $state(true)
   let needsSetup = $state(false)
+  let showAdguardBanner = $state(false)
 
   onMount(async () => {
     // First check if setup is complete
@@ -18,6 +19,8 @@
         checking = false
         return
       }
+      // Check if AdGuard password needs to be configured
+      showAdguardBanner = !setupStatus.adguardPassChanged
     } catch (e) {
       console.error('Setup check failed:', e)
     }
@@ -40,6 +43,8 @@
   function handleSetupComplete(loggedInUser) {
     needsSetup = false
     user = loggedInUser
+    // After setup, AdGuard is not configured yet
+    showAdguardBanner = true
   }
 
   function handleLogin(loggedInUser) {
@@ -61,7 +66,7 @@
 {:else if needsSetup}
   <SetupWizard onComplete={handleSetupComplete} />
 {:else if user}
-  <Dashboard onLogout={handleLogout} />
+  <Dashboard onLogout={handleLogout} {showAdguardBanner} onDismissAdguardBanner={() => showAdguardBanner = false} />
 {:else}
   <Login onLogin={handleLogin} />
 {/if}

@@ -51,9 +51,10 @@ func (s *Service) requireAuthIfCompleted(w http.ResponseWriter, r *http.Request)
 
 // SetupStatus represents the setup state
 type SetupStatus struct {
-	Completed    bool `json:"completed"`
-	HasAdmin     bool `json:"hasAdmin"`
-	HasHeadscale bool `json:"hasHeadscale"`
+	Completed           bool `json:"completed"`
+	HasAdmin            bool `json:"hasAdmin"`
+	HasHeadscale        bool `json:"hasHeadscale"`
+	AdguardPassChanged  bool `json:"adguardPassChanged"`
 }
 
 // SetupRequest represents the setup wizard data
@@ -348,6 +349,10 @@ func (s *Service) GetStatus() (*SetupStatus, error) {
 	// Check if headscale is configured (check for api_url which is the internal one)
 	_, err := settings.GetSetting("headscale_api_url")
 	status.HasHeadscale = err == nil
+
+	// Check if adguard password has been changed
+	_, err = settings.GetSetting("adguard_pass_changed")
+	status.AdguardPassChanged = err == nil
 
 	// Setup is complete if we have admin and headscale
 	status.Completed = status.HasAdmin && status.HasHeadscale
