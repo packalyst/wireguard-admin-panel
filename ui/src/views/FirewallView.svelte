@@ -88,7 +88,13 @@
   // Modals
   let showBlockModal = $state(false)
   let showUnblockModal = $state(false)
+  let showSSHModal = $state(false)
   let unblockingIP = $state(null)
+
+  // SSH port state
+  let sshPort = $state(22)
+  let newSSHPort = $state('')
+  let changingSSH = $state(false)
 
   // Forms
   let newPort = $state('')
@@ -102,6 +108,49 @@
       console.error('Failed to load status:', e)
     } finally {
       loading = false
+    }
+  }
+
+  // Load SSH port
+  async function loadSSHPort() {
+    try {
+      const res = await apiGet('/api/fw/ssh')
+      sshPort = res.port || 22
+    } catch (e) {
+      console.error('Failed to load SSH port:', e)
+    }
+  }
+
+  // Change SSH port
+  async function changeSSHPort() {
+    const port = parseInt(newSSHPort)
+    if (!port || port < 1 || port > 65535) {
+      toast('Invalid port number (1-65535)', 'error')
+      return
+    }
+    if (port === sshPort) {
+      toast('SSH is already on this port', 'info')
+      return
+    }
+
+    changingSSH = true
+    try {
+      const res = await apiPost('/api/fw/ssh', { port })
+      if (res.status === 'success') {
+        toast(`SSH port changed from ${res.oldPort} to ${res.newPort}`, 'success')
+        sshPort = res.newPort
+        showSSHModal = false
+        newSSHPort = ''
+        // Reload ports to reflect the change
+        ports = []
+        await loadPorts()
+      } else if (res.status === 'unchanged') {
+        toast(res.message, 'info')
+      }
+    } catch (e) {
+      toast('Failed to change SSH port: ' + e.message, 'error')
+    } finally {
+      changingSSH = false
     }
   }
 
@@ -375,6 +424,7 @@
   onMount(() => {
     loadStatus()
     loadPorts() // Load ports by default
+    loadSSHPort() // Load SSH port for the SSH change feature
   })
 
   onDestroy(() => {
@@ -483,8 +533,13 @@
               <Button onclick={addPort} size="sm" icon="plus">
                 Add Port
               </Button>
-              <div class="ml-auto text-sm text-slate-500 dark:text-zinc-400">
-                {sortedPorts.length} ports allowed
+              <div class="ml-auto flex items-center gap-3">
+                <Button onclick={() => { newSSHPort = sshPort.toString(); showSSHModal = true }} variant="outline" size="sm" icon="key">
+                  SSH: {sshPort}
+                </Button>
+                <span class="text-sm text-slate-500 dark:text-zinc-400">
+                  {sortedPorts.length} ports allowed
+                </span>
               </div>
             </div>
           </div>
@@ -933,44 +988,34 @@
 
 <!-- Block IP Modal -->
 <Modal bind:open={showBlockModal} title="Block IP Address" size="sm">
-  <form onsubmit={(e) => { e.preventDefault(); blockIP() }}>
-    <div class="space-y-4">
-      <Input
-        label="IP Address"
-        labelClass="block text-sm font-medium text-foreground mb-1.5"
-        bind:value={blockForm.ip}
-        class="w-full"
-        placeholder="e.g. 192.168.1.100"
-        required
-      />
-      <Input
-        label="Reason"
-        labelClass="block text-sm font-medium text-foreground mb-1.5"
-        bind:value={blockForm.reason}
-        class="w-full"
-        placeholder="Manual block (optional)"
-      />
-      <div>
-        <label class="block text-sm font-medium text-foreground mb-1.5">Duration</label>
-        <select bind:value={blockForm.duration} class="kt-input w-full">
-          <option value="1h">1 hour</option>
-          <option value="24h">24 hours</option>
-          <option value="7d">7 days</option>
-          <option value="30d">30 days</option>
-          <option value="90d">90 days</option>
-          <option value="permanent">Permanent</option>
-        </select>
-      </div>
+  <div class="space-y-4">
+    <Input
+      label="IP Address"
+      bind:value={blockForm.ip}
+      placeholder="e.g. 192.168.1.100"
+    />
+    <Input
+      label="Reason"
+      bind:value={blockForm.reason}
+      placeholder="Manual block (optional)"
+    />
+    <div>
+      <label class="kt-label">Duration</label>
+      <select bind:value={blockForm.duration} class="kt-input w-full">
+        <option value="1h">1 hour</option>
+        <option value="24h">24 hours</option>
+        <option value="7d">7 days</option>
+        <option value="30d">30 days</option>
+        <option value="90d">90 days</option>
+        <option value="permanent">Permanent</option>
+      </select>
     </div>
-    <div class="flex justify-end gap-2 mt-6">
-      <Button type="button" onclick={() => showBlockModal = false} variant="secondary">
-        Cancel
-      </Button>
-      <Button type="submit" variant="destructive" icon="ban">
-        Block IP
-      </Button>
-    </div>
-  </form>
+  </div>
+
+  {#snippet footer()}
+    <Button onclick={() => showBlockModal = false} variant="secondary">Cancel</Button>
+    <Button onclick={blockIP} variant="destructive" icon="ban">Block IP</Button>
+  {/snippet}
 </Modal>
 
 <!-- Unblock Confirmation Modal -->
@@ -987,22 +1032,54 @@
         This IP will be able to connect again.
       </p>
     </div>
-
-    <div class="flex justify-end gap-2 mt-6">
-      <Button
-        type="button"
-        onclick={() => { showUnblockModal = false; unblockingIP = null }}
-        variant="secondary"
-      >
-        Cancel
-      </Button>
-      <Button
-        type="button"
-        onclick={unblockIP}
-        icon="lock-open"
-      >
-        Unblock
-      </Button>
-    </div>
   {/if}
+
+  {#snippet footer()}
+    <Button onclick={() => { showUnblockModal = false; unblockingIP = null }} variant="secondary">Cancel</Button>
+    <Button onclick={unblockIP} icon="lock-open">Unblock</Button>
+  {/snippet}
+</Modal>
+
+<!-- Change SSH Port Modal -->
+<Modal bind:open={showSSHModal} title="Change SSH Port" size="sm">
+  <div class="space-y-4">
+    <div class="kt-alert kt-alert-warning">
+      <Icon name="alert-triangle" size={18} />
+      <div>
+        <strong>This will change your SSH port.</strong>
+        Ensure you can access the server on the new port before closing your session.
+      </div>
+    </div>
+
+    <div class="flex gap-3">
+      <div class="flex-1">
+        <label class="kt-label">Current Port</label>
+        <div class="kt-input font-mono bg-muted">{sshPort}</div>
+      </div>
+      <div class="flex-1">
+        <Input
+          label="New Port"
+          type="number"
+          bind:value={newSSHPort}
+          class="font-mono"
+          placeholder="2222"
+          min="1"
+          max="65535"
+        />
+      </div>
+    </div>
+
+    <p class="text-xs text-muted-foreground">
+      Common ports: 2222, 2022, 22022
+    </p>
+  </div>
+
+  {#snippet footer()}
+    <Button onclick={() => showSSHModal = false} variant="secondary" disabled={changingSSH}>
+      Cancel
+    </Button>
+    <Button onclick={changeSSHPort} icon="key" disabled={changingSSH || !newSSHPort || parseInt(newSSHPort) === sshPort}>
+      {changingSSH ? 'Changing...' : 'Change Port'}
+    </Button>
+  {/snippet}
 </Modal>

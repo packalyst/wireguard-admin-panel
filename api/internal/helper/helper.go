@@ -204,6 +204,11 @@ func UpdateYAMLBool(content, key string, value bool) string {
 	return content[:idx] + newLine + content[idx+lineEnd:]
 }
 
+// GetSSHPort reads the SSH port from sshd_config (exported version)
+func GetSSHPort() int {
+	return detectSSHPort()
+}
+
 // detectSSHPort reads the SSH port from sshd_config
 func detectSSHPort() int {
 	// Try common sshd_config locations
@@ -237,4 +242,71 @@ func detectSSHPort() int {
 
 	// Default SSH port
 	return 22
+}
+
+// SetSSHPort updates the SSH port in sshd_config
+// Returns the old port that was configured
+func SetSSHPort(newPort int) (int, error) {
+	configPath := "/etc/ssh/sshd_config"
+
+	// Read current config
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read sshd_config: %w", err)
+	}
+
+	oldPort := detectSSHPort()
+	lines := strings.Split(string(content), "\n")
+	var newLines []string
+	portFound := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Check for existing Port directive (not commented)
+		if strings.HasPrefix(trimmed, "Port ") {
+			newLines = append(newLines, fmt.Sprintf("Port %d", newPort))
+			portFound = true
+			continue
+		}
+
+		// Check for commented Port directive - uncomment and set new port
+		if strings.HasPrefix(trimmed, "#Port ") && !portFound {
+			newLines = append(newLines, fmt.Sprintf("Port %d", newPort))
+			portFound = true
+			continue
+		}
+
+		newLines = append(newLines, line)
+	}
+
+	// If no Port directive found, add one after the first comment block
+	if !portFound {
+		var finalLines []string
+		inserted := false
+		for i, line := range newLines {
+			finalLines = append(finalLines, line)
+			// Insert after initial comments, before first real directive
+			if !inserted && i > 0 && !strings.HasPrefix(strings.TrimSpace(line), "#") && strings.TrimSpace(line) != "" {
+				// Insert before this line
+				finalLines = finalLines[:len(finalLines)-1]
+				finalLines = append(finalLines, fmt.Sprintf("Port %d", newPort))
+				finalLines = append(finalLines, line)
+				inserted = true
+			}
+		}
+		if !inserted {
+			// Just append at the beginning after any initial comments
+			finalLines = append([]string{fmt.Sprintf("Port %d", newPort)}, newLines...)
+		}
+		newLines = finalLines
+	}
+
+	// Write back
+	newContent := strings.Join(newLines, "\n")
+	if err := os.WriteFile(configPath, []byte(newContent), 0644); err != nil {
+		return oldPort, fmt.Errorf("failed to write sshd_config: %w", err)
+	}
+
+	return oldPort, nil
 }

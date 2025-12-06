@@ -24,7 +24,7 @@
   };
 
   const sizeClasses = {
-    default: '',
+    default: 'kt-btn-sm',
     sm: 'kt-btn-sm',
     xs: 'kt-btn-xs'
   };
