@@ -352,71 +352,61 @@
 
 <!-- Create Modal -->
 <Modal bind:open={showCreateModal} title="Create Auth Key" size="sm">
-  <form onsubmit={(e) => { e.preventDefault(); createKey() }}>
-    <div class="space-y-4">
-      <div>
-        <label class="block text-sm font-medium text-foreground mb-1.5">User</label>
-        <select bind:value={createForm.user} class="kt-input w-full" required>
-          <option value="">Select user...</option>
-          {#each users as user}
-            <option value={user.name}>{user.name}</option>
-          {/each}
-        </select>
-      </div>
-      <div>
-        <label class="block text-sm font-medium text-foreground mb-1.5">Expiration</label>
-        <select bind:value={createForm.expiration} class="kt-input w-full">
-          <option value="1">1 day</option>
-          <option value="7">7 days</option>
-          <option value="30">30 days</option>
-          <option value="90">90 days</option>
-          <option value="365">1 year</option>
-        </select>
-        <p class="text-xs text-muted-foreground mt-1.5">Key will expire on {new Date(Date.now() + parseInt(createForm.expiration) * 24 * 60 * 60 * 1000).toLocaleDateString()}</p>
-      </div>
-      <div class="flex gap-6">
-        <label class="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" bind:checked={createForm.reusable} class="w-4 h-4 rounded border-border" />
-          <span class="text-sm text-foreground">Reusable</span>
-        </label>
-        <label class="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" bind:checked={createForm.ephemeral} class="w-4 h-4 rounded border-border" />
-          <span class="text-sm text-foreground">Ephemeral</span>
-        </label>
-      </div>
-      <div class="text-xs text-muted-foreground bg-muted/50 p-2 rounded space-y-1">
-        <p><strong>Reusable:</strong> Key can register multiple devices (e.g., CI runners)</p>
-        <p><strong>Ephemeral:</strong> Nodes auto-removed when offline (e.g., containers)</p>
-        <p class="text-[10px] opacity-75">Both can be enabled for short-lived workloads like CI/CD pipelines</p>
-      </div>
+  <div class="space-y-4">
+    <div>
+      <label class="kt-label">User</label>
+      <select bind:value={createForm.user} class="kt-input w-full">
+        <option value="">Select user...</option>
+        {#each users as user}
+          <option value={user.name}>{user.name}</option>
+        {/each}
+      </select>
     </div>
-    <div class="flex justify-end gap-2 mt-6">
-      <Button type="button" onclick={() => showCreateModal = false} variant="secondary">Cancel</Button>
-      <Button type="submit" disabled={creating}>
-        {#if creating}
-          <span class="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
-          Creating...
-        {:else}
-          Create
-        {/if}
-      </Button>
+    <div>
+      <label class="kt-label">Expiration</label>
+      <select bind:value={createForm.expiration} class="kt-input w-full">
+        <option value="1">1 day</option>
+        <option value="7">7 days</option>
+        <option value="30">30 days</option>
+        <option value="90">90 days</option>
+        <option value="365">1 year</option>
+      </select>
+      <p class="text-xs text-muted-foreground mt-1.5">Key will expire on {new Date(Date.now() + parseInt(createForm.expiration) * 24 * 60 * 60 * 1000).toLocaleDateString()}</p>
     </div>
-  </form>
+    <div class="flex gap-6">
+      <label class="flex items-center gap-2 cursor-pointer">
+        <input type="checkbox" bind:checked={createForm.reusable} class="w-4 h-4 rounded border-border" />
+        <span class="text-sm text-foreground">Reusable</span>
+      </label>
+      <label class="flex items-center gap-2 cursor-pointer">
+        <input type="checkbox" bind:checked={createForm.ephemeral} class="w-4 h-4 rounded border-border" />
+        <span class="text-sm text-foreground">Ephemeral</span>
+      </label>
+    </div>
+    <div class="text-xs text-muted-foreground bg-muted/50 p-2 rounded space-y-1">
+      <p><strong>Reusable:</strong> Key can register multiple devices (e.g., CI runners)</p>
+      <p><strong>Ephemeral:</strong> Nodes auto-removed when offline (e.g., containers)</p>
+      <p class="text-[10px] opacity-75">Both can be enabled for short-lived workloads like CI/CD pipelines</p>
+    </div>
+  </div>
+
+  {#snippet footer()}
+    <Button onclick={() => showCreateModal = false} variant="secondary">Cancel</Button>
+    <Button onclick={createKey} disabled={creating || !createForm.user}>
+      {creating ? 'Creating...' : 'Create'}
+    </Button>
+  {/snippet}
 </Modal>
 
 <!-- Expire Confirmation Modal -->
 <Modal bind:open={showExpireModal} title="Expire Auth Key" size="sm">
   {#if expiringKey}
     <div class="space-y-4">
-      <div class="p-4 bg-destructive/10 border border-destructive/20 rounded-lg">
-        <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-lg flex items-center justify-center bg-destructive/15 text-destructive shrink-0">
-            <Icon name="alert-triangle" size={20} />
-          </div>
-          <div>
-            <p class="font-medium text-foreground">Expire this key?</p>
-            <p class="text-sm text-muted-foreground mt-0.5">This key will no longer work to register new devices. This action cannot be undone.</p>
-          </div>
+      <div class="kt-alert kt-alert-destructive">
+        <Icon name="alert-triangle" size={18} />
+        <div>
+          <p class="font-medium">Expire this key?</p>
+          <p class="text-sm opacity-80 mt-0.5">This key will no longer work to register new devices. This action cannot be undone.</p>
         </div>
       </div>
 
@@ -424,32 +414,13 @@
         <p><strong>Key:</strong> <code class="font-mono">{expiringKey.key?.substring(0, 16)}...</code></p>
         <p><strong>User:</strong> {expiringKey.userName || expiringKey.user}</p>
       </div>
-
-      <div class="flex gap-2">
-        <Button
-          type="button"
-          onclick={() => { showExpireModal = false; expiringKey = null }}
-          variant="secondary"
-          class="flex-1 justify-center"
-          disabled={expiring}
-        >
-          Cancel
-        </Button>
-        <Button
-          type="button"
-          onclick={expireKey}
-          variant="destructive"
-          class="flex-1 justify-center"
-          disabled={expiring}
-        >
-          {#if expiring}
-            <span class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
-          {:else}
-            <Icon name="ban" size={16} />
-          {/if}
-          Expire Key
-        </Button>
-      </div>
     </div>
   {/if}
+
+  {#snippet footer()}
+    <Button onclick={() => { showExpireModal = false; expiringKey = null }} variant="secondary" disabled={expiring}>Cancel</Button>
+    <Button onclick={expireKey} variant="destructive" icon="ban" disabled={expiring}>
+      {expiring ? 'Expiring...' : 'Expire Key'}
+    </Button>
+  {/snippet}
 </Modal>

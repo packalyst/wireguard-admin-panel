@@ -302,15 +302,8 @@
 <Modal bind:open={showLogsModal} title="{logsContainer?.name} Logs" size="lg">
   <div class="space-y-3">
     <div class="flex items-center justify-between">
-      <div class="text-sm text-muted-foreground">
-        Last 200 lines
-      </div>
-      <Button onclick={refreshLogs} variant="secondary" size="sm" disabled={loadingLogs}>
-        {#if loadingLogs}
-          <div class="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
-        {:else}
-          <Icon name="refresh" size={14} />
-        {/if}
+      <div class="text-sm text-muted-foreground">Last 200 lines</div>
+      <Button onclick={refreshLogs} variant="secondary" size="sm" icon="refresh" disabled={loadingLogs}>
         Refresh
       </Button>
     </div>
@@ -336,9 +329,7 @@
     </div>
   </div>
 
-  <div class="flex justify-end mt-4">
-    <Button onclick={() => showLogsModal = false} variant="secondary">
-      Close
-    </Button>
-  </div>
+  {#snippet footer()}
+    <Button onclick={() => showLogsModal = false} variant="secondary">Close</Button>
+  {/snippet}
 </Modal>

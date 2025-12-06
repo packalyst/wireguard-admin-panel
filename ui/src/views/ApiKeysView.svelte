@@ -290,7 +290,6 @@
 <Modal bind:open={showCreateModal} title="Create API Key" size="sm">
   {#if newKey}
     <div class="space-y-4">
-      <!-- Success header -->
       <div class="flex items-center gap-3 pb-3 border-b border-border">
         <div class="w-10 h-10 rounded-lg flex items-center justify-center bg-success/15 text-success">
           <Icon name="check" size={20} />
@@ -301,96 +300,56 @@
         </div>
       </div>
 
-      <div class="p-3 bg-warning/10 border border-warning/20 rounded-lg">
-        <div class="flex items-center gap-2 text-warning mb-2">
-          <Icon name="alert-triangle" size={14} />
-          <span class="text-sm font-medium">Warning</span>
+      <div class="kt-alert kt-alert-warning">
+        <Icon name="alert-triangle" size={16} />
+        <div>
+          <p class="text-sm">You won't be able to see this key again.</p>
+          <code class="block text-xs font-mono break-all mt-2 p-2 bg-muted rounded">{newKey}</code>
         </div>
-        <p class="text-xs text-muted-foreground mb-2">You won't be able to see this key again after closing this dialog.</p>
-        <code class="block text-xs font-mono break-all text-foreground bg-muted p-2 rounded">{newKey}</code>
-      </div>
-
-      <div class="pt-3 border-t border-border space-y-2">
-        <Button
-          onclick={() => copyToClipboard(newKey)}
-          class="w-full justify-center"
-        >
-          <Icon name="copy" size={16} />
-          Copy to Clipboard
-        </Button>
-        <Button onclick={() => showCreateModal = false} variant="secondary" class="w-full justify-center">
-          Done
-        </Button>
       </div>
     </div>
   {:else}
-    <form onsubmit={(e) => { e.preventDefault(); createKey() }}>
-      <div class="mb-4">
-        <label class="block text-sm font-medium text-foreground mb-1.5">Expiration</label>
-        <select bind:value={newExpiration} class="kt-input w-full">
-          <option value="7">7 days</option>
-          <option value="30">30 days</option>
-          <option value="90">90 days</option>
-          <option value="365">1 year</option>
-        </select>
-        <p class="text-xs text-muted-foreground mt-1.5">Key will expire on {new Date(Date.now() + parseInt(newExpiration) * 24 * 60 * 60 * 1000).toLocaleDateString()}</p>
-      </div>
-      <div class="flex justify-end gap-2">
-        <Button type="button" onclick={() => showCreateModal = false} variant="secondary">Cancel</Button>
-        <Button type="submit" disabled={creating}>
-          {#if creating}
-            <span class="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
-            Creating...
-          {:else}
-            Create
-          {/if}
-        </Button>
-      </div>
-    </form>
+    <div>
+      <label class="kt-label">Expiration</label>
+      <select bind:value={newExpiration} class="kt-input w-full">
+        <option value="7">7 days</option>
+        <option value="30">30 days</option>
+        <option value="90">90 days</option>
+        <option value="365">1 year</option>
+      </select>
+      <p class="text-xs text-muted-foreground mt-1.5">Key will expire on {new Date(Date.now() + parseInt(newExpiration) * 24 * 60 * 60 * 1000).toLocaleDateString()}</p>
+    </div>
   {/if}
+
+  {#snippet footer()}
+    {#if newKey}
+      <Button onclick={() => copyToClipboard(newKey)} icon="copy">Copy to Clipboard</Button>
+      <Button onclick={() => showCreateModal = false} variant="secondary">Done</Button>
+    {:else}
+      <Button onclick={() => showCreateModal = false} variant="secondary">Cancel</Button>
+      <Button onclick={createKey} disabled={creating}>
+        {creating ? 'Creating...' : 'Create'}
+      </Button>
+    {/if}
+  {/snippet}
 </Modal>
 
 <!-- Expire Confirmation Modal -->
 <Modal bind:open={showDeleteModal} title="Expire API Key" size="sm">
   {#if deletingKey}
-    <div class="space-y-4">
-      <div class="p-4 bg-destructive/10 border border-destructive/20 rounded-lg">
-        <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-lg flex items-center justify-center bg-destructive/15 text-destructive shrink-0">
-            <Icon name="alert-triangle" size={20} />
-          </div>
-          <div>
-            <p class="font-medium text-foreground">Expire key {deletingKey.prefix}...?</p>
-            <p class="text-sm text-muted-foreground mt-0.5">This key will no longer work for API access. This action cannot be undone.</p>
-          </div>
-        </div>
-      </div>
-
-      <div class="flex gap-2">
-        <Button
-          type="button"
-          onclick={() => { showDeleteModal = false; deletingKey = null }}
-          variant="secondary"
-          class="flex-1 justify-center"
-          disabled={deleting}
-        >
-          Cancel
-        </Button>
-        <Button
-          type="button"
-          onclick={expireKey}
-          variant="destructive"
-          class="flex-1 justify-center"
-          disabled={deleting}
-        >
-          {#if deleting}
-            <span class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
-          {:else}
-            <Icon name="ban" size={16} />
-          {/if}
-          Expire Key
-        </Button>
+    <div class="kt-alert kt-alert-destructive">
+      <Icon name="alert-triangle" size={18} />
+      <div>
+        <p class="font-medium">Expire key {deletingKey.prefix}...?</p>
+        <p class="text-sm opacity-80 mt-0.5">This key will no longer work for API access. This action cannot be undone.</p>
       </div>
     </div>
   {/if}
+
+  {#snippet footer()}
+    <Button onclick={() => { showDeleteModal = false; deletingKey = null }} variant="secondary" disabled={deleting}>Cancel</Button>
+    <Button onclick={expireKey} variant="destructive" icon="ban" disabled={deleting}>
+      {deleting ? 'Expiring...' : 'Expire Key'}
+    </Button>
+  {/snippet}
 </Modal>
