@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { toast, apiGet, apiPost, apiDelete } from '../stores/app.js'
+  import { toast, apiGet, apiPost, apiPut, apiDelete } from '../stores/app.js'
   import Icon from '../components/Icon.svelte'
   import Badge from '../components/Badge.svelte'
   import Modal from '../components/Modal.svelte'
@@ -89,7 +89,10 @@
   let showBlockModal = $state(false)
   let showUnblockModal = $state(false)
   let showSSHModal = $state(false)
+  let showJailModal = $state(false)
+  let showDeleteJailModal = $state(false)
   let unblockingIP = $state(null)
+  let deletingJail = $state(null)
 
   // SSH port state
   let sshPort = $state(22)
@@ -99,6 +102,19 @@
   // Forms
   let newPort = $state('')
   let blockForm = $state({ ip: '', reason: '', duration: '30d' })
+  let jailForm = $state({
+    id: null,
+    name: '',
+    enabled: true,
+    logFile: '/var/log/kern.log',
+    filterRegex: '',
+    maxRetry: 10,
+    findTime: 3600,
+    banTime: 2592000,
+    port: 'all',
+    action: 'drop'
+  })
+  let savingJail = $state(false)
 
   // Load status on mount
   async function loadStatus() {
@@ -374,6 +390,108 @@
       showUnblockModal = false
       unblockingIP = null
       await reloadSection('blocked')
+    } catch (e) {
+      toast('Failed: ' + e.message, 'error')
+    }
+  }
+
+  // Jail management
+  function openCreateJail() {
+    jailForm = {
+      id: null,
+      name: '',
+      enabled: true,
+      logFile: '/var/log/kern.log',
+      filterRegex: '',
+      maxRetry: 10,
+      findTime: 3600,
+      banTime: 2592000,
+      port: 'all',
+      action: 'drop'
+    }
+    showJailModal = true
+  }
+
+  function openEditJail(jail) {
+    jailForm = {
+      id: jail.id,
+      name: jail.name,
+      enabled: jail.enabled,
+      logFile: jail.logFile,
+      filterRegex: jail.filterRegex,
+      maxRetry: jail.maxRetry,
+      findTime: jail.findTime,
+      banTime: jail.banTime,
+      port: jail.port,
+      action: jail.action
+    }
+    showJailModal = true
+  }
+
+  async function saveJail() {
+    if (!jailForm.name.trim()) {
+      toast('Jail name is required', 'error')
+      return
+    }
+    if (!jailForm.filterRegex.trim()) {
+      toast('Filter regex is required', 'error')
+      return
+    }
+
+    savingJail = true
+    try {
+      if (jailForm.id) {
+        // Update existing jail
+        await apiPut(`/api/fw/jails/${jailForm.name}`, {
+          enabled: jailForm.enabled,
+          logFile: jailForm.logFile,
+          filterRegex: jailForm.filterRegex,
+          maxRetry: parseInt(jailForm.maxRetry) || 10,
+          findTime: parseInt(jailForm.findTime) || 3600,
+          banTime: parseInt(jailForm.banTime) || 2592000,
+          port: jailForm.port,
+          action: jailForm.action
+        })
+        toast(`Jail "${jailForm.name}" updated`, 'success')
+      } else {
+        // Create new jail
+        await apiPost('/api/fw/jails', {
+          name: jailForm.name,
+          enabled: jailForm.enabled,
+          logFile: jailForm.logFile,
+          filterRegex: jailForm.filterRegex,
+          maxRetry: parseInt(jailForm.maxRetry) || 10,
+          findTime: parseInt(jailForm.findTime) || 3600,
+          banTime: parseInt(jailForm.banTime) || 2592000,
+          port: jailForm.port,
+          action: jailForm.action
+        })
+        toast(`Jail "${jailForm.name}" created`, 'success')
+      }
+      showJailModal = false
+      await reloadSection('jails')
+      await loadStatus()
+    } catch (e) {
+      toast('Failed: ' + e.message, 'error')
+    } finally {
+      savingJail = false
+    }
+  }
+
+  function confirmDeleteJail(jail) {
+    deletingJail = jail
+    showDeleteJailModal = true
+  }
+
+  async function deleteJail() {
+    if (!deletingJail) return
+    try {
+      await apiDelete(`/api/fw/jails/${deletingJail.name}`)
+      toast(`Jail "${deletingJail.name}" deleted`, 'success')
+      showDeleteJailModal = false
+      deletingJail = null
+      await reloadSection('jails')
+      await loadStatus()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
     }
@@ -900,6 +1018,19 @@
 
         <!-- Jails Tab -->
         {:else if activeTab === 'jails'}
+          <!-- Toolbar -->
+          <div class="rounded-xl border border-slate-200 bg-slate-50/90 px-4 py-3 mb-4 dark:border-zinc-800 dark:bg-zinc-900/80">
+            <div class="flex flex-wrap items-center gap-3">
+              <span class="text-sm text-slate-500 dark:text-zinc-400">
+                {jails.length} jail{jails.length !== 1 ? 's' : ''} configured
+              </span>
+              <div class="ml-auto"></div>
+              <Button onclick={openCreateJail} size="sm" icon="plus">
+                Add Jail
+              </Button>
+            </div>
+          </div>
+
           {#if loadingJails}
             <div class="flex flex-col items-center justify-center py-8">
               <div class="w-6 h-6 border-2 border-muted border-t-primary rounded-full animate-spin"></div>
@@ -911,7 +1042,10 @@
                 <Icon name="lock" size={24} />
               </div>
               <h4 class="mt-4 text-base font-medium text-slate-700 dark:text-zinc-200">No Jails Configured</h4>
-              <p class="mt-1 text-sm text-slate-500 dark:text-zinc-400">Security jails will appear here</p>
+              <p class="mt-1 text-sm text-slate-500 dark:text-zinc-400">Create a jail to automatically block malicious IPs</p>
+              <Button onclick={openCreateJail} size="sm" icon="plus" class="mt-4">
+                Create Jail
+              </Button>
             </div>
           {:else}
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -939,6 +1073,20 @@
                           Disabled
                         </span>
                       {/if}
+                      <button
+                        onclick={() => openEditJail(jail)}
+                        class="p-1.5 rounded text-slate-400 hover:text-primary hover:bg-primary/10 transition-colors"
+                        title="Edit jail"
+                      >
+                        <Icon name="edit" size={14} />
+                      </button>
+                      <button
+                        onclick={() => confirmDeleteJail(jail)}
+                        class="p-1.5 rounded text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                        title="Delete jail"
+                      >
+                        <Icon name="trash" size={14} />
+                      </button>
                     </div>
                   </div>
 
@@ -1080,6 +1228,123 @@
     </Button>
     <Button onclick={changeSSHPort} icon="key" disabled={changingSSH || !newSSHPort || parseInt(newSSHPort) === sshPort}>
       {changingSSH ? 'Changing...' : 'Change Port'}
+    </Button>
+  {/snippet}
+</Modal>
+
+<!-- Create/Edit Jail Modal -->
+<Modal bind:open={showJailModal} title={jailForm.id ? 'Edit Jail' : 'Create Jail'} size="md">
+  <div class="space-y-4">
+    <div class="grid grid-cols-2 gap-4">
+      <Input
+        label="Name"
+        bind:value={jailForm.name}
+        placeholder="e.g. sshd, portscan"
+        disabled={!!jailForm.id}
+      />
+      <div>
+        <label class="kt-label">Status</label>
+        <select bind:value={jailForm.enabled} class="kt-input w-full">
+          <option value={true}>Enabled</option>
+          <option value={false}>Disabled</option>
+        </select>
+      </div>
+    </div>
+
+    <Input
+      label="Log File"
+      bind:value={jailForm.logFile}
+      placeholder="/var/log/auth.log"
+    />
+
+    <Input
+      label="Filter Regex"
+      bind:value={jailForm.filterRegex}
+      placeholder="e.g. Failed password.*from (\d+\.\d+\.\d+\.\d+)"
+      class="font-mono"
+      helperText="Must contain at least one capture group for the IP address"
+    />
+
+    <div class="grid grid-cols-3 gap-4">
+      <Input
+        label="Max Retry"
+        type="number"
+        bind:value={jailForm.maxRetry}
+        min="1"
+        max="100"
+      />
+      <div>
+        <label class="kt-label">Find Time</label>
+        <select bind:value={jailForm.findTime} class="kt-input w-full">
+          <option value={300}>5 minutes</option>
+          <option value={600}>10 minutes</option>
+          <option value={1800}>30 minutes</option>
+          <option value={3600}>1 hour</option>
+          <option value={7200}>2 hours</option>
+          <option value={86400}>24 hours</option>
+        </select>
+      </div>
+      <div>
+        <label class="kt-label">Ban Time</label>
+        <select bind:value={jailForm.banTime} class="kt-input w-full">
+          <option value={3600}>1 hour</option>
+          <option value={86400}>1 day</option>
+          <option value={604800}>7 days</option>
+          <option value={2592000}>30 days</option>
+          <option value={31536000}>1 year</option>
+          <option value={-1}>Permanent</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 gap-4">
+      <Input
+        label="Port"
+        bind:value={jailForm.port}
+        placeholder="all or specific port"
+      />
+      <div>
+        <label class="kt-label">Action</label>
+        <select bind:value={jailForm.action} class="kt-input w-full">
+          <option value="drop">Drop</option>
+          <option value="reject">Reject</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  {#snippet footer()}
+    <Button onclick={() => showJailModal = false} variant="secondary" disabled={savingJail}>
+      Cancel
+    </Button>
+    <Button onclick={saveJail} icon={jailForm.id ? 'check' : 'plus'} disabled={savingJail}>
+      {savingJail ? 'Saving...' : (jailForm.id ? 'Save Changes' : 'Create Jail')}
+    </Button>
+  {/snippet}
+</Modal>
+
+<!-- Delete Jail Confirmation Modal -->
+<Modal bind:open={showDeleteJailModal} title="Delete Jail" size="sm">
+  {#if deletingJail}
+    <div class="text-center">
+      <div class="w-12 h-12 rounded-full bg-destructive/10 flex items-center justify-center mx-auto mb-4">
+        <Icon name="trash" size={24} class="text-destructive" />
+      </div>
+      <p class="text-foreground mb-2">
+        Delete jail <strong>{deletingJail.name}</strong>?
+      </p>
+      <p class="text-sm text-muted-foreground">
+        This will stop the jail monitor and remove all associated blocked IPs.
+      </p>
+    </div>
+  {/if}
+
+  {#snippet footer()}
+    <Button onclick={() => { showDeleteJailModal = false; deletingJail = null }} variant="secondary">
+      Cancel
+    </Button>
+    <Button onclick={deleteJail} variant="destructive" icon="trash">
+      Delete Jail
     </Button>
   {/snippet}
 </Modal>
