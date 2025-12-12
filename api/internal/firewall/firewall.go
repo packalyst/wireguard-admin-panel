@@ -198,6 +198,9 @@ func (s *Service) Handlers() router.ServiceHandlers {
 
 // ensureDefaultJails inserts default jails and ports if they don't exist
 func (s *Service) ensureDefaultJails() error {
+	// Get actual SSH port from system
+	sshPort := strconv.Itoa(helper.GetSSHPort())
+
 	// Insert default jails
 	defaultJails := []Jail{
 		{Name: "portscan", Enabled: true, LogFile: "/var/log/kern.log",
@@ -205,7 +208,7 @@ func (s *Service) ensureDefaultJails() error {
 			MaxRetry: 10, FindTime: 300, BanTime: 2592000, Port: "all", Action: "drop"},
 		{Name: "sshd", Enabled: true, LogFile: "/var/log/auth.log",
 			FilterRegex: `Failed password.*from (\d+\.\d+\.\d+\.\d+)`,
-			MaxRetry: 5, FindTime: 600, BanTime: 2592000, Port: "22", Action: "drop"},
+			MaxRetry: 5, FindTime: 600, BanTime: 2592000, Port: sshPort, Action: "drop"},
 	}
 
 	for _, jail := range defaultJails {
@@ -213,6 +216,9 @@ func (s *Service) ensureDefaultJails() error {
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			jail.Name, jail.Enabled, jail.LogFile, jail.FilterRegex, jail.MaxRetry, jail.FindTime, jail.BanTime, jail.Port, jail.Action)
 	}
+
+	// Update sshd jail port in case it changed (INSERT OR IGNORE won't update existing)
+	s.db.Exec(`UPDATE jails SET port = ? WHERE name = 'sshd'`, sshPort)
 
 	// Insert default ports
 	var portCount int
@@ -1166,7 +1172,7 @@ func (s *Service) handleGetJails(w http.ResponseWriter, r *http.Request) {
 	// Single query with LEFT JOIN to avoid N+1 queries
 	rows, err := s.db.Query(`
 		SELECT j.id, j.name, j.enabled, j.log_file, j.filter_regex, j.max_retry, j.find_time, j.ban_time, j.port, j.action,
-			COUNT(CASE WHEN b.expires_at IS NULL OR b.expires_at > datetime('now') THEN 1 END) as currently_banned,
+			COUNT(CASE WHEN b.id IS NOT NULL AND (b.expires_at IS NULL OR b.expires_at > datetime('now')) THEN 1 END) as currently_banned,
 			COUNT(b.id) as total_banned
 		FROM jails j
 		LEFT JOIN blocked_ips b ON j.name = b.jail_name
@@ -1228,7 +1234,7 @@ func (s *Service) handleGetJail(w http.ResponseWriter, r *http.Request) {
 	// Single query with LEFT JOIN to get jail and counts
 	err := s.db.QueryRow(`
 		SELECT j.id, j.name, j.enabled, j.log_file, j.filter_regex, j.max_retry, j.find_time, j.ban_time, j.port, j.action,
-			COUNT(CASE WHEN b.expires_at IS NULL OR b.expires_at > datetime('now') THEN 1 END) as currently_banned,
+			COUNT(CASE WHEN b.id IS NOT NULL AND (b.expires_at IS NULL OR b.expires_at > datetime('now')) THEN 1 END) as currently_banned,
 			COUNT(b.id) as total_banned
 		FROM jails j
 		LEFT JOIN blocked_ips b ON j.name = b.jail_name
