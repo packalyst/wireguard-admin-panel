@@ -15,6 +15,7 @@ import (
 	"api/internal/router"
 	"api/internal/settings"
 	"api/internal/setup"
+	"api/internal/smtp"
 	"api/internal/traefik"
 	"api/internal/wireguard"
 )
@@ -72,6 +73,13 @@ func main() {
 		settingsSvc := settings.New()
 		r.RegisterService("settings", settingsSvc.Handlers())
 		log.Println("Settings service registered")
+	}
+
+	// SMTP service (depends on auth for encryption)
+	if config.IsServiceEnabled("smtp") {
+		smtpSvc := smtp.New()
+		r.RegisterService("smtp", smtpSvc.Handlers())
+		log.Println("SMTP service registered")
 	}
 
 	if config.IsServiceEnabled("firewall") {

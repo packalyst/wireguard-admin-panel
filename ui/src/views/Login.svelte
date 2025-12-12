@@ -11,6 +11,11 @@
   let loading = $state(false)
   let error = $state('')
 
+  // 2FA state
+  let requires2FA = $state(false)
+  let tempToken = $state('')
+  let totpCode = $state('')
+
   function toggleTheme() {
     theme.update(t => t === 'dark' ? 'light' : 'dark')
   }
@@ -21,6 +26,14 @@
 
     try {
       const data = await apiPost('/api/auth/login', { username, password })
+
+      // Check if 2FA is required
+      if (data.requires2fa) {
+        requires2FA = true
+        tempToken = data.tempToken
+        loading = false
+        return
+      }
 
       // Store session token
       localStorage.setItem('session_token', data.token)
@@ -35,6 +48,43 @@
     } finally {
       loading = false
     }
+  }
+
+  async function handle2FALogin() {
+    if (totpCode.length !== 6) {
+      error = 'Please enter a 6-digit code'
+      return
+    }
+
+    error = ''
+    loading = true
+
+    try {
+      const data = await apiPost('/api/auth/2fa/login', {
+        tempToken,
+        code: totpCode
+      })
+
+      // Store session token
+      localStorage.setItem('session_token', data.token)
+      localStorage.setItem('session_expires', data.expiresAt)
+
+      toast('Login successful', 'success')
+
+      // Notify parent component
+      if (onLogin) onLogin(data.user)
+    } catch (e) {
+      error = e.message || 'Invalid verification code'
+    } finally {
+      loading = false
+    }
+  }
+
+  function backToLogin() {
+    requires2FA = false
+    tempToken = ''
+    totpCode = ''
+    error = ''
   }
 </script>
 
@@ -169,58 +219,106 @@
         </div>
       {/if}
 
-      <form onsubmit={(e) => { e.preventDefault(); handleLogin() }} class="space-y-3.5 lg:space-y-4">
-        <!-- Username Field -->
-        <Input
-          id="username"
-          label="Username"
-          labelClass="block text-xs lg:text-sm font-medium mb-1 lg:mb-1.5"
-          type="text"
-          bind:value={username}
-          placeholder="Enter your username"
-          autocomplete="username"
-          prefixIcon="user"
-          class="w-full"
-          required
-        />
+      {#if requires2FA}
+        <!-- 2FA Code Entry -->
+        <div class="space-y-4">
+          <div class="text-center mb-6">
+            <div class="w-14 h-14 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-3">
+              <Icon name="shield-lock" size={28} class="text-primary" />
+            </div>
+            <p class="text-sm text-muted-foreground">
+              Enter the 6-digit code from your authenticator app
+            </p>
+          </div>
 
-        <!-- Password Field -->
-        <Input
-          id="password"
-          label="Password"
-          labelClass="block text-xs lg:text-sm font-medium mb-1 lg:mb-1.5"
-          type="password"
-          bind:value={password}
-          placeholder="Enter your password"
-          autocomplete="current-password"
-          prefixIcon="lock"
-          class="w-full"
-          required
-        />
+          <Input
+            id="totpCode"
+            label="Verification Code"
+            labelClass="block text-xs lg:text-sm font-medium mb-1 lg:mb-1.5"
+            type="text"
+            bind:value={totpCode}
+            placeholder="000000"
+            prefixIcon="key"
+            class="w-full text-center tracking-[0.5em] text-lg"
+            maxlength="6"
+            autocomplete="one-time-code"
+          />
 
-        <!-- Remember me & Forgot password -->
-        <div class="flex items-center justify-between text-xs lg:text-sm pt-0.5 lg:pt-1">
-          <label class="flex items-center gap-1.5 lg:gap-2 cursor-pointer">
-            <input type="checkbox" class="w-3.5 lg:w-4 h-3.5 lg:h-4 rounded" />
-            <span>Remember me</span>
-          </label>
-          <a href="#" class="text-primary hover:underline">Forgot password?</a>
+          <Button
+            onclick={handle2FALogin}
+            disabled={loading || totpCode.length !== 6}
+            class="w-full justify-center mt-4"
+          >
+            {#if loading}
+              <span class="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2"></span>
+              <span>Verifying...</span>
+            {:else}
+              <span>Verify</span>
+            {/if}
+          </Button>
+
+          <button
+            onclick={backToLogin}
+            class="w-full text-center text-sm text-muted-foreground hover:text-foreground mt-2"
+          >
+            Back to login
+          </button>
         </div>
+      {:else}
+        <!-- Normal Login Form -->
+        <form onsubmit={(e) => { e.preventDefault(); handleLogin() }} class="space-y-3.5 lg:space-y-4">
+          <!-- Username Field -->
+          <Input
+            id="username"
+            label="Username"
+            labelClass="block text-xs lg:text-sm font-medium mb-1 lg:mb-1.5"
+            type="text"
+            bind:value={username}
+            placeholder="Enter your username"
+            autocomplete="username"
+            prefixIcon="user"
+            class="w-full"
+            required
+          />
 
-        <!-- Submit Button -->
-        <Button
-          type="submit"
-          disabled={loading}
-          class="w-full justify-center mt-4 lg:mt-6"
-        >
-          {#if loading}
-            <span class="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2"></span>
-            <span>Signing in...</span>
-          {:else}
-            <span>Sign In</span>
-          {/if}
-        </Button>
-      </form>
+          <!-- Password Field -->
+          <Input
+            id="password"
+            label="Password"
+            labelClass="block text-xs lg:text-sm font-medium mb-1 lg:mb-1.5"
+            type="password"
+            bind:value={password}
+            placeholder="Enter your password"
+            autocomplete="current-password"
+            prefixIcon="lock"
+            class="w-full"
+            required
+          />
+
+          <!-- Remember me & Forgot password -->
+          <div class="flex items-center justify-between text-xs lg:text-sm pt-0.5 lg:pt-1">
+            <label class="flex items-center gap-1.5 lg:gap-2 cursor-pointer">
+              <input type="checkbox" class="w-3.5 lg:w-4 h-3.5 lg:h-4 rounded" />
+              <span>Remember me</span>
+            </label>
+            <a href="#" class="text-primary hover:underline">Forgot password?</a>
+          </div>
+
+          <!-- Submit Button -->
+          <Button
+            type="submit"
+            disabled={loading}
+            class="w-full justify-center mt-4 lg:mt-6"
+          >
+            {#if loading}
+              <span class="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2"></span>
+              <span>Signing in...</span>
+            {:else}
+              <span>Sign In</span>
+            {/if}
+          </Button>
+        </form>
+      {/if}
 
       <!-- Divider -->
       <div class="relative my-6 lg:my-8">

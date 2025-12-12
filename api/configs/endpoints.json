@@ -35,6 +35,13 @@
         {"path": "/validate", "methods": ["GET"], "handler": "ValidateSession", "description": "Validate session token"},
         {"path": "/me", "methods": ["GET"], "handler": "GetCurrentUser", "description": "Get current user"},
         {"path": "/users", "methods": ["POST"], "handler": "CreateUser", "description": "Create new user"},
+        {"path": "/profile", "methods": ["GET"], "handler": "GetProfile", "description": "Get user profile"},
+        {"path": "/profile", "methods": ["PUT"], "handler": "UpdateProfile", "description": "Update user profile"},
+        {"path": "/password", "methods": ["PUT"], "handler": "ChangePassword", "description": "Change password"},
+        {"path": "/2fa/setup", "methods": ["POST"], "handler": "Setup2FA", "description": "Setup 2FA - get QR code"},
+        {"path": "/2fa/verify", "methods": ["POST"], "handler": "Verify2FA", "description": "Verify and enable 2FA"},
+        {"path": "/2fa", "methods": ["DELETE"], "handler": "Disable2FA", "description": "Disable 2FA"},
+        {"path": "/2fa/login", "methods": ["POST"], "handler": "Login2FA", "description": "Complete 2FA login"},
         {"path": "/health", "methods": ["GET"], "handler": "Health", "description": "Auth health check"}
       ]
     },
@@ -45,6 +52,15 @@
         {"path": "", "methods": ["GET"], "handler": "GetSettings", "description": "Get all settings"},
         {"path": "", "methods": ["PUT"], "handler": "UpdateSettings", "description": "Update settings"},
         {"path": "/test-adguard", "methods": ["POST"], "handler": "TestAdGuard", "description": "Test AdGuard connection"}
+      ]
+    },
+    "smtp": {
+      "prefix": "/api/smtp",
+      "enabled": true,
+      "endpoints": [
+        {"path": "", "methods": ["GET"], "handler": "GetSMTP", "description": "Get SMTP settings"},
+        {"path": "", "methods": ["PUT"], "handler": "SaveSMTP", "description": "Save SMTP settings"},
+        {"path": "/test", "methods": ["POST"], "handler": "TestSMTP", "description": "Send test email"}
       ]
     },
     "firewall": {

@@ -104,6 +104,19 @@ services:
       - ./adguard/conf:/opt/adguardhome/conf
 
   # ============================================
+  # POSTFIX - Email Server for notifications
+  # ============================================
+  postfix:
+    image: boky/postfix:latest
+    container_name: postfix
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:25:587"
+    environment:
+      - ALLOWED_SENDER_DOMAINS=${SERVER_IP}
+      - RELAYHOST=
+
+  # ============================================
   # UI - Unified Web Dashboard
   # ============================================
   ui:

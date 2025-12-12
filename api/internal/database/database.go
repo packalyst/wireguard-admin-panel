@@ -182,6 +182,60 @@ func runMigrations(db *sql.DB) error {
 		log.Printf("Migration: added 'service' column to allowed_ports")
 	}
 
+	// Add email column to users table
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('users') WHERE name='email'`).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE users ADD COLUMN email TEXT`)
+		if err != nil {
+			return fmt.Errorf("failed to add email column: %v", err)
+		}
+		log.Printf("Migration: added 'email' column to users")
+	}
+
+	// Add totp_secret column to users table (stores encrypted TOTP secret)
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('users') WHERE name='totp_secret'`).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE users ADD COLUMN totp_secret TEXT`)
+		if err != nil {
+			return fmt.Errorf("failed to add totp_secret column: %v", err)
+		}
+		log.Printf("Migration: added 'totp_secret' column to users")
+	}
+
+	// Add totp_enabled column to users table
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('users') WHERE name='totp_enabled'`).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE users ADD COLUMN totp_enabled BOOLEAN DEFAULT 0`)
+		if err != nil {
+			return fmt.Errorf("failed to add totp_enabled column: %v", err)
+		}
+		log.Printf("Migration: added 'totp_enabled' column to users")
+	}
+
+	// Create temp_sessions table for 2FA login flow
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS temp_sessions (
+			id TEXT PRIMARY KEY,
+			user_id INTEGER NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			expires_at DATETIME NOT NULL,
+			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+		);
+		CREATE INDEX IF NOT EXISTS idx_temp_sessions_expires ON temp_sessions(expires_at);
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create temp_sessions table: %v", err)
+	}
+
 	return nil
 }
 

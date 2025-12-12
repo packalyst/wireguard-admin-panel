@@ -17,6 +17,7 @@
     adguard: () => import('./AdGuardView.svelte'),
     docker: () => import('./DockerView.svelte'),
     settings: () => import('./SettingsView.svelte'),
+    admin: () => import('./AdminSettingsView.svelte'),
     'traefik-logs': () => import('./TraefikLogsView.svelte'),
     'adguard-logs': () => import('./AdGuardLogsView.svelte')
   }
@@ -37,6 +38,21 @@
   // Stats
   let stats = $state({ online: 0, offline: 0, hsNodes: 0, wgPeers: 0 })
   let pollInterval = null
+
+  // User profile
+  let userProfile = $state({ username: 'admin', avatarUrl: '' })
+
+  async function loadProfile() {
+    try {
+      const data = await apiGet('/api/auth/profile')
+      userProfile = {
+        username: data.username || 'admin',
+        avatarUrl: data.avatarUrl || ''
+      }
+    } catch (e) {
+      // Silent fail - use defaults
+    }
+  }
 
   async function loadStats() {
     try {
@@ -61,6 +77,7 @@
   }
 
   onMount(() => {
+    loadProfile()
     loadStats()
     pollInterval = setInterval(loadStats, 30000)
   })
@@ -99,7 +116,8 @@
       ]
     },
     { id: 'divider3', divider: true },
-    { id: 'settings', label: 'Settings', icon: 'settings' }
+    { id: 'settings', label: 'Settings', icon: 'settings' },
+    { id: 'admin', label: 'Admin', icon: 'user-cog' }
   ]
 
   // Check if current view is a child of a menu
@@ -259,11 +277,21 @@
 
       <!-- User & actions row -->
       <div class="flex items-center gap-2">
-        <div class="flex h-7 w-7 items-center justify-center rounded-full bg-slate-200 text-slate-600 dark:bg-zinc-700 dark:text-zinc-300">
-          <Icon name="user" size={14} />
-        </div>
+        <button
+          onclick={() => navigate('admin')}
+          class="flex h-7 w-7 items-center justify-center rounded-full overflow-hidden bg-slate-200 text-slate-600 dark:bg-zinc-700 dark:text-zinc-300 hover:ring-2 hover:ring-sky-500/50 transition-all"
+          title="Admin Settings"
+        >
+          {#if userProfile.avatarUrl}
+            <img src={userProfile.avatarUrl} alt="Avatar" class="w-full h-full object-cover" />
+          {:else}
+            <Icon name="user" size={14} />
+          {/if}
+        </button>
         <div class="flex-1 min-w-0">
-          <div class="truncate text-xs font-medium text-slate-700 dark:text-zinc-200">admin</div>
+          <button onclick={() => navigate('admin')} class="truncate text-xs font-medium text-slate-700 dark:text-zinc-200 hover:text-sky-500 dark:hover:text-sky-400 transition-colors">
+            {userProfile.username}
+          </button>
         </div>
         <button
           onclick={toggleTheme}
