@@ -115,6 +115,8 @@ services:
     environment:
       - ALLOWED_SENDER_DOMAINS=${SERVER_IP}
       - RELAYHOST=
+    networks:
+      - vpn-network
 
   # ============================================
   # UI - Unified Web Dashboard
