@@ -7,9 +7,12 @@ local DKIM_KEY_PATH = '/var/lib/kumomta/dkim/' .. MAIL_DOMAIN .. '.key'
 
 -- Initialize
 kumo.on('init', function()
-  -- DNS resolver
-  kumo.dns.configure_resolver {
-    name_servers = { '8.8.8.8:53', '1.1.1.1:53' },
+  -- Use Unbound resolver for proper MX lookups
+  -- When name_servers is omitted, Unbound resolves via root nameservers
+  kumo.dns.configure_unbound_resolver {
+    options = {
+      validate = false,  -- Don't require DNSSEC validation
+    },
   }
 
   -- SMTP listener
