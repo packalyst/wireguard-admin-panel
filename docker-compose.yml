@@ -121,7 +121,7 @@ services:
       - MAIL_DOMAIN=${MAIL_DOMAIN:-localhost}
       - DKIM_SELECTOR=${DKIM_SELECTOR:-mail}
     volumes:
-      - ./kumomta:/opt/kumomta/etc:ro
+      - ./kumomta:/opt/kumomta/etc
       - kumomta_data:/var/spool/kumomta
       - kumomta_dkim:/var/lib/kumomta/dkim
     networks:
