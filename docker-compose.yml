@@ -116,7 +116,8 @@ services:
       - ALLOWED_SENDER_DOMAINS=${SERVER_IP}
       - RELAYHOST=
     networks:
-      - vpn-network
+      vpn-network:
+        ipv4_address: ${POSTFIX_CONTAINER_IP}
 
   # ============================================
   # UI - Unified Web Dashboard
