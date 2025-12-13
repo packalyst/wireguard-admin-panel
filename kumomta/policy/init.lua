@@ -37,6 +37,12 @@ kumo.on('init', function()
     name = 'meta',
     path = '/var/spool/kumomta/meta',
   }
+
+  -- Enable logging
+  kumo.configure_local_logs {
+    log_dir = '/var/spool/kumomta/logs',
+    max_segment_duration = '1 minute',
+  }
 end)
 
 -- Helper to check if file exists
