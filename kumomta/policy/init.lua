@@ -1,80 +1,92 @@
 -- KumoMTA Configuration for VPN Admin Panel
--- Handles DKIM signing and outbound email delivery
+-- Simple relay config for sending notifications
 
 local kumo = require 'kumo'
-local utils = require 'policy-extras.policy_utils'
 
--- Get environment variables
 local MAIL_DOMAIN = os.getenv('MAIL_DOMAIN') or 'localhost'
 local DKIM_SELECTOR = os.getenv('DKIM_SELECTOR') or 'mail'
 local DKIM_KEY_PATH = '/var/lib/kumomta/dkim/' .. MAIL_DOMAIN .. '.key'
 
--- Initialize KumoMTA
+print('KumoMTA starting for domain: ' .. MAIL_DOMAIN)
+
+-- Initialize listeners
 kumo.on('init', function()
-  -- SMTP listener for local relay (from API container)
+  -- SMTP listener for local relay
   kumo.start_esmtp_listener {
     listen = '0.0.0.0:25',
-    relay_hosts = { '0.0.0.0/0' },  -- Allow relay from any host (secured by Docker network)
+    relay_hosts = { '0.0.0.0/0' },
   }
 
-  -- HTTP listener for management API
+  -- HTTP API listener
   kumo.start_http_listener {
     listen = '0.0.0.0:8000',
   }
 
-  -- Configure logging
-  kumo.configure_local_logs {
-    log_dir = '/var/spool/kumomta/logs',
-    max_file_size = 10000000,  -- 10MB
+  -- Configure spool
+  kumo.define_spool {
+    name = 'data',
+    path = '/var/spool/kumomta/data',
   }
 
-  -- Define DKIM signer
-  kumo.define_signer {
-    name = 'dkim_signer',
-    domain = MAIL_DOMAIN,
-    selector = DKIM_SELECTOR,
-    headers = { 'From', 'To', 'Subject', 'Date', 'MIME-Version', 'Content-Type' },
-    key = DKIM_KEY_PATH,
+  kumo.define_spool {
+    name = 'meta',
+    path = '/var/spool/kumomta/meta',
   }
 end)
 
--- Message reception hook
-kumo.on('smtp_server_message_received', function(msg)
-  -- Get sender domain
-  local sender = msg:from_header().address
-  local sender_domain = string.match(sender, '@(.+)$') or MAIL_DOMAIN
+-- Helper to check if file exists
+local function file_exists(path)
+  local f = io.open(path, 'r')
+  if f then
+    f:close()
+    return true
+  end
+  return false
+end
 
-  -- Sign with DKIM if sending from our domain
-  if sender_domain == MAIL_DOMAIN then
-    msg:dkim_sign(kumo.get_signer('dkim_signer'))
+-- Handle incoming messages
+kumo.on('smtp_server_message_received', function(msg)
+  -- DKIM sign if key exists
+  if file_exists(DKIM_KEY_PATH) then
+    local signer = kumo.dkim.rsa_sha256_signer {
+      domain = MAIL_DOMAIN,
+      selector = DKIM_SELECTOR,
+      key = DKIM_KEY_PATH,
+    }
+    msg:dkim_sign(signer)
   end
 
-  -- Queue for delivery
-  msg:set_meta('queue', 'outbound')
+  msg:set_meta('queue', 'default')
 end)
 
--- Delivery configuration
-kumo.on('get_queue_config', function(domain, tenant, campaign)
+-- Queue configuration
+kumo.on('get_queue_config', function(domain, tenant, campaign, routing_domain)
   return kumo.make_queue_config {
-    max_age = '24 hours',
-    retry_interval = '5 minutes',
-    max_retry_interval = '1 hour',
+    egress_pool = 'default',
   }
 end)
 
--- SMTP client configuration for outbound delivery
-kumo.on('get_egress_path_config', function(domain)
-  return kumo.make_egress_path {
-    connection_limit = 10,
-    enable_tls = 'OpportunisticInsecure',
-    max_message_rate = '100/minute',
+-- Egress pool
+kumo.on('get_egress_pool', function(pool_name)
+  return kumo.make_egress_pool {
+    name = pool_name,
+    entries = {
+      { name = 'default' },
+    },
   }
 end)
 
--- Source configuration
-kumo.on('get_egress_source', function(msg)
+-- Egress source
+kumo.on('get_egress_source', function(source_name)
   return kumo.make_egress_source {
-    name = 'default',
+    name = source_name,
+  }
+end)
+
+-- Egress path config (how to deliver)
+kumo.on('get_egress_path_config', function(routing_domain, egress_source, site_name)
+  return kumo.make_egress_path {
+    enable_tls = 'OpportunisticInsecure',
   }
 end)
 
