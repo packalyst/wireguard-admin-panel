@@ -162,7 +162,7 @@ fi
 if [ "$DOCKER_RUNNING" = true ]; then
     echo -e "${CYAN}Docker containers are already running.${NC}"
     echo ""
-    docker compose ps
+    docker compose --profile email ps
     echo ""
 
     echo -e "${YELLOW}What would you like to do?${NC}"
@@ -179,13 +179,21 @@ if [ "$DOCKER_RUNNING" = true ]; then
     case "$choice" in
         1)
             echo -e "${YELLOW}Stopping containers...${NC}"
-            docker compose down
+            if [ "$ENABLE_EMAIL" = "true" ]; then
+                docker compose --profile email down
+            else
+                docker compose down
+            fi
             echo -e "${GREEN}✓ Containers stopped${NC}"
             exit 0
             ;;
         2)
             echo -e "${YELLOW}Restarting containers...${NC}"
-            docker compose restart
+            if [ "$ENABLE_EMAIL" = "true" ]; then
+                docker compose --profile email restart
+            else
+                docker compose restart
+            fi
             echo -e "${GREEN}✓ Containers restarted${NC}"
             docker compose ps
             exit 0
@@ -198,16 +206,18 @@ if [ "$DOCKER_RUNNING" = true ]; then
             echo "  4) Traefik"
             echo "  5) Headscale"
             echo "  6) AdGuard"
+            echo "  7) KumoMTA (email)"
             echo ""
-            read -p "Enter your choice [1-6]: " log_choice
+            read -p "Enter your choice [1-7]: " log_choice
 
             case "$log_choice" in
-                1) docker compose logs -f ;;
+                1) docker compose --profile email logs -f ;;
                 2) docker compose logs -f ui ;;
                 3) docker compose logs -f api ;;
                 4) docker compose logs -f traefik ;;
                 5) docker compose logs -f headscale ;;
                 6) docker compose logs -f adguard ;;
+                7) docker compose --profile email logs -f kumomta ;;
                 *) echo -e "${RED}Invalid choice${NC}"; exit 1 ;;
             esac
             exit 0
@@ -216,7 +226,7 @@ if [ "$DOCKER_RUNNING" = true ]; then
             echo -e "${RED}⚠ WARNING: This will remove all containers, volumes, and images!${NC}"
             if prompt_yes_no "Are you sure?" "n"; then
                 echo -e "${YELLOW}Cleaning everything...${NC}"
-                docker compose down -v --rmi all
+                docker compose --profile email down -v --rmi all
 
                 # Clean generated configs
                 rm -f headscale/config/config.yaml
@@ -235,7 +245,7 @@ if [ "$DOCKER_RUNNING" = true ]; then
             ;;
         5)
             echo -e "${YELLOW}Stopping containers for reconfiguration...${NC}"
-            docker compose down
+            docker compose --profile email down
             echo ""
             ;;
         6)
@@ -591,7 +601,7 @@ fi
 echo ""
 
 # 3. Admin Panel Domain
-echo -e "${YELLOW}[3/4] Admin Panel Domain:${NC}"
+echo -e "${YELLOW}[3/5] Admin Panel Domain:${NC}"
 echo "  Configure a custom domain for the admin panel (requires VPN connection)"
 echo ""
 
@@ -602,7 +612,7 @@ echo -e "${GREEN}✓ Admin domain set to: ${ADMIN_DOMAIN}${NC}"
 echo ""
 
 # 4. Check AdGuard credentials
-echo -e "${YELLOW}[4/4] Checking AdGuard credentials...${NC}"
+echo -e "${YELLOW}[4/5] Checking AdGuard credentials...${NC}"
 
 GENERATED_PASSWORD=""
 
@@ -638,6 +648,35 @@ if [ -z "$ADGUARD_USER" ]; then
 fi
 
 echo -e "${GREEN}✓ AdGuard credentials configured${NC}"
+echo ""
+
+# 5. Email Configuration (KumoMTA)
+echo -e "${YELLOW}[5/5] Email Configuration:${NC}"
+echo "  Enable built-in email server with DKIM/SPF/DMARC for notifications"
+echo "  Requires: domain ownership, DNS access, PTR record"
+echo ""
+
+ENABLE_EMAIL="false"
+if prompt_yes_no "Enable email server (KumoMTA with DKIM)?" "n"; then
+    ENABLE_EMAIL="true"
+    echo ""
+    echo -e "${CYAN}Enter your mail domain (e.g., mail.example.com):${NC}"
+    read -p "Mail domain: " MAIL_DOMAIN
+
+    if [ -z "$MAIL_DOMAIN" ]; then
+        echo -e "${RED}Mail domain is required for email functionality${NC}"
+        ENABLE_EMAIL="false"
+    else
+        update_env_value "MAIL_DOMAIN" "$MAIL_DOMAIN"
+        update_env_value "DKIM_SELECTOR" "mail"
+        update_env_value "KUMOMTA_CONTAINER_IP" "172.18.0.5"
+        echo -e "${GREEN}✓ Email enabled with domain: ${MAIL_DOMAIN}${NC}"
+    fi
+else
+    echo -e "${GREEN}✓ Email server disabled (can use external SMTP in settings)${NC}"
+fi
+
+update_env_value "ENABLE_EMAIL" "$ENABLE_EMAIL"
 echo ""
 
 # ===========================================
@@ -750,13 +789,23 @@ echo ""
 
 echo -e "${YELLOW}Starting docker compose...${NC}"
 
+# Build compose command with optional profiles
+COMPOSE_CMD="docker compose"
+COMPOSE_FILES="-f docker-compose.yml"
+
 if [ "$DEV_MODE" = "true" ]; then
     echo -e "${BLUE}Mode: Development (hot reload enabled)${NC}"
-    docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build "$@"
+    COMPOSE_FILES="$COMPOSE_FILES -f docker-compose.dev.yml"
 else
     echo -e "${BLUE}Mode: Production (optimized build)${NC}"
-    docker compose up -d --build "$@"
 fi
+
+if [ "$ENABLE_EMAIL" = "true" ]; then
+    echo -e "${BLUE}Email: Enabled (KumoMTA with DKIM)${NC}"
+    COMPOSE_CMD="$COMPOSE_CMD --profile email"
+fi
+
+$COMPOSE_CMD $COMPOSE_FILES up -d --build "$@"
 
 echo ""
 echo -e "${GREEN}=== VPN Stack Started ===${NC}"
@@ -784,3 +833,47 @@ fi
 
 echo -e "${CYAN}Tip: Run ./manage.sh again to manage running containers${NC}"
 echo ""
+
+# ===========================================
+# Email Setup (if enabled)
+# ===========================================
+
+if [ "$ENABLE_EMAIL" = "true" ]; then
+    echo -e "${YELLOW}Setting up email (DKIM keys)...${NC}"
+    echo ""
+
+    # Wait for kumomta container to be ready
+    sleep 3
+
+    # Generate DKIM keys
+    if docker exec kumomta test -f /opt/kumomta/etc/generate-dkim.sh 2>/dev/null; then
+        echo -e "${CYAN}Generating DKIM keys...${NC}"
+        docker exec kumomta bash /opt/kumomta/etc/generate-dkim.sh
+        echo ""
+    else
+        echo -e "${YELLOW}Running DKIM generation script locally...${NC}"
+        # Run locally and copy keys
+        MAIL_DOMAIN="$MAIL_DOMAIN" DKIM_SELECTOR="mail" ./kumomta/generate-dkim.sh 2>/dev/null || true
+    fi
+
+    echo -e "${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║${NC}  ${YELLOW}EMAIL SETUP - DNS Records Required${NC}                        ${GREEN}║${NC}"
+    echo -e "${GREEN}╠════════════════════════════════════════════════════════════╣${NC}"
+    echo -e "${GREEN}║${NC}                                                            ${GREEN}║${NC}"
+    echo -e "${GREEN}║${NC}  Add these DNS records for ${MAIL_DOMAIN}:              ${GREEN}║${NC}"
+    echo -e "${GREEN}║${NC}                                                            ${GREEN}║${NC}"
+    echo -e "${GREEN}║${NC}  1. SPF (TXT on ${MAIL_DOMAIN}):                        ${GREEN}║${NC}"
+    echo -e "${GREEN}║${NC}     v=spf1 ip4:${SERVER_IP} -all                        ${GREEN}║${NC}"
+    echo -e "${GREEN}║${NC}                                                            ${GREEN}║${NC}"
+    echo -e "${GREEN}║${NC}  2. DKIM (TXT on mail._domainkey.${MAIL_DOMAIN}):       ${GREEN}║${NC}"
+    echo -e "${GREEN}║${NC}     Run: docker exec kumomta cat /opt/kumomta/etc/dkim/*.pub ${GREEN}║${NC}"
+    echo -e "${GREEN}║${NC}                                                            ${GREEN}║${NC}"
+    echo -e "${GREEN}║${NC}  3. DMARC (TXT on _dmarc.${MAIL_DOMAIN}):               ${GREEN}║${NC}"
+    echo -e "${GREEN}║${NC}     v=DMARC1; p=quarantine; rua=mailto:admin@${MAIL_DOMAIN} ${GREEN}║${NC}"
+    echo -e "${GREEN}║${NC}                                                            ${GREEN}║${NC}"
+    echo -e "${GREEN}║${NC}  4. PTR Record (Reverse DNS):                            ${GREEN}║${NC}"
+    echo -e "${GREEN}║${NC}     ${SERVER_IP} -> ${MAIL_DOMAIN}                      ${GREEN}║${NC}"
+    echo -e "${GREEN}║${NC}                                                            ${GREEN}║${NC}"
+    echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+fi

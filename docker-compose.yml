@@ -107,15 +107,18 @@ services:
 
   # ============================================
   # KUMOMTA - Email Server with DKIM/SPF/DMARC
+  # Optional: Enable with --profile email
   # ============================================
   kumomta:
     image: ghcr.io/kumocorp/kumomta:latest
     container_name: kumomta
     restart: unless-stopped
+    profiles:
+      - email
     ports:
       - "127.0.0.1:25:25"
     environment:
-      - MAIL_DOMAIN=${MAIL_DOMAIN}
+      - MAIL_DOMAIN=${MAIL_DOMAIN:-localhost}
       - DKIM_SELECTOR=${DKIM_SELECTOR:-mail}
     volumes:
       - ./kumomta:/opt/kumomta/etc:ro
@@ -123,7 +126,7 @@ services:
       - kumomta_dkim:/opt/kumomta/etc/dkim
     networks:
       vpn-network:
-        ipv4_address: ${KUMOMTA_CONTAINER_IP}
+        ipv4_address: ${KUMOMTA_CONTAINER_IP:-172.18.0.5}
 
   # ============================================
   # UI - Unified Web Dashboard
