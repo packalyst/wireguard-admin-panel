@@ -7,7 +7,7 @@ local utils = require 'policy-extras.policy_utils'
 -- Get environment variables
 local MAIL_DOMAIN = os.getenv('MAIL_DOMAIN') or 'localhost'
 local DKIM_SELECTOR = os.getenv('DKIM_SELECTOR') or 'mail'
-local DKIM_KEY_PATH = '/opt/kumomta/etc/dkim/' .. MAIL_DOMAIN .. '.key'
+local DKIM_KEY_PATH = '/var/lib/kumomta/dkim/' .. MAIL_DOMAIN .. '.key'
 
 -- Initialize KumoMTA
 kumo.on('init', function()

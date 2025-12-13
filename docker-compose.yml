@@ -123,7 +123,7 @@ services:
     volumes:
       - ./kumomta:/opt/kumomta/etc:ro
       - kumomta_data:/var/spool/kumomta
-      - kumomta_dkim:/opt/kumomta/etc/dkim
+      - kumomta_dkim:/var/lib/kumomta/dkim
     networks:
       vpn-network:
         ipv4_address: ${KUMOMTA_CONTAINER_IP:-172.18.0.5}

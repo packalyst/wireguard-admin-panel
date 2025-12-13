@@ -4,7 +4,7 @@
 
 DOMAIN="${MAIL_DOMAIN:-$1}"
 SELECTOR="${DKIM_SELECTOR:-${2:-mail}}"
-KEY_DIR="/opt/kumomta/etc/dkim"
+KEY_DIR="/var/lib/kumomta/dkim"
 KEY_FILE="${KEY_DIR}/${DOMAIN}.key"
 
 if [ -z "$DOMAIN" ]; then
