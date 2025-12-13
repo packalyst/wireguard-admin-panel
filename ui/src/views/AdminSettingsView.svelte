@@ -53,7 +53,7 @@
   })
   let smtpPassword = $state('')
   let smtpChanged = $state(false)
-  let originalSmtp = null
+  let originalSmtp = $state(null)
   let savingSmtp = $state(false)
   let testingSmtp = $state(false)
   let testEmail = $state('')

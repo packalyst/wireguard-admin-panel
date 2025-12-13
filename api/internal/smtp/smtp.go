@@ -94,10 +94,10 @@ func (s *Service) handleGetSMTP(w http.ResponseWriter, r *http.Request) {
 	if from, err := getSetting("smtp_from"); err == nil {
 		config.From = from
 	} else {
-		// Default from address
-		serverIP := os.Getenv("SERVER_IP")
-		if serverIP != "" {
-			config.From = "noreply@" + serverIP
+		// Default from address using MAIL_DOMAIN
+		mailDomain := os.Getenv("MAIL_DOMAIN")
+		if mailDomain != "" {
+			config.From = "noreply@" + mailDomain
 		}
 	}
 	if tlsMode, err := getSetting("smtp_tls"); err == nil {
@@ -196,9 +196,9 @@ func (s *Service) handleTestSMTP(w http.ResponseWriter, r *http.Request) {
 
 	from, _ := getSetting("smtp_from")
 	if from == "" {
-		serverIP := os.Getenv("SERVER_IP")
-		if serverIP != "" {
-			from = "noreply@" + serverIP
+		mailDomain := os.Getenv("MAIL_DOMAIN")
+		if mailDomain != "" {
+			from = "noreply@" + mailDomain
 		} else {
 			from = "noreply@localhost"
 		}
@@ -250,7 +250,8 @@ func (s *Service) handleTestSMTP(w http.ResponseWriter, r *http.Request) {
 	case "starttls":
 		err = sendMailSTARTTLS(addr, auth, from, []string{req.To}, msg)
 	default:
-		err = smtp.SendMail(addr, auth, from, []string{req.To}, msg)
+		// Use plain SMTP without TLS for local/builtin mode
+		err = sendMailPlain(addr, auth, from, []string{req.To}, msg)
 	}
 
 	if err != nil {
@@ -376,6 +377,58 @@ func sendMailSTARTTLS(addr string, auth smtp.Auth, from string, to []string, msg
 	return client.Quit()
 }
 
+// sendMailPlain sends email without TLS (for local/builtin SMTP)
+func sendMailPlain(addr string, auth smtp.Auth, from string, to []string, msg []byte) error {
+	host, _, _ := net.SplitHostPort(addr)
+
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("Dial failed: %v", err)
+	}
+	defer conn.Close()
+
+	client, err := smtp.NewClient(conn, host)
+	if err != nil {
+		return fmt.Errorf("SMTP client creation failed: %v", err)
+	}
+	defer client.Close()
+
+	// Skip STARTTLS - use plain connection
+
+	if auth != nil {
+		if err := client.Auth(auth); err != nil {
+			return fmt.Errorf("SMTP auth failed: %v", err)
+		}
+	}
+
+	if err := client.Mail(from); err != nil {
+		return fmt.Errorf("MAIL FROM failed: %v", err)
+	}
+
+	for _, recipient := range to {
+		if err := client.Rcpt(recipient); err != nil {
+			return fmt.Errorf("RCPT TO failed: %v", err)
+		}
+	}
+
+	w, err := client.Data()
+	if err != nil {
+		return fmt.Errorf("DATA failed: %v", err)
+	}
+
+	_, err = w.Write(msg)
+	if err != nil {
+		return fmt.Errorf("Write failed: %v", err)
+	}
+
+	err = w.Close()
+	if err != nil {
+		return fmt.Errorf("Close failed: %v", err)
+	}
+
+	return client.Quit()
+}
+
 // SendEmail sends an email using the configured SMTP settings
 func SendEmail(to, subject, body string) error {
 	mode, _ := getSetting("smtp_mode")
@@ -385,9 +438,9 @@ func SendEmail(to, subject, body string) error {
 
 	from, _ := getSetting("smtp_from")
 	if from == "" {
-		serverIP := os.Getenv("SERVER_IP")
-		if serverIP != "" {
-			from = "noreply@" + serverIP
+		mailDomain := os.Getenv("MAIL_DOMAIN")
+		if mailDomain != "" {
+			from = "noreply@" + mailDomain
 		} else {
 			from = "noreply@localhost"
 		}
@@ -430,7 +483,8 @@ func SendEmail(to, subject, body string) error {
 	case "starttls":
 		return sendMailSTARTTLS(addr, auth, from, []string{to}, msg)
 	default:
-		return smtp.SendMail(addr, auth, from, []string{to}, msg)
+		// Use plain SMTP without TLS for local/builtin mode
+		return sendMailPlain(addr, auth, from, []string{to}, msg)
 	}
 }
 
