@@ -120,6 +120,9 @@ services:
     environment:
       - MAIL_DOMAIN=${MAIL_DOMAIN:-localhost}
       - DKIM_SELECTOR=${DKIM_SELECTOR:-mail}
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     volumes:
       - ./kumomta:/opt/kumomta/etc
       - kumomta_data:/var/spool/kumomta
