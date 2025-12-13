@@ -11,6 +11,11 @@ print('KumoMTA starting for domain: ' .. MAIL_DOMAIN)
 
 -- Initialize listeners
 kumo.on('init', function()
+  -- Configure DNS resolver explicitly
+  kumo.dns.configure_resolver {
+    name_servers = { '8.8.8.8:53', '1.1.1.1:53' },
+  }
+
   -- SMTP listener for local relay
   kumo.start_esmtp_listener {
     listen = '0.0.0.0:25',
