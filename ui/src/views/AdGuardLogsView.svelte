@@ -14,6 +14,42 @@
   let queryLog = $state([])
   let search = $state('')
 
+  // Get status info from AdGuard reason
+  function getStatusInfo(log) {
+    const reason = log.reason || ''
+    const rules = log.rules || []
+    const serviceName = rules.find(r => r.filter_list_id === -1)?.text || ''
+
+    switch (reason) {
+      case 'NotFilteredNotFound':
+      case 'NotFilteredAllowList':
+        return { label: 'Processed', variant: 'success' }
+      case 'NotFilteredWhiteList':
+        return { label: 'Allowed', variant: 'success' }
+      case 'NotFilteredError':
+        return { label: 'Error', variant: 'warning' }
+      case 'FilteredBlockList':
+        return { label: 'Blocked', variant: 'danger' }
+      case 'FilteredSafeBrowsing':
+        return { label: 'Blocked Threats', variant: 'danger' }
+      case 'FilteredParental':
+        return { label: 'Blocked by Parental', variant: 'danger' }
+      case 'FilteredBlockedService':
+        return { label: serviceName ? `Blocked (${serviceName})` : 'Blocked Service', variant: 'danger' }
+      case 'FilteredSafeSearch':
+        return { label: 'Safe Search', variant: 'info' }
+      case 'Rewrite':
+      case 'RewriteEtcHosts':
+      case 'RewriteRule':
+        return { label: 'Rewritten', variant: 'info' }
+      default:
+        if (reason.startsWith('Filtered')) {
+          return { label: 'Filtered', variant: 'warning' }
+        }
+        return { label: reason || 'Unknown', variant: 'secondary' }
+    }
+  }
+
   async function loadLogs() {
     try {
       const res = await apiGet('/api/adguard/querylog?limit=100')
@@ -79,21 +115,21 @@
         </thead>
         <tbody>
           {#each filteredLogs as log}
-            {@const isBlocked = log.reason?.includes('Filtered')}
+            {@const status = getStatusInfo(log)}
             <tr>
               <td class="whitespace-nowrap">{formatTime(log.time)}</td>
               <td>
                 <code class="text-xs font-mono text-muted-foreground">{log.client || '-'}</code>
               </td>
               <td>
-                <code class="text-xs font-mono {isBlocked ? 'text-destructive' : ''}">{log.question?.name || '-'}</code>
+                <code class="text-xs font-mono {status.variant === 'danger' ? 'text-destructive' : ''}">{log.question?.name || '-'}</code>
               </td>
               <td>
                 <Badge variant="info" size="sm">{log.question?.type || 'A'}</Badge>
               </td>
               <td>
-                <Badge variant={isBlocked ? 'danger' : 'success'} size="sm">
-                  {isBlocked ? 'Blocked' : 'Allowed'}
+                <Badge variant={status.variant} size="sm">
+                  {status.label}
                 </Badge>
               </td>
             </tr>

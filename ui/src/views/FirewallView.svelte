@@ -1257,18 +1257,13 @@
       placeholder="/var/log/auth.log"
     />
 
-    <div>
-      <label class="kt-label">Filter Regex</label>
-      <textarea
-        bind:value={jailForm.filterRegex}
-        class="kt-input w-full font-mono text-sm"
-        rows="2"
-        placeholder="e.g. Failed password.*from (\d+\.\d+\.\d+\.\d+)"
-      ></textarea>
-      <p class="text-xs text-muted-foreground mt-1">
-        Must contain at least one capture group for the IP address
-      </p>
-    </div>
+    <Input
+      label="Filter Regex"
+      bind:value={jailForm.filterRegex}
+      placeholder="e.g. Failed password.*from (\d+\.\d+\.\d+\.\d+)"
+      class="font-mono"
+      helperText="Must contain at least one capture group for the IP address"
+    />
 
     <div class="grid grid-cols-3 gap-4">
       <Input
