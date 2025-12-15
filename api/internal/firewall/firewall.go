@@ -29,15 +29,23 @@ type dnsEntry struct {
 	timestamp time.Time
 }
 
+// jailMonitor tracks a running jail monitor
+type jailMonitor struct {
+	cancel context.CancelFunc
+	name   string
+}
+
 // Service handles firewall operations
 type Service struct {
-	db        *sql.DB
-	dbMutex   sync.RWMutex
-	config    Config
-	dnsCache  map[string]dnsEntry
-	dnsMutex  sync.RWMutex
-	ctx       context.Context
-	cancel    context.CancelFunc
+	db           *sql.DB
+	dbMutex      sync.RWMutex
+	config       Config
+	dnsCache     map[string]dnsEntry
+	dnsMutex     sync.RWMutex
+	ctx          context.Context
+	cancel       context.CancelFunc
+	jailMonitors map[int64]*jailMonitor // jailID -> monitor
+	jailMutex    sync.RWMutex
 }
 
 // Config holds firewall configuration
@@ -129,10 +137,11 @@ func New(dataDir string) (*Service, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	svc := &Service{
-		db:       db,
-		dnsCache: make(map[string]dnsEntry),
-		ctx:      ctx,
-		cancel:   cancel,
+		db:           db,
+		dnsCache:     make(map[string]dnsEntry),
+		jailMonitors: make(map[int64]*jailMonitor),
+		ctx:          ctx,
+		cancel:       cancel,
 		config: Config{
 			EssentialPorts:         helper.BuildEssentialPorts(),
 			IgnoreNetworks:         helper.ParseStringList(helper.GetEnv("IGNORE_NETWORKS")),
@@ -202,13 +211,14 @@ func (s *Service) ensureDefaultJails() error {
 	sshPort := strconv.Itoa(helper.GetSSHPort())
 
 	// Insert default jails
+	// findTime=3600 (1 hour) to catch slow/distributed scanners
 	defaultJails := []Jail{
 		{Name: "portscan", Enabled: true, LogFile: "/var/log/kern.log",
 			FilterRegex: `FIREWALL_DROP:.*SRC=(\d+\.\d+\.\d+\.\d+).*DPT=(\d+)`,
-			MaxRetry: 10, FindTime: 300, BanTime: 2592000, Port: "all", Action: "drop"},
+			MaxRetry: 10, FindTime: 3600, BanTime: 2592000, Port: "all", Action: "drop"},
 		{Name: "sshd", Enabled: true, LogFile: "/var/log/auth.log",
 			FilterRegex: `Failed password.*from (\d+\.\d+\.\d+\.\d+)`,
-			MaxRetry: 5, FindTime: 600, BanTime: 2592000, Port: sshPort, Action: "drop"},
+			MaxRetry: 5, FindTime: 3600, BanTime: 2592000, Port: sshPort, Action: "drop"},
 	}
 
 	for _, jail := range defaultJails {
@@ -385,13 +395,75 @@ func (s *Service) runJailMonitors() {
 
 	// Start a monitor for each jail
 	for _, jail := range jails {
-		go s.monitorJail(jail.ID, jail.Name, jail.LogFile, jail.FilterRegex, jail.MaxRetry, jail.FindTime, jail.BanTime, jail.LastLogPos)
+		s.startJailMonitor(jail.ID, jail.Name, jail.LogFile, jail.FilterRegex, jail.MaxRetry, jail.FindTime, jail.BanTime, jail.LastLogPos)
 	}
 
 	log.Printf("Started %d jail monitors", len(jails))
 }
 
-func (s *Service) monitorJail(jailID int64, name, logFile, filterRegex string, maxRetry, findTime, banTime int, lastLogPos int64) {
+// startJailMonitor starts a jail monitor with its own cancellable context
+func (s *Service) startJailMonitor(jailID int64, name, logFile, filterRegex string, maxRetry, findTime, banTime int, lastLogPos int64) {
+	// Stop existing monitor if running
+	s.stopJailMonitor(jailID)
+
+	// Create a new context for this jail
+	ctx, cancel := context.WithCancel(s.ctx)
+
+	s.jailMutex.Lock()
+	s.jailMonitors[jailID] = &jailMonitor{
+		cancel: cancel,
+		name:   name,
+	}
+	s.jailMutex.Unlock()
+
+	go s.monitorJailWithContext(ctx, jailID, name, logFile, filterRegex, maxRetry, findTime, banTime, lastLogPos)
+}
+
+// stopJailMonitor stops a running jail monitor
+func (s *Service) stopJailMonitor(jailID int64) {
+	s.jailMutex.Lock()
+	defer s.jailMutex.Unlock()
+
+	if monitor, exists := s.jailMonitors[jailID]; exists {
+		log.Printf("Stopping jail monitor: %s (ID: %d)", monitor.name, jailID)
+		monitor.cancel()
+		delete(s.jailMonitors, jailID)
+	}
+}
+
+// restartJailMonitor restarts a jail monitor by reading its config from DB
+func (s *Service) restartJailMonitor(jailID int64) {
+	var j struct {
+		ID          int64
+		Name        string
+		LogFile     string
+		FilterRegex string
+		MaxRetry    int
+		FindTime    int
+		BanTime     int
+		LastLogPos  int64
+		Enabled     bool
+	}
+
+	err := s.db.QueryRow(`SELECT id, name, log_file, filter_regex, max_retry, find_time, ban_time, last_log_pos, enabled
+		FROM jails WHERE id = ?`, jailID).Scan(
+		&j.ID, &j.Name, &j.LogFile, &j.FilterRegex, &j.MaxRetry, &j.FindTime, &j.BanTime, &j.LastLogPos, &j.Enabled)
+	if err != nil {
+		log.Printf("Failed to load jail %d for restart: %v", jailID, err)
+		return
+	}
+
+	// Stop existing monitor
+	s.stopJailMonitor(jailID)
+
+	// Start new monitor if enabled
+	if j.Enabled {
+		s.startJailMonitor(j.ID, j.Name, j.LogFile, j.FilterRegex, j.MaxRetry, j.FindTime, j.BanTime, j.LastLogPos)
+		log.Printf("Restarted jail monitor: %s", j.Name)
+	}
+}
+
+func (s *Service) monitorJailWithContext(ctx context.Context, jailID int64, name, logFile, filterRegex string, maxRetry, findTime, banTime int, lastLogPos int64) {
 	if _, err := os.Stat(logFile); os.IsNotExist(err) {
 		log.Printf("Jail %s: log file %s not found, skipping", name, logFile)
 		return
@@ -416,7 +488,7 @@ func (s *Service) monitorJail(jailID int64, name, logFile, filterRegex string, m
 
 	for {
 		select {
-		case <-s.ctx.Done():
+		case <-ctx.Done():
 			log.Printf("Jail monitor %s stopping (context cancelled)", name)
 			return
 		case <-ticker.C:
@@ -1220,9 +1292,9 @@ func (s *Service) handleCreateJail(w http.ResponseWriter, r *http.Request) {
 
 	jail.ID, _ = result.LastInsertId()
 
-	// Start monitor for new jail
+	// Start monitor for new jail (hot-reload)
 	if jail.Enabled {
-		go s.monitorJail(jail.ID, jail.Name, jail.LogFile, jail.FilterRegex, jail.MaxRetry, jail.FindTime, jail.BanTime, 0)
+		s.startJailMonitor(jail.ID, jail.Name, jail.LogFile, jail.FilterRegex, jail.MaxRetry, jail.FindTime, jail.BanTime, 0)
 	}
 
 	router.JSON(w, jail)
@@ -1265,6 +1337,10 @@ func (s *Service) handleUpdateJail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Get the jail ID before updating
+	var jailID int64
+	s.db.QueryRow("SELECT id FROM jails WHERE name = ?", name).Scan(&jailID)
+
 	_, err := s.db.Exec(`UPDATE jails SET enabled = ?, log_file = ?, filter_regex = ?, max_retry = ?,
 		find_time = ?, ban_time = ?, port = ?, action = ? WHERE name = ?`,
 		jail.Enabled, jail.LogFile, jail.FilterRegex, jail.MaxRetry, jail.FindTime, jail.BanTime, jail.Port, jail.Action, name)
@@ -1272,11 +1348,26 @@ func (s *Service) handleUpdateJail(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	// Hot-reload: restart the jail monitor with new settings
+	if jailID > 0 {
+		s.restartJailMonitor(jailID)
+	}
+
+	jail.ID = jailID
 	router.JSON(w, jail)
 }
 
 func (s *Service) handleDeleteJail(w http.ResponseWriter, r *http.Request) {
 	name := router.ExtractPathParam(r, "/api/fw/jails/")
+
+	// Get the jail ID and stop the monitor before deleting
+	var jailID int64
+	s.db.QueryRow("SELECT id FROM jails WHERE name = ?", name).Scan(&jailID)
+	if jailID > 0 {
+		s.stopJailMonitor(jailID)
+	}
+
 	s.db.Exec("DELETE FROM jails WHERE name = ?", name)
 	s.db.Exec("DELETE FROM blocked_ips WHERE jail_name = ?", name)
 	s.ApplyRules()
