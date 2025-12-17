@@ -25,38 +25,38 @@ type Service struct {
 
 // VPNClient represents a unified view of a VPN client (WireGuard or Headscale)
 type VPNClient struct {
-	ID               int             `json:"id"`
-	Name             string          `json:"name"`
-	IP               string          `json:"ip"`
-	Type             string          `json:"type"` // "wireguard" or "headscale"
-	ExternalID       string          `json:"externalId,omitempty"`
-	RawData          json.RawMessage `json:"rawData,omitempty"` // Full data from source system
-	ACLPolicy        string          `json:"aclPolicy"`         // block_all, selected, snapshot_all, allow_all_future
-	DefaultDirection string          `json:"defaultDirection"`  // bidirectional, outbound_only, inbound_only
-	CreatedAt        time.Time       `json:"createdAt"`
-	UpdatedAt        time.Time       `json:"updatedAt"`
+	ID         int             `json:"id"`
+	Name       string          `json:"name"`
+	IP         string          `json:"ip"`
+	Type       string          `json:"type"` // "wireguard" or "headscale"
+	ExternalID string          `json:"externalId,omitempty"`
+	RawData    json.RawMessage `json:"rawData,omitempty"` // Full data from source system
+	ACLPolicy  string          `json:"aclPolicy"`         // block_all, selected, allow_all
+	CreatedAt  time.Time       `json:"createdAt"`
+	UpdatedAt  time.Time       `json:"updatedAt"`
 	// Enriched fields (not stored in DB)
 	AllowedCount int `json:"allowedCount,omitempty"`
 }
 
-// ACLRule represents an ACL rule between two clients
+// ACLRule represents an ACL rule between two clients (source can reach target)
 type ACLRule struct {
 	ID             int       `json:"id"`
 	SourceClientID int       `json:"sourceClientId"`
 	TargetClientID int       `json:"targetClientId"`
-	Direction      string    `json:"direction"` // bidirectional, outbound_only, inbound_only
 	CreatedAt      time.Time `json:"createdAt"`
 	// Enriched fields
-	TargetName string `json:"targetName,omitempty"`
-	TargetIP   string `json:"targetIp,omitempty"`
-	TargetType string `json:"targetType,omitempty"`
+	TargetName      string `json:"targetName,omitempty"`
+	TargetIP        string `json:"targetIp,omitempty"`
+	TargetType      string `json:"targetType,omitempty"`
+	TargetPolicy    string `json:"targetPolicy,omitempty"`    // For UI to know if bidirectional is possible
+	IsBidirectional bool   `json:"isBidirectional,omitempty"` // True if reverse rule exists
 }
 
 // ClientACLUpdate is the request body for updating a client's ACL
 type ClientACLUpdate struct {
-	Policy           string `json:"policy"`
-	DefaultDirection string `json:"defaultDirection"`
-	AllowedClientIDs []int  `json:"allowedClientIds"`
+	Policy           string          `json:"policy"`
+	AllowedClientIDs []int           `json:"allowedClientIds"`
+	Bidirectional    map[int]bool    `json:"bidirectional"` // targetId -> add reverse rule
 }
 
 // New creates a new VPN service
@@ -100,7 +100,7 @@ func (s *Service) handleGetClients(w http.ResponseWriter, r *http.Request) {
 	// Use LEFT JOIN with subquery to avoid N+1 query problem
 	rows, err := db.Query(`
 		SELECT c.id, c.name, c.ip, c.type, c.external_id, c.raw_data,
-		       c.acl_policy, c.default_direction, c.created_at, c.updated_at,
+		       c.acl_policy, c.created_at, c.updated_at,
 		       COALESCE(counts.cnt, 0) as allowed_count
 		FROM vpn_clients c
 		LEFT JOIN (
@@ -120,7 +120,7 @@ func (s *Service) handleGetClients(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var c VPNClient
 		var externalID, rawData sql.NullString
-		if err := rows.Scan(&c.ID, &c.Name, &c.IP, &c.Type, &externalID, &rawData, &c.ACLPolicy, &c.DefaultDirection, &c.CreatedAt, &c.UpdatedAt, &c.AllowedCount); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.IP, &c.Type, &externalID, &rawData, &c.ACLPolicy, &c.CreatedAt, &c.UpdatedAt, &c.AllowedCount); err != nil {
 			continue
 		}
 		if externalID.Valid {
@@ -147,9 +147,9 @@ func (s *Service) handleGetClient(w http.ResponseWriter, r *http.Request) {
 	var c VPNClient
 	var externalID sql.NullString
 	err = db.QueryRow(`
-		SELECT id, name, ip, type, external_id, acl_policy, default_direction, created_at, updated_at
+		SELECT id, name, ip, type, external_id, acl_policy, created_at, updated_at
 		FROM vpn_clients WHERE id = ?
-	`, id).Scan(&c.ID, &c.Name, &c.IP, &c.Type, &externalID, &c.ACLPolicy, &c.DefaultDirection, &c.CreatedAt, &c.UpdatedAt)
+	`, id).Scan(&c.ID, &c.Name, &c.IP, &c.Type, &externalID, &c.ACLPolicy, &c.CreatedAt, &c.UpdatedAt)
 	if err == sql.ErrNoRows {
 		router.JSONError(w, "client not found", http.StatusNotFound)
 		return
@@ -197,15 +197,6 @@ func (s *Service) handleUpdateACL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate direction
-	if req.DefaultDirection != "" && !helper.IsValidACLDirection(req.DefaultDirection) {
-		router.JSONError(w, "invalid direction", http.StatusBadRequest)
-		return
-	}
-	if req.DefaultDirection == "" {
-		req.DefaultDirection = helper.DefaultACLDirection
-	}
-
 	db := database.Get()
 	tx, err := db.Begin()
 	if err != nil {
@@ -217,16 +208,9 @@ func (s *Service) handleUpdateACL(w http.ResponseWriter, r *http.Request) {
 	// Update client policy
 	_, err = tx.Exec(`
 		UPDATE vpn_clients
-		SET acl_policy = ?, default_direction = ?, updated_at = CURRENT_TIMESTAMP
+		SET acl_policy = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, req.Policy, req.DefaultDirection, id)
-	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Delete existing rules for this client
-	_, err = tx.Exec(`DELETE FROM vpn_acl_rules WHERE source_client_id = ?`, id)
+	`, req.Policy, id)
 	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -235,54 +219,85 @@ func (s *Service) handleUpdateACL(w http.ResponseWriter, r *http.Request) {
 	// Handle different policies
 	switch req.Policy {
 	case helper.ACLPolicyBlockAll:
-		// No rules needed - client is isolated
+		// Client is isolated - delete all rules where they are source OR target
+		_, err = tx.Exec(`DELETE FROM vpn_acl_rules WHERE source_client_id = ? OR target_client_id = ?`, id, id)
+		if err != nil {
+			router.JSONError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+	case helper.ACLPolicyAllowAll:
+		// Client can reach everyone - no need for individual rules, delete where source=this
+		_, err = tx.Exec(`DELETE FROM vpn_acl_rules WHERE source_client_id = ?`, id)
+		if err != nil {
+			router.JSONError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 
 	case helper.ACLPolicySelected:
+		// Delete existing rules where this client is source
+		_, err = tx.Exec(`DELETE FROM vpn_acl_rules WHERE source_client_id = ?`, id)
+		if err != nil {
+			router.JSONError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Pre-fetch policies for all target clients to avoid N+1 queries
+		targetPolicies := make(map[int]string)
+		if len(req.AllowedClientIDs) > 0 {
+			// Build query with placeholders
+			placeholders := make([]string, len(req.AllowedClientIDs))
+			args := make([]interface{}, len(req.AllowedClientIDs))
+			for i, tid := range req.AllowedClientIDs {
+				placeholders[i] = "?"
+				args[i] = tid
+			}
+			policyRows, err := tx.Query(
+				`SELECT id, acl_policy FROM vpn_clients WHERE id IN (`+strings.Join(placeholders, ",")+`)`,
+				args...,
+			)
+			if err == nil {
+				for policyRows.Next() {
+					var tid int
+					var policy string
+					if err := policyRows.Scan(&tid, &policy); err == nil {
+						targetPolicies[tid] = policy
+					}
+				}
+				policyRows.Close()
+			}
+		}
+
 		// Add rules for selected clients
 		for _, targetID := range req.AllowedClientIDs {
 			if targetID == id {
 				continue // Can't allow self
 			}
+			// Insert rule: this client can reach target
 			_, err = tx.Exec(`
-				INSERT INTO vpn_acl_rules (source_client_id, target_client_id, direction)
-				VALUES (?, ?, ?)
-			`, id, targetID, req.DefaultDirection)
+				INSERT OR IGNORE INTO vpn_acl_rules (source_client_id, target_client_id)
+				VALUES (?, ?)
+			`, id, targetID)
 			if err != nil {
 				router.JSONError(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-		}
 
-	case helper.ACLPolicySnapshotAll:
-		// Add rules for ALL current clients (snapshot)
-		rows, err := tx.Query(`SELECT id FROM vpn_clients WHERE id != ?`, id)
-		if err != nil {
-			router.JSONError(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		var targetIDs []int
-		for rows.Next() {
-			var tid int
-			if err := rows.Scan(&tid); err != nil {
-				continue
-			}
-			targetIDs = append(targetIDs, tid)
-		}
-		rows.Close()
-
-		for _, targetID := range targetIDs {
-			_, err = tx.Exec(`
-				INSERT INTO vpn_acl_rules (source_client_id, target_client_id, direction)
-				VALUES (?, ?, ?)
-			`, id, targetID, req.DefaultDirection)
-			if err != nil {
-				router.JSONError(w, err.Error(), http.StatusInternalServerError)
-				return
+			// Handle bidirectional: if checked, add reverse rule (only if target has "selected" policy)
+			if req.Bidirectional != nil && req.Bidirectional[targetID] {
+				// Only add reverse rule if target has "selected" policy
+				if targetPolicies[targetID] == helper.ACLPolicySelected {
+					_, err = tx.Exec(`
+						INSERT OR IGNORE INTO vpn_acl_rules (source_client_id, target_client_id)
+						VALUES (?, ?)
+					`, targetID, id)
+					if err != nil {
+						router.JSONError(w, err.Error(), http.StatusInternalServerError)
+						return
+					}
+				}
 			}
 		}
-
-	case helper.ACLPolicyAllowAllFuture:
-		// No explicit rules stored - handled dynamically during rule generation
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -356,9 +371,15 @@ func (s *Service) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) getClientACLRules(clientID int) []ACLRule {
 	db := database.Get()
+
+	// Get rules where this client is source, include target's policy and check if reverse rule exists
+	// Uses subquery to check for bidirectional in single query (avoids N+1)
 	rows, err := db.Query(`
-		SELECT r.id, r.source_client_id, r.target_client_id, r.direction, r.created_at,
-		       c.name, c.ip, c.type
+		SELECT r.id, r.source_client_id, r.target_client_id, r.created_at,
+		       c.name, c.ip, c.type, c.acl_policy,
+		       EXISTS(SELECT 1 FROM vpn_acl_rules rev
+		              WHERE rev.source_client_id = r.target_client_id
+		              AND rev.target_client_id = r.source_client_id) as is_bidirectional
 		FROM vpn_acl_rules r
 		JOIN vpn_clients c ON r.target_client_id = c.id
 		WHERE r.source_client_id = ?
@@ -372,8 +393,8 @@ func (s *Service) getClientACLRules(clientID int) []ACLRule {
 	rules := []ACLRule{}
 	for rows.Next() {
 		var r ACLRule
-		if err := rows.Scan(&r.ID, &r.SourceClientID, &r.TargetClientID, &r.Direction, &r.CreatedAt,
-			&r.TargetName, &r.TargetIP, &r.TargetType); err != nil {
+		if err := rows.Scan(&r.ID, &r.SourceClientID, &r.TargetClientID, &r.CreatedAt,
+			&r.TargetName, &r.TargetIP, &r.TargetType, &r.TargetPolicy, &r.IsBidirectional); err != nil {
 			continue
 		}
 		rules = append(rules, r)
@@ -424,9 +445,9 @@ func (s *Service) SyncClients() (added int, removed int, err error) {
 			} else {
 				// Insert new record
 				_, err := db.Exec(`
-					INSERT INTO vpn_clients (name, ip, type, external_id, raw_data, acl_policy, default_direction)
-					VALUES (?, ?, 'wireguard', ?, ?, ?, ?)
-				`, peer.Name, peer.IPAddress, peer.ID, string(rawData), helper.DefaultACLPolicy, helper.DefaultACLDirection)
+					INSERT INTO vpn_clients (name, ip, type, external_id, raw_data, acl_policy)
+					VALUES (?, ?, 'wireguard', ?, ?, ?)
+				`, peer.Name, peer.IPAddress, peer.ID, string(rawData), helper.DefaultACLPolicy)
 				if err == nil {
 					added++
 				}
@@ -456,9 +477,9 @@ func (s *Service) SyncClients() (added int, removed int, err error) {
 			} else {
 				// Insert new record
 				_, err := db.Exec(`
-					INSERT INTO vpn_clients (name, ip, type, external_id, raw_data, acl_policy, default_direction)
-					VALUES (?, ?, 'headscale', ?, ?, ?, ?)
-				`, node.Name, node.IP, node.ID, rawNodes[i], helper.DefaultACLPolicy, helper.DefaultACLDirection)
+					INSERT INTO vpn_clients (name, ip, type, external_id, raw_data, acl_policy)
+					VALUES (?, ?, 'headscale', ?, ?, ?)
+				`, node.Name, node.IP, node.ID, rawNodes[i], helper.DefaultACLPolicy)
 				if err == nil {
 					added++
 				}

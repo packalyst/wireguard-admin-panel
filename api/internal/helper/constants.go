@@ -4,48 +4,26 @@ import "time"
 
 // ACL Policy constants
 const (
-	ACLPolicyBlockAll       = "block_all"
-	ACLPolicySelected       = "selected"
-	ACLPolicySnapshotAll    = "snapshot_all"
-	ACLPolicyAllowAllFuture = "allow_all_future"
-)
-
-// ACL Direction constants
-const (
-	ACLDirectionBidirectional = "bidirectional"
-	ACLDirectionOutboundOnly  = "outbound_only"
-	ACLDirectionInboundOnly   = "inbound_only"
+	ACLPolicyBlockAll = "block_all" // Client is isolated - can't reach anyone, nobody can reach them
+	ACLPolicySelected = "selected"  // Client can reach only selected targets
+	ACLPolicyAllowAll = "allow_all" // Client can reach everyone
 )
 
 // Default ACL values
 const (
-	DefaultACLPolicy    = ACLPolicySelected
-	DefaultACLDirection = ACLDirectionBidirectional
+	DefaultACLPolicy = ACLPolicySelected
 )
 
 // ValidACLPolicies is the set of valid ACL policy values
 var ValidACLPolicies = map[string]bool{
-	ACLPolicyBlockAll:       true,
-	ACLPolicySelected:       true,
-	ACLPolicySnapshotAll:    true,
-	ACLPolicyAllowAllFuture: true,
-}
-
-// ValidACLDirections is the set of valid ACL direction values
-var ValidACLDirections = map[string]bool{
-	ACLDirectionBidirectional: true,
-	ACLDirectionOutboundOnly:  true,
-	ACLDirectionInboundOnly:   true,
+	ACLPolicyBlockAll: true,
+	ACLPolicySelected: true,
+	ACLPolicyAllowAll: true,
 }
 
 // IsValidACLPolicy checks if a policy value is valid
 func IsValidACLPolicy(policy string) bool {
 	return ValidACLPolicies[policy]
-}
-
-// IsValidACLDirection checks if a direction value is valid
-func IsValidACLDirection(direction string) bool {
-	return ValidACLDirections[direction]
 }
 
 // VPN Router configuration defaults

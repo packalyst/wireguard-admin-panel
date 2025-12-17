@@ -77,46 +77,44 @@ func generateHeadscaleACL() (*HeadscaleACL, error) {
 	wgIPRange := helper.GetEnv("WG_IP_RANGE")
 
 	// Get all clients
-	rows, err := db.Query(`SELECT id, name, ip, type, acl_policy, default_direction FROM vpn_clients`)
+	rows, err := db.Query(`SELECT id, name, ip, type, acl_policy FROM vpn_clients`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
 	type client struct {
-		ID        int
-		Name      string
-		IP        string
-		Type      string
-		Policy    string
-		Direction string
+		ID     int
+		Name   string
+		IP     string
+		Type   string
+		Policy string
 	}
 	clients := make(map[int]client)
 
 	for rows.Next() {
 		var c client
-		if err := rows.Scan(&c.ID, &c.Name, &c.IP, &c.Type, &c.Policy, &c.Direction); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.IP, &c.Type, &c.Policy); err != nil {
 			continue
 		}
 		clients[c.ID] = c
 	}
 
-	// Get all ACL rules
-	ruleRows, err := db.Query(`SELECT source_client_id, target_client_id, direction FROM vpn_acl_rules`)
+	// Get all ACL rules (simplified: source can reach target)
+	ruleRows, err := db.Query(`SELECT source_client_id, target_client_id FROM vpn_acl_rules`)
 	if err != nil {
 		return nil, err
 	}
 	defer ruleRows.Close()
 
 	type aclRule struct {
-		SourceID  int
-		TargetID  int
-		Direction string
+		SourceID int
+		TargetID int
 	}
 	var rules []aclRule
 	for ruleRows.Next() {
 		var r aclRule
-		if err := ruleRows.Scan(&r.SourceID, &r.TargetID, &r.Direction); err != nil {
+		if err := ruleRows.Scan(&r.SourceID, &r.TargetID); err != nil {
 			continue
 		}
 		rules = append(rules, r)
@@ -128,9 +126,8 @@ func generateHeadscaleACL() (*HeadscaleACL, error) {
 		ACLs:  []ACLEntry{},
 	}
 
-	// Add all clients to hosts
+	// Add all clients to hosts (except block_all which are isolated)
 	for _, c := range clients {
-		// Sanitize name for use in ACL
 		safeName := sanitizeHostName(c.Name)
 		acl.Hosts[safeName] = c.IP
 	}
@@ -156,68 +153,12 @@ func generateHeadscaleACL() (*HeadscaleACL, error) {
 		Dst:    []string{routerName + ":*"},
 	})
 
-	// Track which pairs are already allowed
+	// Track which pairs are already allowed (to avoid duplicates)
 	allowedPairs := make(map[string]bool)
 
-	// Process explicit rules
-	for _, rule := range rules {
-		src, srcExists := clients[rule.SourceID]
-		dst, dstExists := clients[rule.TargetID]
-		if !srcExists || !dstExists {
-			continue
-		}
-
-		srcName := sanitizeHostName(src.Name)
-		dstName := sanitizeHostName(dst.Name)
-
-		switch rule.Direction {
-		case helper.ACLDirectionBidirectional:
-			key1 := fmt.Sprintf("%s->%s", srcName, dstName)
-			key2 := fmt.Sprintf("%s->%s", dstName, srcName)
-			if !allowedPairs[key1] {
-				// Forward direction
-				acl.ACLs = append(acl.ACLs, ACLEntry{
-					Action: "accept",
-					Src:    []string{srcName},
-					Dst:    []string{dstName + ":*"},
-				})
-				// Reverse direction
-				acl.ACLs = append(acl.ACLs, ACLEntry{
-					Action: "accept",
-					Src:    []string{dstName},
-					Dst:    []string{srcName + ":*"},
-				})
-				allowedPairs[key1] = true
-				allowedPairs[key2] = true
-			}
-
-		case helper.ACLDirectionOutboundOnly:
-			key := fmt.Sprintf("%s->%s", srcName, dstName)
-			if !allowedPairs[key] {
-				acl.ACLs = append(acl.ACLs, ACLEntry{
-					Action: "accept",
-					Src:    []string{srcName},
-					Dst:    []string{dstName + ":*"},
-				})
-				allowedPairs[key] = true
-			}
-
-		case helper.ACLDirectionInboundOnly:
-			key := fmt.Sprintf("%s->%s", dstName, srcName)
-			if !allowedPairs[key] {
-				acl.ACLs = append(acl.ACLs, ACLEntry{
-					Action: "accept",
-					Src:    []string{dstName},
-					Dst:    []string{srcName + ":*"},
-				})
-				allowedPairs[key] = true
-			}
-		}
-	}
-
-	// Handle "allow_all_future" policies
+	// Handle "allow_all" policies first - these clients can reach everyone
 	for _, c := range clients {
-		if c.Policy == helper.ACLPolicyAllowAllFuture {
+		if c.Policy == helper.ACLPolicyAllowAll {
 			safeName := sanitizeHostName(c.Name)
 			// Allow this client to reach everything
 			acl.ACLs = append(acl.ACLs, ACLEntry{
@@ -225,17 +166,48 @@ func generateHeadscaleACL() (*HeadscaleACL, error) {
 				Src:    []string{safeName},
 				Dst:    []string{"*:*"},
 			})
-			// Allow everything to reach this client
-			acl.ACLs = append(acl.ACLs, ACLEntry{
-				Action: "accept",
-				Src:    []string{"*"},
-				Dst:    []string{safeName + ":*"},
-			})
 		}
 	}
 
-	// Allow access to wireguard-network via vpn-router for all Headscale clients with allowed rules
-	// (This enables Headscale clients to reach WireGuard clients via the subnet router)
+	// Process explicit rules for "selected" policy clients
+	for _, rule := range rules {
+		src, srcExists := clients[rule.SourceID]
+		dst, dstExists := clients[rule.TargetID]
+		if !srcExists || !dstExists {
+			continue
+		}
+
+		// Skip if source has block_all (isolated, can't reach anyone)
+		if src.Policy == helper.ACLPolicyBlockAll {
+			continue
+		}
+
+		// Skip if target has block_all (isolated, nobody can reach them)
+		if dst.Policy == helper.ACLPolicyBlockAll {
+			continue
+		}
+
+		// Skip if source has allow_all (already covered by wildcard rule above)
+		if src.Policy == helper.ACLPolicyAllowAll {
+			continue
+		}
+
+		srcName := sanitizeHostName(src.Name)
+		dstName := sanitizeHostName(dst.Name)
+
+		key := fmt.Sprintf("%s->%s", srcName, dstName)
+		if !allowedPairs[key] {
+			acl.ACLs = append(acl.ACLs, ACLEntry{
+				Action: "accept",
+				Src:    []string{srcName},
+				Dst:    []string{dstName + ":*"},
+			})
+			allowedPairs[key] = true
+		}
+	}
+
+	// Allow access to wireguard-network via vpn-router for all Headscale clients
+	// (except block_all which are isolated)
 	for _, c := range clients {
 		if c.Type == "headscale" && c.Policy != helper.ACLPolicyBlockAll {
 			safeName := sanitizeHostName(c.Name)

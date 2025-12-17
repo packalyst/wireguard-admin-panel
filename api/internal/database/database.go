@@ -161,18 +161,16 @@ func createSchema(db *sql.DB) error {
 		type TEXT NOT NULL CHECK(type IN ('wireguard', 'headscale')),
 		external_id TEXT,
 		raw_data TEXT,
-		acl_policy TEXT NOT NULL DEFAULT 'selected' CHECK(acl_policy IN ('block_all', 'selected', 'snapshot_all', 'allow_all_future')),
-		default_direction TEXT NOT NULL DEFAULT 'bidirectional' CHECK(default_direction IN ('bidirectional', 'outbound_only', 'inbound_only')),
+		acl_policy TEXT NOT NULL DEFAULT 'selected' CHECK(acl_policy IN ('block_all', 'selected', 'allow_all')),
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
-	-- ACL rules between clients
+	-- ACL rules between clients (source can reach target)
 	CREATE TABLE IF NOT EXISTS vpn_acl_rules (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		source_client_id INTEGER NOT NULL,
 		target_client_id INTEGER NOT NULL,
-		direction TEXT NOT NULL DEFAULT 'bidirectional' CHECK(direction IN ('bidirectional', 'outbound_only', 'inbound_only')),
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (source_client_id) REFERENCES vpn_clients(id) ON DELETE CASCADE,
 		FOREIGN KEY (target_client_id) REFERENCES vpn_clients(id) ON DELETE CASCADE,
@@ -322,6 +320,17 @@ func runMigrations(db *sql.DB) error {
 			return fmt.Errorf("failed to add raw_data column: %v", err)
 		}
 		log.Printf("Migration: added 'raw_data' column to vpn_clients")
+	}
+
+	// Migrate old ACL policies to new simplified model
+	// snapshot_all -> selected, allow_all_future -> allow_all
+	_, err = db.Exec(`UPDATE vpn_clients SET acl_policy = 'selected' WHERE acl_policy = 'snapshot_all'`)
+	if err != nil {
+		log.Printf("Migration warning: could not update snapshot_all policies: %v", err)
+	}
+	_, err = db.Exec(`UPDATE vpn_clients SET acl_policy = 'allow_all' WHERE acl_policy = 'allow_all_future'`)
+	if err != nil {
+		log.Printf("Migration warning: could not update allow_all_future policies: %v", err)
 	}
 
 	return nil

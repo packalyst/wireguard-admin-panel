@@ -51,48 +51,44 @@ func generateNftablesRules() (string, error) {
 	hsIPRange := helper.GetEnv("HEADSCALE_IP_RANGE")
 
 	// Get all clients
-	rows, err := db.Query(`SELECT id, name, ip, type, acl_policy, default_direction FROM vpn_clients`)
+	rows, err := db.Query(`SELECT id, name, ip, type, acl_policy FROM vpn_clients`)
 	if err != nil {
 		return "", err
 	}
 	defer rows.Close()
 
 	type client struct {
-		ID        int
-		Name      string
-		IP        string
-		Type      string
-		Policy    string
-		Direction string
+		ID     int
+		Name   string
+		IP     string
+		Type   string
+		Policy string
 	}
 	clients := make(map[int]client)
-	clientsByIP := make(map[string]client)
 
 	for rows.Next() {
 		var c client
-		if err := rows.Scan(&c.ID, &c.Name, &c.IP, &c.Type, &c.Policy, &c.Direction); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.IP, &c.Type, &c.Policy); err != nil {
 			continue
 		}
 		clients[c.ID] = c
-		clientsByIP[c.IP] = c
 	}
 
-	// Get all ACL rules
-	ruleRows, err := db.Query(`SELECT source_client_id, target_client_id, direction FROM vpn_acl_rules`)
+	// Get all ACL rules (simplified: source can reach target)
+	ruleRows, err := db.Query(`SELECT source_client_id, target_client_id FROM vpn_acl_rules`)
 	if err != nil {
 		return "", err
 	}
 	defer ruleRows.Close()
 
 	type aclRule struct {
-		SourceID  int
-		TargetID  int
-		Direction string
+		SourceID int
+		TargetID int
 	}
 	var rules []aclRule
 	for ruleRows.Next() {
 		var r aclRule
-		if err := ruleRows.Scan(&r.SourceID, &r.TargetID, &r.Direction); err != nil {
+		if err := ruleRows.Scan(&r.SourceID, &r.TargetID); err != nil {
 			continue
 		}
 		rules = append(rules, r)
@@ -123,7 +119,24 @@ func generateNftablesRules() (string, error) {
 	// Track which pairs are already allowed
 	allowedPairs := make(map[string]bool)
 
-	// Process explicit rules first
+	// Handle "allow_all" policies first - these clients can reach everyone
+	for _, c := range clients {
+		if c.Policy == helper.ACLPolicyAllowAll {
+			// Sanitize name for use in nftables comment (remove newlines and special chars)
+			safeName := sanitizeForComment(c.Name)
+			sb.WriteString(fmt.Sprintf("        # %s [allow_all policy]\n", safeName))
+			// Allow this client to reach all VPN networks
+			if wgIPRange != "" {
+				sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s accept\n", c.IP, wgIPRange))
+			}
+			if hsIPRange != "" {
+				sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s accept\n", c.IP, hsIPRange))
+			}
+			sb.WriteString("\n")
+		}
+	}
+
+	// Process explicit rules for "selected" policy clients
 	for _, rule := range rules {
 		src, srcExists := clients[rule.SourceID]
 		dst, dstExists := clients[rule.TargetID]
@@ -131,51 +144,27 @@ func generateNftablesRules() (string, error) {
 			continue
 		}
 
-		// Generate rule based on direction
-		switch rule.Direction {
-		case helper.ACLDirectionBidirectional:
-			key1 := fmt.Sprintf("%s->%s", src.IP, dst.IP)
-			key2 := fmt.Sprintf("%s->%s", dst.IP, src.IP)
-			if !allowedPairs[key1] {
-				sb.WriteString(fmt.Sprintf("        # %s <-> %s [bidirectional]\n", src.Name, dst.Name))
-				sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s accept\n", src.IP, dst.IP))
-				sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s accept\n\n", dst.IP, src.IP))
-				allowedPairs[key1] = true
-				allowedPairs[key2] = true
-			}
-
-		case helper.ACLDirectionOutboundOnly:
-			key := fmt.Sprintf("%s->%s", src.IP, dst.IP)
-			if !allowedPairs[key] {
-				sb.WriteString(fmt.Sprintf("        # %s -> %s [outbound only]\n", src.Name, dst.Name))
-				sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s accept\n\n", src.IP, dst.IP))
-				allowedPairs[key] = true
-			}
-
-		case helper.ACLDirectionInboundOnly:
-			key := fmt.Sprintf("%s->%s", dst.IP, src.IP)
-			if !allowedPairs[key] {
-				sb.WriteString(fmt.Sprintf("        # %s <- %s [inbound only]\n", src.Name, dst.Name))
-				sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s accept\n\n", dst.IP, src.IP))
-				allowedPairs[key] = true
-			}
+		// Skip if source has block_all (isolated, can't reach anyone)
+		if src.Policy == helper.ACLPolicyBlockAll {
+			continue
 		}
-	}
 
-	// Handle "allow_all_future" policies - these clients can reach everyone
-	for _, c := range clients {
-		if c.Policy == helper.ACLPolicyAllowAllFuture {
-			sb.WriteString(fmt.Sprintf("        # %s [allow_all_future policy]\n", c.Name))
-			// Allow this client to reach all VPN networks
-			if wgIPRange != "" {
-				sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s accept\n", c.IP, wgIPRange))
-				sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s accept\n", wgIPRange, c.IP))
-			}
-			if hsIPRange != "" {
-				sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s accept\n", c.IP, hsIPRange))
-				sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s accept\n", hsIPRange, c.IP))
-			}
-			sb.WriteString("\n")
+		// Skip if target has block_all (isolated, nobody can reach them)
+		if dst.Policy == helper.ACLPolicyBlockAll {
+			continue
+		}
+
+		// Skip if source has allow_all (already covered by wildcard rule above)
+		if src.Policy == helper.ACLPolicyAllowAll {
+			continue
+		}
+
+		key := fmt.Sprintf("%s->%s", src.IP, dst.IP)
+		if !allowedPairs[key] {
+			// Sanitize names for use in nftables comment
+			sb.WriteString(fmt.Sprintf("        # %s -> %s\n", sanitizeForComment(src.Name), sanitizeForComment(dst.Name)))
+			sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s accept\n\n", src.IP, dst.IP))
+			allowedPairs[key] = true
 		}
 	}
 
@@ -194,6 +183,14 @@ func generateNftablesRules() (string, error) {
 	sb.WriteString("}\n")
 
 	return sb.String(), nil
+}
+
+// sanitizeForComment removes newlines and other characters that could break nftables comments
+func sanitizeForComment(s string) string {
+	result := strings.ReplaceAll(s, "\n", " ")
+	result = strings.ReplaceAll(result, "\r", " ")
+	result = strings.ReplaceAll(result, "#", "")
+	return result
 }
 
 // RemoveNftablesRules removes the VPN ACL nftables rules
