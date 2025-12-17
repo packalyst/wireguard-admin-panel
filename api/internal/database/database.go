@@ -110,9 +110,13 @@ func createSchema(db *sql.DB) error {
 
 	CREATE INDEX IF NOT EXISTS idx_blocked_ips_ip ON blocked_ips(ip);
 	CREATE INDEX IF NOT EXISTS idx_blocked_ips_expires ON blocked_ips(expires_at);
+	CREATE INDEX IF NOT EXISTS idx_blocked_ips_jail ON blocked_ips(jail_name);
 	CREATE INDEX IF NOT EXISTS idx_attempts_timestamp ON attempts(timestamp);
 	CREATE INDEX IF NOT EXISTS idx_attempts_ip ON attempts(source_ip);
+	CREATE INDEX IF NOT EXISTS idx_attempts_jail ON attempts(jail_name);
 	CREATE INDEX IF NOT EXISTS idx_traffic_timestamp ON traffic_logs(timestamp);
+	CREATE INDEX IF NOT EXISTS idx_traffic_client_ip ON traffic_logs(client_ip);
+	CREATE INDEX IF NOT EXISTS idx_traffic_dest_ip ON traffic_logs(dest_ip);
 	`
 
 	// New tables for auth and settings
@@ -147,6 +151,50 @@ func createSchema(db *sql.DB) error {
 	CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 	`
 
+	// VPN ACL tables - unified view of all VPN clients and access control
+	vpnSchema := `
+	-- Unified view of all VPN clients (WireGuard + Headscale)
+	CREATE TABLE IF NOT EXISTS vpn_clients (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL,
+		ip TEXT NOT NULL UNIQUE,
+		type TEXT NOT NULL CHECK(type IN ('wireguard', 'headscale')),
+		external_id TEXT,
+		raw_data TEXT,
+		acl_policy TEXT NOT NULL DEFAULT 'selected' CHECK(acl_policy IN ('block_all', 'selected', 'allow_all')),
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	-- ACL rules between clients (source can reach target)
+	CREATE TABLE IF NOT EXISTS vpn_acl_rules (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		source_client_id INTEGER NOT NULL,
+		target_client_id INTEGER NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (source_client_id) REFERENCES vpn_clients(id) ON DELETE CASCADE,
+		FOREIGN KEY (target_client_id) REFERENCES vpn_clients(id) ON DELETE CASCADE,
+		UNIQUE(source_client_id, target_client_id)
+	);
+
+	-- VPN router status tracking
+	CREATE TABLE IF NOT EXISTS vpn_router_config (
+		id INTEGER PRIMARY KEY CHECK(id = 1),
+		enabled BOOLEAN DEFAULT 0,
+		authkey TEXT,
+		headscale_user TEXT DEFAULT 'vpn-router',
+		route_id TEXT,
+		status TEXT DEFAULT 'disabled',
+		last_check DATETIME,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_vpn_acl_source ON vpn_acl_rules(source_client_id);
+	CREATE INDEX IF NOT EXISTS idx_vpn_acl_target ON vpn_acl_rules(target_client_id);
+	CREATE INDEX IF NOT EXISTS idx_vpn_clients_type ON vpn_clients(type);
+	`
+
 	// Execute firewall schema
 	if _, err := db.Exec(firewallSchema); err != nil {
 		return fmt.Errorf("failed to create firewall schema: %v", err)
@@ -155,6 +203,11 @@ func createSchema(db *sql.DB) error {
 	// Execute app schema
 	if _, err := db.Exec(appSchema); err != nil {
 		return fmt.Errorf("failed to create app schema: %v", err)
+	}
+
+	// Execute VPN ACL schema
+	if _, err := db.Exec(vpnSchema); err != nil {
+		return fmt.Errorf("failed to create VPN schema: %v", err)
 	}
 
 	// Run migrations for existing databases
@@ -180,6 +233,104 @@ func runMigrations(db *sql.DB) error {
 			return fmt.Errorf("failed to add service column: %v", err)
 		}
 		log.Printf("Migration: added 'service' column to allowed_ports")
+	}
+
+	// Add CIDR/range support columns to blocked_ips
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('blocked_ips') WHERE name='is_range'`).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE blocked_ips ADD COLUMN is_range BOOLEAN DEFAULT 0`)
+		if err != nil {
+			return fmt.Errorf("failed to add is_range column: %v", err)
+		}
+		log.Printf("Migration: added 'is_range' column to blocked_ips")
+	}
+
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('blocked_ips') WHERE name='escalated_from'`).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE blocked_ips ADD COLUMN escalated_from TEXT`)
+		if err != nil {
+			return fmt.Errorf("failed to add escalated_from column: %v", err)
+		}
+		log.Printf("Migration: added 'escalated_from' column to blocked_ips")
+	}
+
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('blocked_ips') WHERE name='source'`).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE blocked_ips ADD COLUMN source TEXT DEFAULT 'manual'`)
+		if err != nil {
+			return fmt.Errorf("failed to add source column: %v", err)
+		}
+		log.Printf("Migration: added 'source' column to blocked_ips")
+	}
+
+	// Add escalation settings columns to jails
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('jails') WHERE name='escalate_enabled'`).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE jails ADD COLUMN escalate_enabled BOOLEAN DEFAULT 0`)
+		if err != nil {
+			return fmt.Errorf("failed to add escalate_enabled column: %v", err)
+		}
+		log.Printf("Migration: added 'escalate_enabled' column to jails")
+	}
+
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('jails') WHERE name='escalate_threshold'`).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE jails ADD COLUMN escalate_threshold INTEGER DEFAULT 3`)
+		if err != nil {
+			return fmt.Errorf("failed to add escalate_threshold column: %v", err)
+		}
+		log.Printf("Migration: added 'escalate_threshold' column to jails")
+	}
+
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('jails') WHERE name='escalate_window'`).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE jails ADD COLUMN escalate_window INTEGER DEFAULT 3600`)
+		if err != nil {
+			return fmt.Errorf("failed to add escalate_window column: %v", err)
+		}
+		log.Printf("Migration: added 'escalate_window' column to jails")
+	}
+
+	// Add raw_data column to vpn_clients for storing full client data
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('vpn_clients') WHERE name='raw_data'`).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE vpn_clients ADD COLUMN raw_data TEXT`)
+		if err != nil {
+			return fmt.Errorf("failed to add raw_data column: %v", err)
+		}
+		log.Printf("Migration: added 'raw_data' column to vpn_clients")
+	}
+
+	// Migrate old ACL policies to new simplified model
+	// snapshot_all -> selected, allow_all_future -> allow_all
+	_, err = db.Exec(`UPDATE vpn_clients SET acl_policy = 'selected' WHERE acl_policy = 'snapshot_all'`)
+	if err != nil {
+		log.Printf("Migration warning: could not update snapshot_all policies: %v", err)
+	}
+	_, err = db.Exec(`UPDATE vpn_clients SET acl_policy = 'allow_all' WHERE acl_policy = 'allow_all_future'`)
+	if err != nil {
+		log.Printf("Migration warning: could not update allow_all_future policies: %v", err)
 	}
 
 	return nil

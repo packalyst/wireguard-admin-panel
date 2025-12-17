@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -385,4 +386,33 @@ func JSONError(w http.ResponseWriter, message string, code int) {
 	if err := json.NewEncoder(w).Encode(map[string]string{"error": message}); err != nil {
 		log.Printf("Error encoding JSON error response: %v", err)
 	}
+}
+
+// PaginationParams holds parsed pagination parameters
+type PaginationParams struct {
+	Limit  int
+	Offset int
+}
+
+// ParsePagination extracts limit and offset from URL query parameters
+// with sensible defaults and validation
+func ParsePagination(r *http.Request, defaultLimit int) PaginationParams {
+	p := PaginationParams{
+		Limit:  defaultLimit,
+		Offset: 0,
+	}
+
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			p.Limit = parsed
+		}
+	}
+
+	if o := r.URL.Query().Get("offset"); o != "" {
+		if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {
+			p.Offset = parsed
+		}
+	}
+
+	return p
 }

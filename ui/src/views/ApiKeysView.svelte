@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import { toast, apiGet, apiPost, apiDelete } from '../stores/app.js'
+  import { copyToClipboard as copyText } from '$lib/utils/clipboard.js'
   import Icon from '../components/Icon.svelte'
   import Button from '../components/Button.svelte'
   import Modal from '../components/Modal.svelte'
@@ -137,28 +138,9 @@
     }
   }
 
-  function copyToClipboard(text) {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(() => toast('Copied!', 'success')).catch(() => fallbackCopy(text))
-    } else {
-      fallbackCopy(text)
-    }
-  }
-
-  function fallbackCopy(text) {
-    const textarea = document.createElement('textarea')
-    textarea.value = text
-    textarea.style.position = 'fixed'
-    textarea.style.opacity = '0'
-    document.body.appendChild(textarea)
-    textarea.select()
-    try {
-      document.execCommand('copy')
-      toast('Copied!', 'success')
-    } catch (e) {
-      toast('Failed to copy', 'error')
-    }
-    document.body.removeChild(textarea)
+  async function copyToClipboard(text) {
+    const success = await copyText(text)
+    toast(success ? 'Copied!' : 'Failed to copy', success ? 'success' : 'error')
   }
 
   onMount(loadKeys)

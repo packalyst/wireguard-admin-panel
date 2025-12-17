@@ -4,7 +4,7 @@
 }
 
 /* Safelist all used icons - Tailwind needs static class names */
-@source inline("icon-[tabler--activity] icon-[tabler--alert-circle] icon-[tabler--alert-triangle] icon-[tabler--arrow-left] icon-[tabler--arrow-right] icon-[tabler--ban] icon-[tabler--book] icon-[tabler--box] icon-[tabler--brand-github] icon-[tabler--check] icon-[tabler--check-circle] icon-[tabler--chevron-left] icon-[tabler--chevron-right] icon-[tabler--chevrons-left] icon-[tabler--chevrons-right] icon-[tabler--clock] icon-[tabler--cloud] icon-[tabler--copy] icon-[tabler--device-desktop] icon-[tabler--device-floppy] icon-[tabler--device-laptop] icon-[tabler--device-mobile] icon-[tabler--device-tablet] icon-[tabler--dots] icon-[tabler--download] icon-[tabler--edit] icon-[tabler--eye] icon-[tabler--eye-off] icon-[tabler--file-text] icon-[tabler--filter] icon-[tabler--git-branch] icon-[tabler--globe] icon-[tabler--hand-off] icon-[tabler--hand-stop] icon-[tabler--info] icon-[tabler--info-circle] icon-[tabler--key] icon-[tabler--key-round] icon-[tabler--layout] icon-[tabler--link] icon-[tabler--list] icon-[tabler--lock] icon-[tabler--lock-open] icon-[tabler--log-in] icon-[tabler--login] icon-[tabler--logout] icon-[tabler--mail] icon-[tabler--menu] icon-[tabler--monitor] icon-[tabler--moon] icon-[tabler--network] icon-[tabler--play] icon-[tabler--player-play] icon-[tabler--player-stop] icon-[tabler--plug] icon-[tabler--plus] icon-[tabler--refresh] icon-[tabler--refresh-cw] icon-[tabler--route] icon-[tabler--save] icon-[tabler--search] icon-[tabler--server] icon-[tabler--settings] icon-[tabler--shield] icon-[tabler--shield-check] icon-[tabler--shield-off] icon-[tabler--sun] icon-[tabler--trash] icon-[tabler--user] icon-[tabler--user-plus] icon-[tabler--users] icon-[tabler--wand] icon-[tabler--world] icon-[tabler--x]");
+@source inline("icon-[tabler--activity] icon-[tabler--alert-circle] icon-[tabler--alert-triangle] icon-[tabler--arrow-left] icon-[tabler--arrow-right] icon-[tabler--ban] icon-[tabler--book] icon-[tabler--box] icon-[tabler--brand-github] icon-[tabler--check] icon-[tabler--check-circle] icon-[tabler--chevron-left] icon-[tabler--chevron-right] icon-[tabler--chevrons-left] icon-[tabler--chevrons-right] icon-[tabler--clock] icon-[tabler--cloud] icon-[tabler--copy] icon-[tabler--device-desktop] icon-[tabler--device-floppy] icon-[tabler--device-laptop] icon-[tabler--device-mobile] icon-[tabler--device-tablet] icon-[tabler--dots] icon-[tabler--download] icon-[tabler--edit] icon-[tabler--eye] icon-[tabler--eye-off] icon-[tabler--file-text] icon-[tabler--filter] icon-[tabler--git-branch] icon-[tabler--globe] icon-[tabler--hand-off] icon-[tabler--hand-stop] icon-[tabler--info] icon-[tabler--info-circle] icon-[tabler--key] icon-[tabler--key-round] icon-[tabler--layout] icon-[tabler--link] icon-[tabler--list] icon-[tabler--lock] icon-[tabler--lock-open] icon-[tabler--log-in] icon-[tabler--login] icon-[tabler--logout] icon-[tabler--mail] icon-[tabler--menu] icon-[tabler--monitor] icon-[tabler--moon] icon-[tabler--network] icon-[tabler--pause] icon-[tabler--play] icon-[tabler--player-pause] icon-[tabler--player-play] icon-[tabler--player-stop] icon-[tabler--plug] icon-[tabler--plus] icon-[tabler--refresh] icon-[tabler--refresh-cw] icon-[tabler--route] icon-[tabler--save] icon-[tabler--search] icon-[tabler--server] icon-[tabler--settings] icon-[tabler--shield] icon-[tabler--shield-check] icon-[tabler--shield-off] icon-[tabler--sun] icon-[tabler--trash] icon-[tabler--user] icon-[tabler--user-plus] icon-[tabler--users] icon-[tabler--wand] icon-[tabler--world] icon-[tabler--x]");
 @import "@keenthemes/ktui/src/components/modal/modal.css";
 @import "@keenthemes/ktui/src/components/input/input.css";
 @import "@keenthemes/ktui/src/components/input/input-group.css";
@@ -21,6 +21,7 @@
 @import "@keenthemes/ktui/src/components/table/table.css";
 @import "@keenthemes/ktui/src/components/skeleton/skeleton.css";
 @import "@keenthemes/ktui/src/components/toggle-group/toggle-group.css";
+@import "@keenthemes/ktui/src/components/select/select.css";
 /* ============================================================================
    KTUI THEME - Dark theme for Headscale Admin
    @import "@keenthemes/ktui/dist/styles.css";
@@ -179,13 +180,16 @@ button.kt-badge {
   @apply focus:ring-0 focus:ring-offset-0 outline-none;
 }
 
-/* Small focus outline for inputs */
+/* Small focus outline for inputs and selects */
 .kt-input:has(input:focus-visible) {
   @apply ring-1 ring-ring/5 border-ring/50;
 }
 .kt-input input:focus-visible,
 input.kt-input:focus-visible {
   @apply ring-0 outline-none;
+}
+.kt-select:focus-visible {
+  @apply ring-1 ring-ring/5 border-ring/50;
 }
 
 /* Fix browser autofill background color */

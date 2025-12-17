@@ -16,6 +16,7 @@ import (
 	"api/internal/settings"
 	"api/internal/setup"
 	"api/internal/traefik"
+	"api/internal/vpn"
 	"api/internal/wireguard"
 )
 
@@ -72,6 +73,22 @@ func main() {
 		settingsSvc := settings.New()
 		r.RegisterService("settings", settingsSvc.Handlers())
 		log.Println("Settings service registered")
+
+		// Set up Headscale config provider for helper package
+		helper.SetHeadscaleConfigProvider(func() (*helper.HeadscaleConfig, error) {
+			url, err := settings.GetSetting("headscale_api_url")
+			if err != nil {
+				return nil, err
+			}
+			apiKey, err := settings.GetSettingEncrypted("headscale_api_key")
+			if err != nil {
+				return nil, err
+			}
+			return &helper.HeadscaleConfig{
+				URL:    helper.NormalizeHeadscaleURL(url),
+				APIKey: apiKey,
+			}, nil
+		})
 	}
 
 	if config.IsServiceEnabled("firewall") {
@@ -89,6 +106,7 @@ func main() {
 		if err != nil {
 			log.Printf("Warning: Failed to initialize wireguard service: %v", err)
 		} else {
+			wireguard.SetService(wgSvc) // Store instance for other packages
 			r.RegisterService("wireguard", wgSvc.Handlers())
 			log.Println("WireGuard service registered")
 		}
@@ -116,6 +134,12 @@ func main() {
 		dockerSvc := docker.New()
 		r.RegisterService("docker", dockerSvc.Handlers())
 		log.Println("Docker service registered")
+	}
+
+	if config.IsServiceEnabled("vpn") {
+		vpnSvc := vpn.New()
+		r.RegisterService("vpn", vpnSvc.Handlers())
+		log.Println("VPN ACL service registered")
 	}
 
 	// Build router

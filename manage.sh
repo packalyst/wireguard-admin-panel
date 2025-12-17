@@ -525,6 +525,13 @@ if [ ! -f ".env" ]; then
     fi
 fi
 
+# Generate ENCRYPTION_SECRET if not set
+if ! grep -q "^ENCRYPTION_SECRET=.\+" .env 2>/dev/null; then
+    ENCRYPTION_SECRET=$(openssl rand -hex 32)
+    update_env_value "ENCRYPTION_SECRET" "$ENCRYPTION_SECRET"
+    echo -e "${GREEN}✓ Generated ENCRYPTION_SECRET${NC}"
+fi
+
 # Load existing environment
 set -a
 source .env 2>/dev/null || true

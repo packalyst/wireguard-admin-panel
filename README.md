@@ -5,9 +5,11 @@ A unified web dashboard for managing WireGuard, Headscale (Tailscale-compatible)
 ## Features
 
 - 🔒 **Dual VPN Management**: WireGuard manual peers + Headscale (Tailscale-compatible) nodes
+- 🔐 **VPN Access Control**: ACL rules to control traffic between VPN clients
 - 🛡️ **Integrated Firewall**: nftables-based firewall with port management and port scan detection
 - 🌐 **DNS Filtering**: AdGuard Home integration with query logging and filtering
-- 🚦 **Traffic Monitoring**: Real-time VPN traffic statistics
+- 🚦 **Traffic Monitoring**: Real-time VPN traffic logs with connection tracking
+- 📊 **Unified Logs**: Combined view of traffic, HTTP (Traefik), and DNS (AdGuard) logs
 - 🐳 **Docker Management**: View and control all stack containers
 - 🎨 **Modern UI**: Svelte 5 + KTUI CSS framework with dark mode
 - 🔄 **Hot Reload**: Development mode with instant UI updates
@@ -22,7 +24,8 @@ A unified web dashboard for managing WireGuard, Headscale (Tailscale-compatible)
 ├── Unified API     - Go backend (host network mode)
 │   ├── /api/wg     - WireGuard management
 │   ├── /api/hs     - Headscale management
-│   ├── /api/fw     - Firewall management
+│   ├── /api/vpn    - Unified VPN clients + ACL rules
+│   ├── /api/fw     - Firewall + traffic logging
 │   ├── /api/traefik- Traefik configuration
 │   ├── /api/adguard- AdGuard settings
 │   ├── /api/docker - Container management
@@ -118,13 +121,17 @@ Configuration files are generated from templates in:
 ├── api/                    # Go backend
 │   ├── cmd/               # Main entry point
 │   ├── internal/          # Business logic
-│   │   ├── auth/         # Authentication
-│   │   ├── firewall/     # nftables management
+│   │   ├── auth/         # Authentication + API keys
+│   │   ├── database/     # SQLite database
+│   │   ├── firewall/     # nftables + traffic logging
+│   │   ├── vpn/          # Unified VPN clients + ACL
 │   │   ├── wireguard/    # WireGuard config
 │   │   ├── headscale/    # Headscale API proxy
 │   │   ├── adguard/      # AdGuard API proxy
 │   │   ├── traefik/      # Traefik config
-│   │   └── docker/       # Container management
+│   │   ├── docker/       # Container management
+│   │   ├── router/       # HTTP routing helpers
+│   │   └── helper/       # Shared utilities
 │   └── configs/          # API endpoint configuration
 ├── ui/                    # Svelte 5 frontend
 │   ├── src/
@@ -143,6 +150,7 @@ Configuration files are generated from templates in:
 ## Security
 
 - API requires authentication for all endpoints (except setup)
+- Private keys never exposed in API responses (stripped before storage)
 - Headscale API is restricted to VPN networks only
 - Firewall with port scan detection and auto-blocking
 - Rate limiting on all API routes

@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -31,6 +32,24 @@ var (
 	ErrUserNotFound       = errors.New("user not found")
 	ErrUserExists         = errors.New("user already exists")
 	ErrInvalidSession     = errors.New("invalid or expired session")
+)
+
+// Rate limiting for login attempts
+const (
+	maxLoginAttempts   = 5               // Max failed attempts before lockout
+	loginLockoutWindow = 15 * time.Minute // Window for counting attempts
+	loginLockoutTime   = 15 * time.Minute // How long to lock out after max attempts
+)
+
+type loginAttempt struct {
+	count     int
+	firstTry  time.Time
+	lockedAt  time.Time
+}
+
+var (
+	loginAttempts      = make(map[string]*loginAttempt)
+	loginAttemptsMutex sync.RWMutex
 )
 
 // Service handles authentication
@@ -87,18 +106,16 @@ func New() (*Service, error) {
 	return svc, nil
 }
 
-// getEncryptionKey gets or generates the encryption key
+// getEncryptionKey gets the encryption key from environment
 func getEncryptionKey() []byte {
 	keyHex := os.Getenv("ENCRYPTION_SECRET")
 	if keyHex == "" {
-		// Generate a key from a default secret (in production, always set ENCRYPTION_SECRET)
-		hash := sha256.Sum256([]byte("vpn-admin-default-key-change-me"))
-		return hash[:]
+		log.Fatal("FATAL: ENCRYPTION_SECRET environment variable is required but not set. Generate one with: openssl rand -hex 32")
 	}
 
 	key, err := hex.DecodeString(keyHex)
 	if err != nil || len(key) != 32 {
-		log.Printf("Warning: Invalid ENCRYPTION_SECRET, using derived key")
+		// If not valid hex, derive a key from the secret (allows using any string as secret)
 		hash := sha256.Sum256([]byte(keyHex))
 		return hash[:]
 	}
@@ -279,7 +296,7 @@ func (s *Service) Logout(token string) error {
 // HasUsers checks if any users exist
 func (s *Service) HasUsers() bool {
 	var count int
-	s.db.QueryRow("SELECT COUNT(*) FROM users").Scan(&count)
+	_ = s.db.QueryRow("SELECT COUNT(*) FROM users").Scan(&count)
 	return count > 0
 }
 
@@ -345,7 +362,114 @@ func generateSessionID() string {
 
 // HTTP Handlers
 
+// getClientIP extracts the real client IP from the request
+func getClientIP(r *http.Request) string {
+	// Check X-Forwarded-For header (set by reverse proxy)
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		// Take the first IP (original client)
+		if idx := strings.Index(xff, ","); idx != -1 {
+			return strings.TrimSpace(xff[:idx])
+		}
+		return strings.TrimSpace(xff)
+	}
+	// Check X-Real-IP header
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		return xri
+	}
+	// Fall back to RemoteAddr
+	if idx := strings.LastIndex(r.RemoteAddr, ":"); idx != -1 {
+		return r.RemoteAddr[:idx]
+	}
+	return r.RemoteAddr
+}
+
+// checkLoginRateLimit returns true if the IP is rate limited
+func checkLoginRateLimit(ip string) (bool, time.Duration) {
+	loginAttemptsMutex.RLock()
+	attempt, exists := loginAttempts[ip]
+	loginAttemptsMutex.RUnlock()
+
+	if !exists {
+		return false, 0
+	}
+
+	now := time.Now()
+
+	// Check if currently locked out
+	if !attempt.lockedAt.IsZero() {
+		remaining := loginLockoutTime - now.Sub(attempt.lockedAt)
+		if remaining > 0 {
+			return true, remaining
+		}
+		// Lockout expired, reset
+		loginAttemptsMutex.Lock()
+		delete(loginAttempts, ip)
+		loginAttemptsMutex.Unlock()
+		return false, 0
+	}
+
+	// Check if window has expired (reset counter)
+	if now.Sub(attempt.firstTry) > loginLockoutWindow {
+		loginAttemptsMutex.Lock()
+		delete(loginAttempts, ip)
+		loginAttemptsMutex.Unlock()
+		return false, 0
+	}
+
+	return false, 0
+}
+
+// recordFailedLogin records a failed login attempt and returns true if now locked out
+func recordFailedLogin(ip string) bool {
+	loginAttemptsMutex.Lock()
+	defer loginAttemptsMutex.Unlock()
+
+	now := time.Now()
+	attempt, exists := loginAttempts[ip]
+
+	if !exists {
+		loginAttempts[ip] = &loginAttempt{
+			count:    1,
+			firstTry: now,
+		}
+		return false
+	}
+
+	// Reset if window expired
+	if now.Sub(attempt.firstTry) > loginLockoutWindow {
+		attempt.count = 1
+		attempt.firstTry = now
+		attempt.lockedAt = time.Time{}
+		return false
+	}
+
+	attempt.count++
+	if attempt.count >= maxLoginAttempts {
+		attempt.lockedAt = now
+		log.Printf("Login rate limit: IP %s locked out after %d failed attempts", ip, attempt.count)
+		return true
+	}
+
+	return false
+}
+
+// clearLoginAttempts clears failed attempts for an IP after successful login
+func clearLoginAttempts(ip string) {
+	loginAttemptsMutex.Lock()
+	delete(loginAttempts, ip)
+	loginAttemptsMutex.Unlock()
+}
+
 func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
+	clientIP := getClientIP(r)
+
+	// Check rate limit
+	if locked, remaining := checkLoginRateLimit(clientIP); locked {
+		w.Header().Set("Retry-After", fmt.Sprintf("%d", int(remaining.Seconds())))
+		http.Error(w, fmt.Sprintf("Too many login attempts. Try again in %d minutes.", int(remaining.Minutes())+1), http.StatusTooManyRequests)
+		return
+	}
+
 	var req LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -355,12 +479,21 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 	resp, err := s.Login(req.Username, req.Password)
 	if err != nil {
 		if err == ErrInvalidCredentials {
+			// Record failed attempt
+			if recordFailedLogin(clientIP) {
+				w.Header().Set("Retry-After", fmt.Sprintf("%d", int(loginLockoutTime.Seconds())))
+				http.Error(w, fmt.Sprintf("Too many login attempts. Try again in %d minutes.", int(loginLockoutTime.Minutes())), http.StatusTooManyRequests)
+				return
+			}
 			http.Error(w, "Invalid username or password", http.StatusUnauthorized)
 			return
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	// Clear failed attempts on successful login
+	clearLoginAttempts(clientIP)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)

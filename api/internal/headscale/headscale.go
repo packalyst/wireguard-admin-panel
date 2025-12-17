@@ -2,14 +2,14 @@ package headscale
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"strings"
 
+	"api/internal/database"
+	"api/internal/helper"
 	"api/internal/router"
-	"api/internal/settings"
 )
 
 // Service handles Headscale operations
@@ -19,21 +19,6 @@ type Service struct{}
 func New() *Service {
 	log.Printf("Headscale service initialized (reads config from database)")
 	return &Service{}
-}
-
-// getConfig reads headscale API URL and API key from database
-func (s *Service) getConfig() (string, string, error) {
-	url, err := settings.GetSetting("headscale_api_url")
-	if err != nil {
-		return "", "", fmt.Errorf("headscale not configured: %v", err)
-	}
-
-	apiKey, err := settings.GetSettingEncrypted("headscale_api_key")
-	if err != nil {
-		return "", "", fmt.Errorf("headscale API key not configured: %v", err)
-	}
-
-	return url, apiKey, nil
 }
 
 // Handlers returns the handler map for the router
@@ -65,27 +50,6 @@ func (s *Service) Handlers() router.ServiceHandlers {
 
 // --- HTTP helpers ---
 
-func (s *Service) doRequest(method, path string, body io.Reader) (*http.Response, error) {
-	url, apiKey, err := s.getConfig()
-	if err != nil {
-		return nil, err
-	}
-
-	if !strings.HasSuffix(url, "/api/v1") {
-		url = strings.TrimSuffix(url, "/") + "/api/v1"
-	}
-
-	req, err := http.NewRequest(method, url+path, body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-
-	return http.DefaultClient.Do(req)
-}
-
 // proxyResponse writes the Headscale response to the client
 func (s *Service) proxyResponse(w http.ResponseWriter, resp *http.Response) {
 	defer resp.Body.Close()
@@ -96,7 +60,7 @@ func (s *Service) proxyResponse(w http.ResponseWriter, resp *http.Response) {
 
 // proxyGet proxies a GET request to Headscale
 func (s *Service) proxyGet(w http.ResponseWriter, path string) {
-	resp, err := s.doRequest("GET", path, nil)
+	resp, err := helper.HeadscaleGet(path)
 	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusBadGateway)
 		return
@@ -106,11 +70,7 @@ func (s *Service) proxyGet(w http.ResponseWriter, path string) {
 
 // proxyPost proxies a POST request to Headscale with optional JSON body
 func (s *Service) proxyPost(w http.ResponseWriter, path string, body string) {
-	var reader io.Reader
-	if body != "" {
-		reader = strings.NewReader(body)
-	}
-	resp, err := s.doRequest("POST", path, reader)
+	resp, err := helper.HeadscalePost(path, body)
 	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusBadGateway)
 		return
@@ -120,7 +80,7 @@ func (s *Service) proxyPost(w http.ResponseWriter, path string, body string) {
 
 // proxyDelete proxies a DELETE request to Headscale
 func (s *Service) proxyDelete(w http.ResponseWriter, path string) {
-	resp, err := s.doRequest("DELETE", path, nil)
+	resp, err := helper.HeadscaleDelete(path)
 	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusBadGateway)
 		return
@@ -184,6 +144,13 @@ func (s *Service) handleGetNodes(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 	id := router.ExtractPathParam(r, "/api/hs/nodes/")
+
+	// Auto-delete from vpn_clients for unified view
+	db := database.Get()
+	if db != nil {
+		db.Exec(`DELETE FROM vpn_clients WHERE external_id = ? AND type = 'headscale'`, id)
+	}
+
 	s.proxyDelete(w, "/node/"+id)
 }
 

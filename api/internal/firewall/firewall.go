@@ -2,10 +2,12 @@ package firewall
 
 import (
 	"bufio"
+	"container/list"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -23,10 +25,88 @@ import (
 	"api/internal/router"
 )
 
+// escapeLikePattern escapes SQL LIKE special characters to prevent wildcard injection
+func escapeLikePattern(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "%", "\\%")
+	s = strings.ReplaceAll(s, "_", "\\_")
+	return s
+}
+
 // dnsEntry holds a cached DNS lookup with timestamp
 type dnsEntry struct {
+	key       string
 	domain    string
 	timestamp time.Time
+}
+
+// lruDNSCache is an LRU cache for DNS lookups with O(1) operations
+type lruDNSCache struct {
+	items    map[string]*list.Element
+	order    *list.List
+	maxSize  int
+	ttl      time.Duration
+	mu       sync.RWMutex
+}
+
+func newLRUDNSCache(maxSize int, ttl time.Duration) *lruDNSCache {
+	return &lruDNSCache{
+		items:   make(map[string]*list.Element),
+		order:   list.New(),
+		maxSize: maxSize,
+		ttl:     ttl,
+	}
+}
+
+func (c *lruDNSCache) get(key string) (string, bool) {
+	c.mu.RLock()
+	elem, exists := c.items[key]
+	if !exists {
+		c.mu.RUnlock()
+		return "", false
+	}
+	entry := elem.Value.(*dnsEntry)
+	if time.Since(entry.timestamp) >= c.ttl {
+		c.mu.RUnlock()
+		return "", false
+	}
+	c.mu.RUnlock()
+
+	// Move to front (most recently used) - requires write lock
+	c.mu.Lock()
+	c.order.MoveToFront(elem)
+	c.mu.Unlock()
+
+	return entry.domain, true
+}
+
+func (c *lruDNSCache) set(key, domain string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Update existing entry
+	if elem, exists := c.items[key]; exists {
+		entry := elem.Value.(*dnsEntry)
+		entry.domain = domain
+		entry.timestamp = time.Now()
+		c.order.MoveToFront(elem)
+		return
+	}
+
+	// Evict oldest (back of list) if at capacity - O(1)
+	if c.order.Len() >= c.maxSize {
+		oldest := c.order.Back()
+		if oldest != nil {
+			entry := oldest.Value.(*dnsEntry)
+			delete(c.items, entry.key)
+			c.order.Remove(oldest)
+		}
+	}
+
+	// Add new entry at front
+	entry := &dnsEntry{key: key, domain: domain, timestamp: time.Now()}
+	elem := c.order.PushFront(entry)
+	c.items[key] = elem
 }
 
 // jailMonitor tracks a running jail monitor
@@ -40,8 +120,7 @@ type Service struct {
 	db           *sql.DB
 	dbMutex      sync.RWMutex
 	config       Config
-	dnsCache     map[string]dnsEntry
-	dnsMutex     sync.RWMutex
+	dnsCache     *lruDNSCache
 	ctx          context.Context
 	cancel       context.CancelFunc
 	jailMonitors map[int64]*jailMonitor // jailID -> monitor
@@ -66,30 +145,36 @@ type Config struct {
 
 // Jail represents a blocking rule configuration
 type Jail struct {
-	ID              int64  `json:"id"`
-	Name            string `json:"name"`
-	Enabled         bool   `json:"enabled"`
-	LogFile         string `json:"logFile"`
-	FilterRegex     string `json:"filterRegex"`
-	MaxRetry        int    `json:"maxRetry"`
-	FindTime        int    `json:"findTime"`
-	BanTime         int    `json:"banTime"`
-	Port            string `json:"port"`
-	Action          string `json:"action"`
-	CurrentlyBanned int    `json:"currentlyBanned"`
-	TotalBanned     int    `json:"totalBanned"`
+	ID                int64  `json:"id"`
+	Name              string `json:"name"`
+	Enabled           bool   `json:"enabled"`
+	LogFile           string `json:"logFile"`
+	FilterRegex       string `json:"filterRegex"`
+	MaxRetry          int    `json:"maxRetry"`
+	FindTime          int    `json:"findTime"`
+	BanTime           int    `json:"banTime"`
+	Port              string `json:"port"`
+	Action            string `json:"action"`
+	CurrentlyBanned   int    `json:"currentlyBanned"`
+	TotalBanned       int    `json:"totalBanned"`
+	EscalateEnabled   bool   `json:"escalateEnabled"`
+	EscalateThreshold int    `json:"escalateThreshold"`
+	EscalateWindow    int    `json:"escalateWindow"`
 }
 
 // BlockedIP represents a blocked IP address
 type BlockedIP struct {
-	ID        int64     `json:"id"`
-	IP        string    `json:"ip"`
-	JailName  string    `json:"jailName"`
-	Reason    string    `json:"reason"`
-	BlockedAt time.Time `json:"blockedAt"`
-	ExpiresAt time.Time `json:"expiresAt,omitempty"`
-	HitCount  int       `json:"hitCount"`
-	Manual    bool      `json:"manual"`
+	ID            int64     `json:"id"`
+	IP            string    `json:"ip"`
+	JailName      string    `json:"jailName"`
+	Reason        string    `json:"reason"`
+	BlockedAt     time.Time `json:"blockedAt"`
+	ExpiresAt     time.Time `json:"expiresAt,omitempty"`
+	HitCount      int       `json:"hitCount"`
+	Manual        bool      `json:"manual"`
+	IsRange       bool      `json:"isRange"`
+	EscalatedFrom string    `json:"escalatedFrom,omitempty"`
+	Source        string    `json:"source"`
 }
 
 // Attempt represents a logged connection attempt
@@ -107,9 +192,9 @@ type Attempt struct {
 type TrafficLog struct {
 	ID        int64     `json:"id"`
 	Timestamp time.Time `json:"timestamp"`
-	ClientIP  string    `json:"clientIP"`
-	DestIP    string    `json:"destIP"`
-	DestPort  int       `json:"destPort"`
+	ClientIP  string    `json:"src_ip"`
+	DestIP    string    `json:"dest_ip"`
+	DestPort  int       `json:"dest_port"`
 	Protocol  string    `json:"protocol"`
 	Domain    string    `json:"domain"`
 }
@@ -120,6 +205,70 @@ type AllowedPort struct {
 	Protocol  string `json:"protocol"`
 	Essential bool   `json:"essential"`
 	Service   string `json:"service,omitempty"`
+}
+
+// BlocklistSource represents a blocklist source configuration
+type BlocklistSource struct {
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Type     string   `json:"type"` // "static" or "url"
+	URL      string   `json:"url,omitempty"`
+	Ranges   []string `json:"ranges,omitempty"`
+	MinScore int      `json:"minScore,omitempty"`
+	Count    int      `json:"count,omitempty"` // Approximate count for display
+}
+
+// Preset blocklist sources
+var blocklistSources = map[string]BlocklistSource{
+	"censys": {
+		ID:   "censys",
+		Name: "Censys Scanner",
+		Type: "static",
+		Ranges: []string{
+			"192.35.168.0/23",
+			"162.142.125.0/24",
+			"74.120.14.0/24",
+			"167.248.133.0/24",
+		},
+		Count: 4,
+	},
+	"shodan": {
+		ID:    "shodan",
+		Name:  "Shodan Scanner",
+		Type:  "url",
+		URL:   "https://gist.githubusercontent.com/jgamblin/2928d45730543fc7ef10cf56e5a980b0/raw/",
+		Count: 31,
+	},
+	"ipsum-high": {
+		ID:       "ipsum-high",
+		Name:     "ipsum (Score 5+)",
+		Type:     "url",
+		URL:      "https://raw.githubusercontent.com/stamparm/ipsum/master/ipsum.txt",
+		MinScore: 5,
+		Count:    2000,
+	},
+	"ipsum-medium": {
+		ID:       "ipsum-medium",
+		Name:     "ipsum (Score 3+)",
+		Type:     "url",
+		URL:      "https://raw.githubusercontent.com/stamparm/ipsum/master/ipsum.txt",
+		MinScore: 3,
+		Count:    10000,
+	},
+	"firehol-l1": {
+		ID:    "firehol-l1",
+		Name:  "FireHOL Level 1",
+		Type:  "url",
+		URL:   "https://iplists.firehol.org/files/firehol_level1.netset",
+		Count: 5000,
+	},
+	"firehol-l2": {
+		ID:    "firehol-l2",
+		Name:  "FireHOL Level 2",
+		Type:  "url",
+		URL:   "https://iplists.firehol.org/files/firehol_level2.netset",
+		Count: 50000,
+	},
 }
 
 // New creates a new firewall service
@@ -138,7 +287,7 @@ func New(dataDir string) (*Service, error) {
 
 	svc := &Service{
 		db:           db,
-		dnsCache:     make(map[string]dnsEntry),
+		dnsCache:     newLRUDNSCache(dnsCacheMaxSize, dnsCacheTTL),
 		jailMonitors: make(map[int64]*jailMonitor),
 		ctx:          ctx,
 		cancel:       cancel,
@@ -180,28 +329,31 @@ func New(dataDir string) (*Service, error) {
 // Handlers returns the handler map for the router
 func (s *Service) Handlers() router.ServiceHandlers {
 	return router.ServiceHandlers{
-		"GetStatus":       s.handleStatus,
-		"GetBlocked":      s.handleGetBlocked,
-		"BlockIP":         s.handleBlockIP,
-		"UnblockIP":       s.handleUnblockIP,
-		"GetAttempts":     s.handleAttempts,
-		"GetPorts":        s.handleGetPorts,
-		"AddPort":         s.handleAddPort,
-		"RemovePort":      s.handleRemovePort,
-		"GetJails":        s.handleGetJails,
-		"CreateJail":      s.handleCreateJail,
-		"GetJail":         s.handleGetJail,
-		"UpdateJail":      s.handleUpdateJail,
-		"DeleteJail":      s.handleDeleteJail,
-		"GetTraffic":      s.handleTraffic,
-		"GetTrafficStats": s.handleTrafficStats,
-		"GetTrafficLive":  s.handleTrafficLive,
-		"GetConfig":       s.handleGetConfig,
-		"UpdateConfig":    s.handleUpdateConfig,
-		"ApplyRules":      s.handleApplyRules,
-		"GetSSHPort":      s.handleGetSSHPort,
-		"ChangeSSHPort":   s.handleChangeSSHPort,
-		"Health":          s.handleHealth,
+		"GetStatus":           s.handleStatus,
+		"GetBlocked":          s.handleGetBlocked,
+		"BlockIP":             s.handleBlockIP,
+		"UnblockIP":           s.handleUnblockIP,
+		"GetAttempts":         s.handleAttempts,
+		"GetPorts":            s.handleGetPorts,
+		"AddPort":             s.handleAddPort,
+		"RemovePort":          s.handleRemovePort,
+		"GetJails":            s.handleGetJails,
+		"CreateJail":          s.handleCreateJail,
+		"GetJail":             s.handleGetJail,
+		"UpdateJail":          s.handleUpdateJail,
+		"DeleteJail":          s.handleDeleteJail,
+		"GetTraffic":          s.handleTraffic,
+		"GetTrafficStats":     s.handleTrafficStats,
+		"GetTrafficLive":      s.handleTrafficLive,
+		"GetConfig":           s.handleGetConfig,
+		"UpdateConfig":        s.handleUpdateConfig,
+		"ApplyRules":          s.handleApplyRules,
+		"GetSSHPort":          s.handleGetSSHPort,
+		"ChangeSSHPort":       s.handleChangeSSHPort,
+		"Health":              s.handleHealth,
+		"GetBlocklists":       s.handleGetBlocklists,
+		"ImportBlocklist":     s.handleImportBlocklist,
+		"DeleteBlockedSource": s.handleDeleteBlockedSource,
 	}
 }
 
@@ -741,9 +893,41 @@ func (s *Service) isPrivateIP(ip string) bool {
 }
 
 func (s *Service) isIPBlocked(ip string) bool {
+	// First check exact IP match
 	var count int
-	s.db.QueryRow("SELECT COUNT(*) FROM blocked_ips WHERE ip = ? AND (expires_at IS NULL OR expires_at > datetime('now'))", ip).Scan(&count)
-	return count > 0
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM blocked_ips WHERE ip = ? AND (expires_at IS NULL OR expires_at > datetime('now'))", ip).Scan(&count); err != nil {
+		log.Printf("Warning: isIPBlocked query failed: %v", err)
+	}
+	if count > 0 {
+		return true
+	}
+
+	// Then check if IP is within any blocked CIDR range
+	rows, err := s.db.Query("SELECT ip FROM blocked_ips WHERE is_range = 1 AND (expires_at IS NULL OR expires_at > datetime('now'))")
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+
+	parsedIP := net.ParseIP(ip)
+	if parsedIP == nil {
+		return false
+	}
+
+	for rows.Next() {
+		var cidr string
+		if err := rows.Scan(&cidr); err != nil {
+			continue
+		}
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			continue
+		}
+		if network.Contains(parsedIP) {
+			return true
+		}
+	}
+	return false
 }
 
 // parseIP validates and returns a net.IP, or nil if invalid
@@ -751,24 +935,178 @@ func parseIP(ip string) net.IP {
 	return net.ParseIP(ip)
 }
 
+// validateIPOrCIDR validates an IP address or CIDR notation
+// Returns: normalized string, isRange bool, error
+func validateIPOrCIDR(input string) (string, bool, error) {
+	input = strings.TrimSpace(input)
+
+	// Try parsing as CIDR first
+	if strings.Contains(input, "/") {
+		_, network, err := net.ParseCIDR(input)
+		if err != nil {
+			return "", false, fmt.Errorf("invalid CIDR notation: %v", err)
+		}
+		// Validate prefix length (only allow /8 to /32 for IPv4)
+		ones, bits := network.Mask.Size()
+		if bits == 32 && (ones < 8 || ones > 32) {
+			return "", false, fmt.Errorf("CIDR prefix must be between /8 and /32")
+		}
+		// Return normalized CIDR (network address)
+		return network.IP.String() + "/" + strconv.Itoa(ones), true, nil
+	}
+
+	// Try parsing as plain IP
+	ip := net.ParseIP(input)
+	if ip == nil {
+		return "", false, fmt.Errorf("invalid IP address")
+	}
+	return ip.String(), false, nil
+}
+
+// getSubnet24 extracts the /24 subnet from an IP address
+// e.g., "79.124.56.210" -> "79.124.56.0/24"
+func getSubnet24(ip string) string {
+	parsedIP := net.ParseIP(ip)
+	if parsedIP == nil {
+		return ""
+	}
+	// Convert to 4-byte representation for IPv4
+	ip4 := parsedIP.To4()
+	if ip4 == nil {
+		return "" // IPv6 not supported for /24
+	}
+	return fmt.Sprintf("%d.%d.%d.0/24", ip4[0], ip4[1], ip4[2])
+}
+
+// isIPInRange checks if an IP is within a CIDR range
+func isIPInRange(ip, cidr string) bool {
+	parsedIP := net.ParseIP(ip)
+	if parsedIP == nil {
+		return false
+	}
+	_, network, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return false
+	}
+	return network.Contains(parsedIP)
+}
+
+// isPrivateRange checks if a CIDR range is private/reserved
+func isPrivateRange(cidr string) bool {
+	_, network, err := net.ParseCIDR(cidr)
+	if err != nil {
+		// Try as plain IP
+		ip := net.ParseIP(cidr)
+		if ip == nil {
+			return false
+		}
+		return ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast()
+	}
+	// Check if the network IP is private
+	return network.IP.IsPrivate() || network.IP.IsLoopback() || network.IP.IsLinkLocalUnicast()
+}
+
 func (s *Service) blockIP(ip, jailName, reason string, banTime int) {
+	s.blockIPWithOptions(ip, jailName, reason, banTime, false, "", "jail:"+jailName)
+}
+
+func (s *Service) blockIPWithOptions(ip, jailName, reason string, banTime int, isRange bool, escalatedFrom, source string) {
 	var expiresAt interface{}
 	if banTime > 0 {
 		expiresAt = time.Now().Add(time.Duration(banTime) * time.Second)
 	}
 
 	_, err := s.db.Exec(`
-		INSERT INTO blocked_ips (ip, jail_name, reason, expires_at, hit_count, manual)
-		VALUES (?, ?, ?, ?, 1, 0)
+		INSERT INTO blocked_ips (ip, jail_name, reason, expires_at, hit_count, manual, is_range, escalated_from, source)
+		VALUES (?, ?, ?, ?, 1, 0, ?, ?, ?)
 		ON CONFLICT(ip, jail_name) DO UPDATE SET
 			hit_count = hit_count + 1,
 			blocked_at = CURRENT_TIMESTAMP,
 			expires_at = excluded.expires_at,
 			reason = excluded.reason
-	`, ip, jailName, reason, expiresAt)
+	`, ip, jailName, reason, expiresAt, isRange, escalatedFrom, source)
 
 	if err == nil {
-		log.Printf("Blocked IP %s (jail: %s, reason: %s)", ip, jailName, reason)
+		log.Printf("Blocked IP %s (jail: %s, reason: %s, isRange: %v)", ip, jailName, reason, isRange)
+		s.ApplyRules()
+
+		// Check for auto-escalation (only for individual IPs, not ranges)
+		if !isRange {
+			s.checkEscalation(ip, jailName, banTime)
+		}
+	}
+}
+
+// checkEscalation checks if we should escalate to blocking an entire /24 range
+func (s *Service) checkEscalation(ip, jailName string, banTime int) {
+	// Get jail's escalation settings
+	var escalateEnabled bool
+	var escalateThreshold, escalateWindow int
+	err := s.db.QueryRow(`SELECT COALESCE(escalate_enabled, 0), COALESCE(escalate_threshold, 3), COALESCE(escalate_window, 3600)
+		FROM jails WHERE name = ?`, jailName).Scan(&escalateEnabled, &escalateThreshold, &escalateWindow)
+	if err != nil || !escalateEnabled {
+		return
+	}
+
+	// Get the /24 subnet for this IP
+	subnet := getSubnet24(ip)
+	if subnet == "" {
+		return
+	}
+
+	// Count distinct IPs from this subnet blocked within the escalation window
+	var count int
+	err = s.db.QueryRow(`
+		SELECT COUNT(DISTINCT ip) FROM blocked_ips
+		WHERE jail_name = ?
+		AND is_range = 0
+		AND ip LIKE ?
+		AND blocked_at > datetime('now', '-' || ? || ' seconds')
+	`, jailName, strings.TrimSuffix(subnet, ".0/24")+".%", escalateWindow).Scan(&count)
+	if err != nil {
+		log.Printf("Error checking escalation: %v", err)
+		return
+	}
+
+	log.Printf("Escalation check for %s: %d IPs from %s (threshold: %d)", jailName, count, subnet, escalateThreshold)
+
+	if count >= escalateThreshold {
+		// Block the entire /24 range
+		log.Printf("Auto-escalating: blocking %s (jail: %s, IPs: %d)", subnet, jailName, count)
+
+		// Insert the range block
+		_, err := s.db.Exec(`
+			INSERT INTO blocked_ips (ip, jail_name, reason, expires_at, hit_count, manual, is_range, escalated_from, source)
+			VALUES (?, ?, ?, ?, ?, 0, 1, ?, ?)
+			ON CONFLICT(ip, jail_name) DO NOTHING
+		`, subnet, jailName,
+			fmt.Sprintf("Auto-escalated: %d IPs from this range blocked", count),
+			func() interface{} {
+				if banTime > 0 {
+					return time.Now().Add(time.Duration(banTime) * time.Second)
+				}
+				return nil
+			}(),
+			count, jailName, "escalated")
+
+		if err != nil {
+			log.Printf("Error inserting escalated range: %v", err)
+			return
+		}
+
+		// Remove individual IPs that are now covered by the range
+		result, err := s.db.Exec(`
+			DELETE FROM blocked_ips
+			WHERE jail_name = ?
+			AND is_range = 0
+			AND ip LIKE ?
+		`, jailName, strings.TrimSuffix(subnet, ".0/24")+".%")
+		if err == nil {
+			if deleted, _ := result.RowsAffected(); deleted > 0 {
+				log.Printf("Removed %d individual IPs now covered by range %s", deleted, subnet)
+			}
+		}
+
 		s.ApplyRules()
 	}
 }
@@ -784,16 +1122,12 @@ const dnsCacheTTL = 5 * time.Minute
 const dnsCacheMaxSize = 10000
 
 func (s *Service) reverseDNS(ip string) string {
-	s.dnsMutex.RLock()
-	if entry, exists := s.dnsCache[ip]; exists {
-		// Check if entry is still valid (not expired)
-		if time.Since(entry.timestamp) < dnsCacheTTL {
-			s.dnsMutex.RUnlock()
-			return entry.domain
-		}
+	// Check cache first - O(1) with LRU promotion
+	if domain, ok := s.dnsCache.get(ip); ok {
+		return domain
 	}
-	s.dnsMutex.RUnlock()
 
+	// Cache miss - do DNS lookup
 	domain := ""
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(s.config.DNSLookupTimeout)*time.Second)
 	defer cancel()
@@ -804,23 +1138,8 @@ func (s *Service) reverseDNS(ip string) string {
 		domain = strings.TrimSuffix(strings.TrimSpace(string(out)), ".")
 	}
 
-	s.dnsMutex.Lock()
-	// Evict oldest entries if cache is too large
-	if len(s.dnsCache) >= dnsCacheMaxSize {
-		oldest := time.Now()
-		var oldestKey string
-		for k, v := range s.dnsCache {
-			if v.timestamp.Before(oldest) {
-				oldest = v.timestamp
-				oldestKey = k
-			}
-		}
-		if oldestKey != "" {
-			delete(s.dnsCache, oldestKey)
-		}
-	}
-	s.dnsCache[ip] = dnsEntry{domain: domain, timestamp: time.Now()}
-	s.dnsMutex.Unlock()
+	// Store in cache - O(1) with LRU eviction
+	s.dnsCache.set(ip, domain)
 
 	return domain
 }
@@ -831,10 +1150,10 @@ func (s *Service) reverseDNS(ip string) string {
 
 func (s *Service) handleStatus(w http.ResponseWriter, r *http.Request) {
 	var blockedCount, attemptsCount, portsCount, jailsCount int
-	s.db.QueryRow("SELECT COUNT(*) FROM blocked_ips WHERE expires_at IS NULL OR expires_at > datetime('now')").Scan(&blockedCount)
-	s.db.QueryRow("SELECT COUNT(*) FROM attempts").Scan(&attemptsCount)
-	s.db.QueryRow("SELECT COUNT(*) FROM allowed_ports").Scan(&portsCount)
-	s.db.QueryRow("SELECT COUNT(*) FROM jails WHERE enabled = 1").Scan(&jailsCount)
+	_ = s.db.QueryRow("SELECT COUNT(*) FROM blocked_ips WHERE expires_at IS NULL OR expires_at > datetime('now')").Scan(&blockedCount)
+	_ = s.db.QueryRow("SELECT COUNT(*) FROM attempts").Scan(&attemptsCount)
+	_ = s.db.QueryRow("SELECT COUNT(*) FROM allowed_ports").Scan(&portsCount)
+	_ = s.db.QueryRow("SELECT COUNT(*) FROM jails WHERE enabled = 1").Scan(&jailsCount)
 
 	router.JSON(w, map[string]interface{}{
 		"enabled":        true,
@@ -847,21 +1166,9 @@ func (s *Service) handleStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleGetBlocked(w http.ResponseWriter, r *http.Request) {
-	limit := 25
-	offset := 0
+	p := router.ParsePagination(r, 25)
 	search := r.URL.Query().Get("search")
 	jailFilter := r.URL.Query().Get("jail")
-
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
-			limit = parsed
-		}
-	}
-	if o := r.URL.Query().Get("offset"); o != "" {
-		if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {
-			offset = parsed
-		}
-	}
 
 	// Build WHERE clause
 	where := "(expires_at IS NULL OR expires_at > datetime('now'))"
@@ -873,8 +1180,8 @@ func (s *Service) handleGetBlocked(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if search != "" {
-		where += " AND (ip LIKE ? OR jail_name LIKE ? OR reason LIKE ?)"
-		searchPattern := "%" + search + "%"
+		where += " AND (ip LIKE ? ESCAPE '\\' OR jail_name LIKE ? ESCAPE '\\' OR reason LIKE ? ESCAPE '\\')"
+		searchPattern := "%" + escapeLikePattern(search) + "%"
 		args = append(args, searchPattern, searchPattern, searchPattern)
 	}
 
@@ -906,9 +1213,10 @@ func (s *Service) handleGetBlocked(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get blocked IPs with pagination
-	query := fmt.Sprintf(`SELECT id, ip, jail_name, reason, blocked_at, expires_at, hit_count, manual
+	query := fmt.Sprintf(`SELECT id, ip, jail_name, reason, blocked_at, expires_at, hit_count, manual,
+		COALESCE(is_range, 0), COALESCE(escalated_from, ''), COALESCE(source, 'manual')
 		FROM blocked_ips WHERE %s ORDER BY blocked_at DESC LIMIT ? OFFSET ?`, where)
-	args = append(args, limit, offset)
+	args = append(args, p.Limit, p.Offset)
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -921,7 +1229,7 @@ func (s *Service) handleGetBlocked(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var b BlockedIP
 		var expiresAt sql.NullTime
-		if err := rows.Scan(&b.ID, &b.IP, &b.JailName, &b.Reason, &b.BlockedAt, &expiresAt, &b.HitCount, &b.Manual); err != nil {
+		if err := rows.Scan(&b.ID, &b.IP, &b.JailName, &b.Reason, &b.BlockedAt, &expiresAt, &b.HitCount, &b.Manual, &b.IsRange, &b.EscalatedFrom, &b.Source); err != nil {
 			continue
 		}
 		if expiresAt.Valid {
@@ -936,8 +1244,8 @@ func (s *Service) handleGetBlocked(w http.ResponseWriter, r *http.Request) {
 	router.JSON(w, map[string]interface{}{
 		"blocked": blocked,
 		"total":   total,
-		"limit":   limit,
-		"offset":  offset,
+		"limit":   p.Limit,
+		"offset":  p.Offset,
 		"jails":   jails,
 	})
 }
@@ -953,9 +1261,10 @@ func (s *Service) handleBlockIP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate IP address
-	if ip := parseIP(req.IP); ip == nil {
-		router.JSONError(w, "invalid IP address", http.StatusBadRequest)
+	// Validate IP or CIDR
+	normalizedIP, isRange, err := validateIPOrCIDR(req.IP)
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -964,15 +1273,15 @@ func (s *Service) handleBlockIP(w http.ResponseWriter, r *http.Request) {
 		expiresAt = time.Now().Add(time.Duration(req.BanTime) * time.Second)
 	}
 
-	_, err := s.db.Exec(`INSERT INTO blocked_ips (ip, jail_name, reason, expires_at, manual) VALUES (?, 'manual', ?, ?, 1)`,
-		req.IP, req.Reason, expiresAt)
+	_, err = s.db.Exec(`INSERT INTO blocked_ips (ip, jail_name, reason, expires_at, manual, is_range, source) VALUES (?, 'manual', ?, ?, 1, ?, 'manual')`,
+		normalizedIP, req.Reason, expiresAt, isRange)
 	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	s.ApplyRules()
-	router.JSON(w, map[string]string{"status": "blocked", "ip": req.IP})
+	router.JSON(w, map[string]interface{}{"status": "blocked", "ip": normalizedIP, "isRange": isRange})
 }
 
 func (s *Service) handleUnblockIP(w http.ResponseWriter, r *http.Request) {
@@ -983,21 +1292,9 @@ func (s *Service) handleUnblockIP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleAttempts(w http.ResponseWriter, r *http.Request) {
-	limit := 25
-	offset := 0
+	p := router.ParsePagination(r, 25)
 	search := r.URL.Query().Get("search")
 	jailFilter := r.URL.Query().Get("jail")
-
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
-			limit = parsed
-		}
-	}
-	if o := r.URL.Query().Get("offset"); o != "" {
-		if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {
-			offset = parsed
-		}
-	}
 
 	// Build WHERE clause
 	where := "1=1"
@@ -1009,8 +1306,8 @@ func (s *Service) handleAttempts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if search != "" {
-		where += " AND (source_ip LIKE ? OR jail_name LIKE ? OR protocol LIKE ? OR CAST(dest_port AS TEXT) LIKE ?)"
-		searchPattern := "%" + search + "%"
+		where += " AND (source_ip LIKE ? ESCAPE '\\' OR jail_name LIKE ? ESCAPE '\\' OR protocol LIKE ? ESCAPE '\\' OR CAST(dest_port AS TEXT) LIKE ? ESCAPE '\\')"
+		searchPattern := "%" + escapeLikePattern(search) + "%"
 		args = append(args, searchPattern, searchPattern, searchPattern, searchPattern)
 	}
 
@@ -1043,7 +1340,7 @@ func (s *Service) handleAttempts(w http.ResponseWriter, r *http.Request) {
 	// Get attempts with pagination
 	query := fmt.Sprintf(`SELECT id, timestamp, source_ip, dest_port, protocol, jail_name, action
 		FROM attempts WHERE %s ORDER BY timestamp DESC LIMIT ? OFFSET ?`, where)
-	args = append(args, limit, offset)
+	args = append(args, p.Limit, p.Offset)
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -1067,22 +1364,15 @@ func (s *Service) handleAttempts(w http.ResponseWriter, r *http.Request) {
 	router.JSON(w, map[string]interface{}{
 		"attempts": attempts,
 		"total":    total,
-		"limit":    limit,
-		"offset":   offset,
+		"limit":    p.Limit,
+		"offset":   p.Offset,
 		"jails":    jails,
 	})
 }
 
 // getDockerExposedPorts returns ports exposed by Docker containers
 func (s *Service) getDockerExposedPorts() []AllowedPort {
-	client := &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				return net.Dial("unix", "/var/run/docker.sock")
-			},
-		},
-		Timeout: 5 * time.Second,
-	}
+	client := helper.NewDockerHTTPClientWithTimeout(5 * time.Second)
 
 	req, err := http.NewRequest("GET", "http://docker/v1.44/containers/json", nil)
 	if err != nil {
@@ -1229,7 +1519,7 @@ func (s *Service) handleRemovePort(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var essential bool
-	s.db.QueryRow("SELECT essential FROM allowed_ports WHERE port = ?", port).Scan(&essential)
+	_ = s.db.QueryRow("SELECT essential FROM allowed_ports WHERE port = ?", port).Scan(&essential)
 	if essential {
 		router.JSONError(w, "cannot remove essential port", http.StatusForbidden)
 		return
@@ -1245,10 +1535,12 @@ func (s *Service) handleGetJails(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.db.Query(`
 		SELECT j.id, j.name, j.enabled, j.log_file, j.filter_regex, j.max_retry, j.find_time, j.ban_time, j.port, j.action,
 			COUNT(CASE WHEN b.id IS NOT NULL AND (b.expires_at IS NULL OR b.expires_at > datetime('now')) THEN 1 END) as currently_banned,
-			COUNT(b.id) as total_banned
+			COUNT(b.id) as total_banned,
+			COALESCE(j.escalate_enabled, 0), COALESCE(j.escalate_threshold, 3), COALESCE(j.escalate_window, 3600)
 		FROM jails j
 		LEFT JOIN blocked_ips b ON j.name = b.jail_name
-		GROUP BY j.id, j.name, j.enabled, j.log_file, j.filter_regex, j.max_retry, j.find_time, j.ban_time, j.port, j.action`)
+		GROUP BY j.id, j.name, j.enabled, j.log_file, j.filter_regex, j.max_retry, j.find_time, j.ban_time, j.port, j.action,
+			j.escalate_enabled, j.escalate_threshold, j.escalate_window`)
 	if err != nil {
 		router.JSONError(w, "database error", http.StatusInternalServerError)
 		return
@@ -1258,7 +1550,10 @@ func (s *Service) handleGetJails(w http.ResponseWriter, r *http.Request) {
 	var jails []Jail
 	for rows.Next() {
 		var j Jail
-		rows.Scan(&j.ID, &j.Name, &j.Enabled, &j.LogFile, &j.FilterRegex, &j.MaxRetry, &j.FindTime, &j.BanTime, &j.Port, &j.Action, &j.CurrentlyBanned, &j.TotalBanned)
+		if err := rows.Scan(&j.ID, &j.Name, &j.Enabled, &j.LogFile, &j.FilterRegex, &j.MaxRetry, &j.FindTime, &j.BanTime, &j.Port, &j.Action,
+			&j.CurrentlyBanned, &j.TotalBanned, &j.EscalateEnabled, &j.EscalateThreshold, &j.EscalateWindow); err != nil {
+			continue
+		}
 		jails = append(jails, j)
 	}
 	if jails == nil {
@@ -1282,9 +1577,19 @@ func (s *Service) handleCreateJail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, err := s.db.Exec(`INSERT INTO jails (name, enabled, log_file, filter_regex, max_retry, find_time, ban_time, port, action)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		jail.Name, jail.Enabled, jail.LogFile, jail.FilterRegex, jail.MaxRetry, jail.FindTime, jail.BanTime, jail.Port, jail.Action)
+	// Set defaults for escalation
+	if jail.EscalateThreshold == 0 {
+		jail.EscalateThreshold = 3
+	}
+	if jail.EscalateWindow == 0 {
+		jail.EscalateWindow = 3600
+	}
+
+	result, err := s.db.Exec(`INSERT INTO jails (name, enabled, log_file, filter_regex, max_retry, find_time, ban_time, port, action,
+		escalate_enabled, escalate_threshold, escalate_window)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		jail.Name, jail.Enabled, jail.LogFile, jail.FilterRegex, jail.MaxRetry, jail.FindTime, jail.BanTime, jail.Port, jail.Action,
+		jail.EscalateEnabled, jail.EscalateThreshold, jail.EscalateWindow)
 	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1307,13 +1612,16 @@ func (s *Service) handleGetJail(w http.ResponseWriter, r *http.Request) {
 	err := s.db.QueryRow(`
 		SELECT j.id, j.name, j.enabled, j.log_file, j.filter_regex, j.max_retry, j.find_time, j.ban_time, j.port, j.action,
 			COUNT(CASE WHEN b.id IS NOT NULL AND (b.expires_at IS NULL OR b.expires_at > datetime('now')) THEN 1 END) as currently_banned,
-			COUNT(b.id) as total_banned
+			COUNT(b.id) as total_banned,
+			COALESCE(j.escalate_enabled, 0), COALESCE(j.escalate_threshold, 3), COALESCE(j.escalate_window, 3600)
 		FROM jails j
 		LEFT JOIN blocked_ips b ON j.name = b.jail_name
 		WHERE j.name = ?
-		GROUP BY j.id, j.name, j.enabled, j.log_file, j.filter_regex, j.max_retry, j.find_time, j.ban_time, j.port, j.action`,
+		GROUP BY j.id, j.name, j.enabled, j.log_file, j.filter_regex, j.max_retry, j.find_time, j.ban_time, j.port, j.action,
+			j.escalate_enabled, j.escalate_threshold, j.escalate_window`,
 		name).Scan(&jail.ID, &jail.Name, &jail.Enabled, &jail.LogFile, &jail.FilterRegex,
-		&jail.MaxRetry, &jail.FindTime, &jail.BanTime, &jail.Port, &jail.Action, &jail.CurrentlyBanned, &jail.TotalBanned)
+		&jail.MaxRetry, &jail.FindTime, &jail.BanTime, &jail.Port, &jail.Action, &jail.CurrentlyBanned, &jail.TotalBanned,
+		&jail.EscalateEnabled, &jail.EscalateThreshold, &jail.EscalateWindow)
 	if err != nil {
 		router.JSONError(w, "jail not found", http.StatusNotFound)
 		return
@@ -1339,11 +1647,13 @@ func (s *Service) handleUpdateJail(w http.ResponseWriter, r *http.Request) {
 
 	// Get the jail ID before updating
 	var jailID int64
-	s.db.QueryRow("SELECT id FROM jails WHERE name = ?", name).Scan(&jailID)
+	_ = s.db.QueryRow("SELECT id FROM jails WHERE name = ?", name).Scan(&jailID)
 
 	_, err := s.db.Exec(`UPDATE jails SET enabled = ?, log_file = ?, filter_regex = ?, max_retry = ?,
-		find_time = ?, ban_time = ?, port = ?, action = ? WHERE name = ?`,
-		jail.Enabled, jail.LogFile, jail.FilterRegex, jail.MaxRetry, jail.FindTime, jail.BanTime, jail.Port, jail.Action, name)
+		find_time = ?, ban_time = ?, port = ?, action = ?,
+		escalate_enabled = ?, escalate_threshold = ?, escalate_window = ? WHERE name = ?`,
+		jail.Enabled, jail.LogFile, jail.FilterRegex, jail.MaxRetry, jail.FindTime, jail.BanTime, jail.Port, jail.Action,
+		jail.EscalateEnabled, jail.EscalateThreshold, jail.EscalateWindow, name)
 	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1363,7 +1673,7 @@ func (s *Service) handleDeleteJail(w http.ResponseWriter, r *http.Request) {
 
 	// Get the jail ID and stop the monitor before deleting
 	var jailID int64
-	s.db.QueryRow("SELECT id FROM jails WHERE name = ?", name).Scan(&jailID)
+	_ = s.db.QueryRow("SELECT id FROM jails WHERE name = ?", name).Scan(&jailID)
 	if jailID > 0 {
 		s.stopJailMonitor(jailID)
 	}
@@ -1375,21 +1685,9 @@ func (s *Service) handleDeleteJail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleTraffic(w http.ResponseWriter, r *http.Request) {
-	limit := 25
-	offset := 0
+	p := router.ParsePagination(r, 25)
 	search := r.URL.Query().Get("search")
 	clientIP := r.URL.Query().Get("client")
-
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
-			limit = parsed
-		}
-	}
-	if o := r.URL.Query().Get("offset"); o != "" {
-		if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {
-			offset = parsed
-		}
-	}
 
 	// Build WHERE clause
 	where := "1=1"
@@ -1401,8 +1699,8 @@ func (s *Service) handleTraffic(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if search != "" {
-		where += " AND (client_ip LIKE ? OR dest_ip LIKE ? OR domain LIKE ? OR protocol LIKE ? OR CAST(dest_port AS TEXT) LIKE ?)"
-		searchPattern := "%" + search + "%"
+		where += " AND (client_ip LIKE ? ESCAPE '\\' OR dest_ip LIKE ? ESCAPE '\\' OR domain LIKE ? ESCAPE '\\' OR protocol LIKE ? ESCAPE '\\' OR CAST(dest_port AS TEXT) LIKE ? ESCAPE '\\')"
+		searchPattern := "%" + escapeLikePattern(search) + "%"
 		args = append(args, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern)
 	}
 
@@ -1437,7 +1735,7 @@ func (s *Service) handleTraffic(w http.ResponseWriter, r *http.Request) {
 	// Get logs with pagination
 	query := fmt.Sprintf(`SELECT id, timestamp, client_ip, dest_ip, dest_port, protocol, domain
 		FROM traffic_logs WHERE %s ORDER BY timestamp DESC LIMIT ? OFFSET ?`, where)
-	args = append(args, limit, offset)
+	args = append(args, p.Limit, p.Offset)
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -1449,7 +1747,9 @@ func (s *Service) handleTraffic(w http.ResponseWriter, r *http.Request) {
 	var logs []TrafficLog
 	for rows.Next() {
 		var t TrafficLog
-		rows.Scan(&t.ID, &t.Timestamp, &t.ClientIP, &t.DestIP, &t.DestPort, &t.Protocol, &t.Domain)
+		if err := rows.Scan(&t.ID, &t.Timestamp, &t.ClientIP, &t.DestIP, &t.DestPort, &t.Protocol, &t.Domain); err != nil {
+			continue
+		}
 		logs = append(logs, t)
 	}
 	if logs == nil {
@@ -1459,8 +1759,8 @@ func (s *Service) handleTraffic(w http.ResponseWriter, r *http.Request) {
 	router.JSON(w, map[string]interface{}{
 		"logs":    logs,
 		"total":   total,
-		"limit":   limit,
-		"offset":  offset,
+		"limit":   p.Limit,
+		"offset":  p.Offset,
 		"clients": clients,
 	})
 }
@@ -1485,13 +1785,15 @@ func (s *Service) handleTrafficStats(w http.ResponseWriter, r *http.Request) {
 
 	var stats []Stats
 	for rows.Next() {
-		var s Stats
+		var st Stats
 		var clients string
-		rows.Scan(&s.DestIP, &s.Domain, &s.Connections, &s.LastSeen, &clients)
-		if clients != "" {
-			s.Clients = strings.Split(clients, ",")
+		if err := rows.Scan(&st.DestIP, &st.Domain, &st.Connections, &st.LastSeen, &clients); err != nil {
+			continue
 		}
-		stats = append(stats, s)
+		if clients != "" {
+			st.Clients = strings.Split(clients, ",")
+		}
+		stats = append(stats, st)
 	}
 	if stats == nil {
 		stats = []Stats{}
@@ -1501,9 +1803,9 @@ func (s *Service) handleTrafficStats(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) handleTrafficLive(w http.ResponseWriter, r *http.Request) {
 	var totalConns, uniqueDests, activeClients int
-	s.db.QueryRow("SELECT COUNT(*) FROM traffic_logs WHERE timestamp > datetime('now', '-5 minutes')").Scan(&totalConns)
-	s.db.QueryRow("SELECT COUNT(DISTINCT dest_ip) FROM traffic_logs WHERE timestamp > datetime('now', '-5 minutes')").Scan(&uniqueDests)
-	s.db.QueryRow("SELECT COUNT(DISTINCT client_ip) FROM traffic_logs WHERE timestamp > datetime('now', '-5 minutes')").Scan(&activeClients)
+	_ = s.db.QueryRow("SELECT COUNT(*) FROM traffic_logs WHERE timestamp > datetime('now', '-5 minutes')").Scan(&totalConns)
+	_ = s.db.QueryRow("SELECT COUNT(DISTINCT dest_ip) FROM traffic_logs WHERE timestamp > datetime('now', '-5 minutes')").Scan(&uniqueDests)
+	_ = s.db.QueryRow("SELECT COUNT(DISTINCT client_ip) FROM traffic_logs WHERE timestamp > datetime('now', '-5 minutes')").Scan(&activeClients)
 
 	router.JSON(w, map[string]interface{}{
 		"totalConnections":   totalConns,
@@ -1640,4 +1942,200 @@ func (s *Service) handleChangeSSHPort(w http.ResponseWriter, r *http.Request) {
 		"newPort": req.Port,
 		"message": fmt.Sprintf("SSH port changed from %d to %d", oldPort, req.Port),
 	})
+}
+
+// ============================================================================
+// BLOCKLIST IMPORT HANDLERS
+// ============================================================================
+
+func (s *Service) handleGetBlocklists(w http.ResponseWriter, r *http.Request) {
+	// Return available blocklist sources
+	var sources []BlocklistSource
+	for _, src := range blocklistSources {
+		sources = append(sources, src)
+	}
+	router.JSON(w, sources)
+}
+
+func (s *Service) handleImportBlocklist(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Source string `json:"source"` // Preset source ID
+		URL    string `json:"url"`    // Custom URL (if source is empty)
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		router.JSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var entries []string
+	var sourceName string
+
+	if req.Source != "" {
+		// Use preset source
+		src, exists := blocklistSources[req.Source]
+		if !exists {
+			router.JSONError(w, "unknown blocklist source", http.StatusBadRequest)
+			return
+		}
+		sourceName = req.Source
+
+		if src.Type == "static" {
+			entries = src.Ranges
+		} else {
+			// Fetch from URL
+			var err error
+			entries, err = s.fetchBlocklist(src.URL, src.MinScore)
+			if err != nil {
+				router.JSONError(w, "failed to fetch blocklist: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+	} else if req.URL != "" {
+		// Custom URL
+		sourceName = "custom"
+		var err error
+		entries, err = s.fetchBlocklist(req.URL, 0)
+		if err != nil {
+			router.JSONError(w, "failed to fetch blocklist: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		router.JSONError(w, "source or url required", http.StatusBadRequest)
+		return
+	}
+
+	// Import entries
+	added := 0
+	skipped := 0
+	for _, entry := range entries {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+
+		// Skip private ranges
+		if isPrivateRange(entry) {
+			skipped++
+			continue
+		}
+
+		// Validate and normalize
+		normalizedIP, isRange, err := validateIPOrCIDR(entry)
+		if err != nil {
+			skipped++
+			continue
+		}
+
+		// Check if already blocked
+		var count int
+		_ = s.db.QueryRow("SELECT COUNT(*) FROM blocked_ips WHERE ip = ?", normalizedIP).Scan(&count)
+		if count > 0 {
+			skipped++
+			continue
+		}
+
+		// Insert
+		_, err = s.db.Exec(`INSERT INTO blocked_ips (ip, jail_name, reason, manual, is_range, source)
+			VALUES (?, 'blocklist', ?, 0, ?, ?)`,
+			normalizedIP, fmt.Sprintf("Imported from %s", sourceName), isRange, sourceName)
+		if err == nil {
+			added++
+		} else {
+			skipped++
+		}
+	}
+
+	// Apply rules if any were added
+	if added > 0 {
+		s.ApplyRules()
+	}
+
+	log.Printf("Blocklist import: source=%s, added=%d, skipped=%d", sourceName, added, skipped)
+	router.JSON(w, map[string]interface{}{
+		"status":  "imported",
+		"source":  sourceName,
+		"added":   added,
+		"skipped": skipped,
+		"total":   len(entries),
+	})
+}
+
+func (s *Service) handleDeleteBlockedSource(w http.ResponseWriter, r *http.Request) {
+	source := router.ExtractPathParam(r, "/api/fw/blocked/source/")
+	if source == "" {
+		router.JSONError(w, "source required", http.StatusBadRequest)
+		return
+	}
+
+	result, err := s.db.Exec("DELETE FROM blocked_ips WHERE source = ?", source)
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	deleted, _ := result.RowsAffected()
+	if deleted > 0 {
+		s.ApplyRules()
+	}
+
+	router.JSON(w, map[string]interface{}{
+		"status":  "deleted",
+		"source":  source,
+		"deleted": deleted,
+	})
+}
+
+// fetchBlocklist fetches and parses a blocklist from URL
+func (s *Service) fetchBlocklist(url string, minScore int) ([]string, error) {
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var entries []string
+	lines := strings.Split(string(body), "\n")
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		// Skip comments and empty lines
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+			continue
+		}
+
+		// Handle ipsum format (IP\tSCORE)
+		if strings.Contains(line, "\t") {
+			parts := strings.Split(line, "\t")
+			if len(parts) >= 2 {
+				ip := strings.TrimSpace(parts[0])
+				score, _ := strconv.Atoi(strings.TrimSpace(parts[1]))
+				if minScore > 0 && score < minScore {
+					continue
+				}
+				entries = append(entries, ip)
+				continue
+			}
+		}
+
+		// Handle plain IP or CIDR
+		// Skip lines with spaces (likely comments or descriptions)
+		if strings.Contains(line, " ") {
+			continue
+		}
+
+		entries = append(entries, line)
+	}
+
+	return entries, nil
 }

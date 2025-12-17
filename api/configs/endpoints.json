@@ -72,6 +72,9 @@
         {"path": "/apply", "methods": ["POST"], "handler": "ApplyRules", "description": "Apply firewall rules"},
         {"path": "/ssh", "methods": ["GET"], "handler": "GetSSHPort", "description": "Get current SSH port"},
         {"path": "/ssh", "methods": ["POST"], "handler": "ChangeSSHPort", "description": "Change SSH port"},
+        {"path": "/blocklists", "methods": ["GET"], "handler": "GetBlocklists", "description": "Get available blocklist sources"},
+        {"path": "/blocklists/import", "methods": ["POST"], "handler": "ImportBlocklist", "description": "Import blocklist from source"},
+        {"path": "/blocked/source/{source}", "methods": ["DELETE"], "handler": "DeleteBlockedSource", "description": "Delete all IPs from source"},
         {"path": "/health", "methods": ["GET"], "handler": "Health", "description": "Health check"}
       ]
     },
@@ -176,6 +179,23 @@
         {"path": "/containers/{name}/restart", "methods": ["POST"], "handler": "Restart", "description": "Restart container"},
         {"path": "/containers/{name}/stop", "methods": ["POST"], "handler": "Stop", "description": "Stop container"},
         {"path": "/containers/{name}/start", "methods": ["POST"], "handler": "Start", "description": "Start container"},
+        {"path": "/health", "methods": ["GET"], "handler": "Health", "description": "Health check"}
+      ]
+    },
+    "vpn": {
+      "prefix": "/api/vpn",
+      "enabled": true,
+      "endpoints": [
+        {"path": "/clients", "methods": ["GET"], "handler": "GetClients", "description": "List all VPN clients (WG + HS unified)"},
+        {"path": "/clients/{id}", "methods": ["GET"], "handler": "GetClient", "description": "Get client with ACL rules"},
+        {"path": "/clients/{id}/acl", "methods": ["PUT"], "handler": "UpdateACL", "description": "Update client ACL policy"},
+        {"path": "/clients/{id}/dns", "methods": ["PUT"], "handler": "ToggleDNS", "description": "Toggle DNS rewrite for client"},
+        {"path": "/sync", "methods": ["POST"], "handler": "SyncClients", "description": "Sync clients from WG + Headscale"},
+        {"path": "/apply", "methods": ["POST"], "handler": "ApplyRules", "description": "Apply nftables + Headscale ACL"},
+        {"path": "/router/status", "methods": ["GET"], "handler": "GetRouterStatus", "description": "Get router status"},
+        {"path": "/router/setup", "methods": ["POST"], "handler": "SetupRouter", "description": "Setup router"},
+        {"path": "/router/restart", "methods": ["POST"], "handler": "RestartRouter", "description": "Restart router"},
+        {"path": "/router", "methods": ["DELETE"], "handler": "RemoveRouter", "description": "Remove router"},
         {"path": "/health", "methods": ["GET"], "handler": "Health", "description": "Health check"}
       ]
     }

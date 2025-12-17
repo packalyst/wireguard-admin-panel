@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"api/internal/database"
 	"api/internal/helper"
 	"api/internal/router"
 
@@ -45,6 +46,69 @@ func validateCIDR(cidr string) error {
 type Service struct {
 	config    Config
 	peerStore *PeerStore
+}
+
+// Package-level service instance for cross-service access
+var serviceInstance *Service
+
+// SetService stores the service instance for access by other packages
+func SetService(s *Service) {
+	serviceInstance = s
+}
+
+// GetService returns the stored service instance
+func GetService() *Service {
+	return serviceInstance
+}
+
+// SimplePeer is a minimal peer representation for other services
+type SimplePeer struct {
+	ID        string
+	Name      string
+	IPAddress string
+}
+
+// ListPeers returns all peers in a simple format for other services
+func (s *Service) ListPeers() []SimplePeer {
+	peers := s.peerStore.List()
+	result := make([]SimplePeer, len(peers))
+	for i, p := range peers {
+		result[i] = SimplePeer{ID: p.ID, Name: p.Name, IPAddress: p.IPAddress}
+	}
+	return result
+}
+
+// ListPeersWithStatus returns all peers with enriched online status
+func (s *Service) ListPeersWithStatus() []*Peer {
+	peers := s.peerStore.List()
+	s.enrichPeersWithStatus(peers)
+	return peers
+}
+
+// addToVPNClients adds a peer to the vpn_clients table
+func (s *Service) addToVPNClients(peer *Peer) {
+	db := database.Get()
+	if db == nil {
+		return
+	}
+	// Strip sensitive keys before storing in database
+	peerCopy := *peer
+	peerCopy.PrivateKey = ""
+	peerCopy.PresharedKey = ""
+	rawData, _ := json.Marshal(peerCopy)
+	db.Exec(`
+		INSERT OR REPLACE INTO vpn_clients (name, ip, type, external_id, raw_data, acl_policy, default_direction)
+		VALUES (?, ?, 'wireguard', ?, ?, 'selected', 'bidirectional')
+	`, peer.Name, peer.IPAddress, peer.ID, string(rawData))
+}
+
+// removeFromVPNClients removes a peer from the vpn_clients table
+func (s *Service) removeFromVPNClients(ip string) {
+	db := database.Get()
+	if db == nil {
+		return
+	}
+	db.Exec(`DELETE FROM vpn_clients WHERE ip = ? AND type = 'wireguard'`, ip)
 }
 
 // Config holds WireGuard configuration
@@ -199,8 +263,9 @@ func (s *Service) initServerKeys() error {
 }
 
 func (s *Service) initWireGuard() error {
-	if err := exec.Command("modprobe", "wireguard").Run(); err != nil {
-		log.Printf("Warning: modprobe wireguard failed (may already be loaded): %v", err)
+	// Check if wireguard module is loaded (don't try modprobe - container doesn't have it)
+	if _, err := os.Stat("/sys/module/wireguard"); os.IsNotExist(err) {
+		log.Printf("Warning: WireGuard kernel module not loaded on host. Load it with: sudo modprobe wireguard")
 	}
 
 	cmd := exec.Command("ip", "link", "show", s.config.Interface)
@@ -218,7 +283,14 @@ func (s *Service) initWireGuard() error {
 	if err := exec.Command("ip", "addr", "flush", "dev", s.config.Interface).Run(); err != nil {
 		log.Printf("Warning: failed to flush addresses: %v", err)
 	}
-	if err := exec.Command("ip", "addr", "add", s.config.ServerIP+"/10", "dev", s.config.Interface).Run(); err != nil {
+	// Extract netmask from IPRange env var (e.g., "100.65.0.0/16" -> "/16")
+	_, ipNet, err := net.ParseCIDR(s.config.IPRange)
+	if err != nil {
+		return fmt.Errorf("invalid IP range %s: %v", s.config.IPRange, err)
+	}
+	ones, _ := ipNet.Mask.Size()
+	serverIPWithMask := fmt.Sprintf("%s/%d", s.config.ServerIP, ones)
+	if err := exec.Command("ip", "addr", "add", serverIPWithMask, "dev", s.config.Interface).Run(); err != nil {
 		return fmt.Errorf("failed to set IP: %v", err)
 	}
 
@@ -232,7 +304,8 @@ func (s *Service) initWireGuard() error {
 }
 
 func (s *Service) setupNAT() error {
-	if err := exec.Command("sh", "-c", "echo 1 > /proc/sys/net/ipv4/ip_forward").Run(); err != nil {
+	// Enable IP forwarding by writing directly to sysctl (no shell needed)
+	if err := os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1"), 0644); err != nil {
 		log.Printf("Warning: failed to enable IP forwarding: %v", err)
 	}
 
@@ -270,11 +343,19 @@ func (s *Service) setupNAT() error {
 }
 
 func (s *Service) getDefaultInterface() string {
-	out, err := exec.Command("sh", "-c", "ip route | grep default | awk '{print $5}' | head -1").Output()
+	// Parse ip route output directly without shell pipeline
+	out, err := exec.Command("ip", "route", "show", "default").Output()
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(out))
+	// Output format: "default via X.X.X.X dev ethX ..."
+	fields := strings.Fields(string(out))
+	for i, field := range fields {
+		if field == "dev" && i+1 < len(fields) {
+			return fields[i+1]
+		}
+	}
+	return ""
 }
 
 func (s *Service) syncConfig() error {
@@ -526,6 +607,11 @@ PersistentKeepalive = 25
 func (s *Service) handleGetPeers(w http.ResponseWriter, r *http.Request) {
 	peers := s.peerStore.List()
 	s.enrichPeersWithStatus(peers)
+	// Strip sensitive keys from list response - private keys only returned during creation or config download
+	for _, p := range peers {
+		p.PrivateKey = ""
+		p.PresharedKey = ""
+	}
 	router.JSON(w, peers)
 }
 
@@ -568,6 +654,9 @@ func (s *Service) handleCreatePeer(w http.ResponseWriter, r *http.Request) {
 
 	s.peerStore.Add(peer)
 	s.syncConfig()
+
+	// Auto-insert into vpn_clients for unified view
+	s.addToVPNClients(peer)
 
 	w.WriteHeader(http.StatusCreated)
 	router.JSON(w, peer)
@@ -615,6 +704,13 @@ func (s *Service) handleUpdatePeer(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) handleDeletePeer(w http.ResponseWriter, r *http.Request) {
 	id := router.ExtractPathParam(r, "/api/wg/peers/")
+
+	// Get peer before deleting to get IP for vpn_clients cleanup
+	peer := s.peerStore.Get(id)
+	if peer != nil {
+		s.removeFromVPNClients(peer.IPAddress)
+	}
+
 	s.peerStore.Delete(id)
 	s.syncConfig()
 	w.WriteHeader(http.StatusNoContent)
@@ -638,6 +734,9 @@ func (s *Service) handleEnablePeer(w http.ResponseWriter, r *http.Request) {
 	peer.Enabled = true
 	s.peerStore.Add(peer)
 	s.syncConfig()
+	// Return peer without sensitive keys
+	peer.PrivateKey = ""
+	peer.PresharedKey = ""
 	router.JSON(w, peer)
 }
 
@@ -659,6 +758,9 @@ func (s *Service) handleDisablePeer(w http.ResponseWriter, r *http.Request) {
 	peer.Enabled = false
 	s.peerStore.Add(peer)
 	s.syncConfig()
+	// Return peer without sensitive keys
+	peer.PrivateKey = ""
+	peer.PresharedKey = ""
 	router.JSON(w, peer)
 }
 

@@ -1,14 +1,24 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
   import { toast, apiGet, apiPost, apiPut, apiDelete } from '../stores/app.js'
+  import { timeAgo } from '$lib/utils/format.js'
   import Icon from '../components/Icon.svelte'
   import Badge from '../components/Badge.svelte'
   import Modal from '../components/Modal.svelte'
   import Pagination from '../components/Pagination.svelte'
   import Input from '../components/Input.svelte'
   import Button from '../components/Button.svelte'
+  import Tabs from '../components/Tabs.svelte'
 
   let { loading = $bindable(true) } = $props()
+
+  // Tabs with dynamic badge for blocked count
+  const tabs = $derived([
+    { id: 'ports', label: 'Ports', icon: 'lock' },
+    { id: 'blocked', label: 'Blocked', icon: 'ban', badge: (status?.blockedIPCount || 0) > 0 ? status?.blockedIPCount : undefined },
+    { id: 'attempts', label: 'Activity', icon: 'activity' },
+    { id: 'jails', label: 'Jails', icon: 'shield' }
+  ])
 
   // Data state
   let status = $state(null)
@@ -112,9 +122,19 @@
     findTime: 3600,
     banTime: 2592000,
     port: 'all',
-    action: 'drop'
+    action: 'drop',
+    escalateEnabled: false,
+    escalateThreshold: 3,
+    escalateWindow: 3600
   })
   let savingJail = $state(false)
+
+  // Blocklist import state
+  let showImportModal = $state(false)
+  let blocklists = $state([])
+  let loadingBlocklists = $state(false)
+  let importingSource = $state(null)
+  let customURL = $state('')
 
   // Load status on mount
   async function loadStatus() {
@@ -305,13 +325,13 @@
   }
 
   // Tab change handler
-  function switchTab(tab) {
-    activeTab = tab
-    if (tab === 'ports') loadPorts()
-    else if (tab === 'blocked') loadBlocked()
-    else if (tab === 'attempts') loadAttempts()
-    else if (tab === 'jails') loadJails()
-  }
+  // Load data when tab changes (Tabs component handles the activeTab state)
+  $effect(() => {
+    if (activeTab === 'ports') loadPorts()
+    else if (activeTab === 'blocked') loadBlocked()
+    else if (activeTab === 'attempts') loadAttempts()
+    else if (activeTab === 'jails') loadJails()
+  })
 
   // Sorted ports (avoid mutation in template)
   const sortedPorts = $derived([...ports].sort((a, b) => a.port - b.port))
@@ -344,9 +364,20 @@
   }
 
   async function blockIP() {
-    if (!blockForm.ip.match(/^\d+\.\d+\.\d+\.\d+$/)) {
-      toast('Invalid IP address', 'error')
+    // Validate IP or CIDR (e.g., 192.168.1.100 or 192.168.1.0/24)
+    const ipRegex = /^\d+\.\d+\.\d+\.\d+$/
+    const cidrRegex = /^\d+\.\d+\.\d+\.\d+\/\d+$/
+    if (!ipRegex.test(blockForm.ip) && !cidrRegex.test(blockForm.ip)) {
+      toast('Invalid IP address or CIDR (e.g., 192.168.1.100 or 192.168.1.0/24)', 'error')
       return
+    }
+    // Validate CIDR prefix
+    if (cidrRegex.test(blockForm.ip)) {
+      const prefix = parseInt(blockForm.ip.split('/')[1])
+      if (prefix < 8 || prefix > 32) {
+        toast('CIDR prefix must be between /8 and /32', 'error')
+        return
+      }
     }
     let banTime = 0
     if (blockForm.duration !== 'permanent') {
@@ -360,12 +391,13 @@
       }
     }
     try {
-      await apiPost('/api/fw/blocked', {
+      const res = await apiPost('/api/fw/blocked', {
         ip: blockForm.ip,
         reason: blockForm.reason || 'Manual block',
         banTime
       })
-      toast(`IP ${blockForm.ip} blocked`, 'success')
+      const msg = res.isRange ? `Range ${res.ip} blocked` : `IP ${res.ip} blocked`
+      toast(msg, 'success')
       showBlockModal = false
       blockForm = { ip: '', reason: '', duration: '30d' }
       await reloadSection('blocked')
@@ -407,7 +439,10 @@
       findTime: 3600,
       banTime: 2592000,
       port: 'all',
-      action: 'drop'
+      action: 'drop',
+      escalateEnabled: false,
+      escalateThreshold: 3,
+      escalateWindow: 3600
     }
     showJailModal = true
   }
@@ -423,7 +458,10 @@
       findTime: jail.findTime,
       banTime: jail.banTime,
       port: jail.port,
-      action: jail.action
+      action: jail.action,
+      escalateEnabled: jail.escalateEnabled || false,
+      escalateThreshold: jail.escalateThreshold || 3,
+      escalateWindow: jail.escalateWindow || 3600
     }
     showJailModal = true
   }
@@ -440,32 +478,27 @@
 
     savingJail = true
     try {
+      const jailData = {
+        enabled: jailForm.enabled,
+        logFile: jailForm.logFile,
+        filterRegex: jailForm.filterRegex,
+        maxRetry: parseInt(jailForm.maxRetry) || 10,
+        findTime: parseInt(jailForm.findTime) || 3600,
+        banTime: parseInt(jailForm.banTime) || 2592000,
+        port: jailForm.port,
+        action: jailForm.action,
+        escalateEnabled: jailForm.escalateEnabled,
+        escalateThreshold: parseInt(jailForm.escalateThreshold) || 3,
+        escalateWindow: parseInt(jailForm.escalateWindow) || 3600
+      }
+
       if (jailForm.id) {
         // Update existing jail
-        await apiPut(`/api/fw/jails/${jailForm.name}`, {
-          enabled: jailForm.enabled,
-          logFile: jailForm.logFile,
-          filterRegex: jailForm.filterRegex,
-          maxRetry: parseInt(jailForm.maxRetry) || 10,
-          findTime: parseInt(jailForm.findTime) || 3600,
-          banTime: parseInt(jailForm.banTime) || 2592000,
-          port: jailForm.port,
-          action: jailForm.action
-        })
+        await apiPut(`/api/fw/jails/${jailForm.name}`, jailData)
         toast(`Jail "${jailForm.name}" updated`, 'success')
       } else {
         // Create new jail
-        await apiPost('/api/fw/jails', {
-          name: jailForm.name,
-          enabled: jailForm.enabled,
-          logFile: jailForm.logFile,
-          filterRegex: jailForm.filterRegex,
-          maxRetry: parseInt(jailForm.maxRetry) || 10,
-          findTime: parseInt(jailForm.findTime) || 3600,
-          banTime: parseInt(jailForm.banTime) || 2592000,
-          port: jailForm.port,
-          action: jailForm.action
-        })
+        await apiPost('/api/fw/jails', { name: jailForm.name, ...jailData })
         toast(`Jail "${jailForm.name}" created`, 'success')
       }
       showJailModal = false
@@ -497,20 +530,50 @@
     }
   }
 
-  // Helpers
-  function timeAgo(dateStr) {
-    if (!dateStr) return 'Never'
-    const date = new Date(dateStr)
-    const now = new Date()
-    const diff = Math.floor((now - date) / 1000)
-
-    if (diff < 60) return 'just now'
-    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
-    if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`
-    return date.toLocaleDateString()
+  // Blocklist import
+  async function openImportModal() {
+    showImportModal = true
+    if (blocklists.length === 0) {
+      loadingBlocklists = true
+      try {
+        blocklists = await apiGet('/api/fw/blocklists')
+      } catch (e) {
+        toast('Failed to load blocklists: ' + e.message, 'error')
+      } finally {
+        loadingBlocklists = false
+      }
+    }
   }
 
+  async function importBlocklist(source) {
+    importingSource = source
+    try {
+      const body = source === 'custom' ? { url: customURL } : { source }
+      const res = await apiPost('/api/fw/blocklists/import', body)
+      toast(`Imported ${res.added} IPs from ${res.source} (${res.skipped} skipped)`, 'success')
+      if (source === 'custom') customURL = ''
+      await reloadSection('blocked')
+      await loadStatus()
+    } catch (e) {
+      toast('Failed: ' + e.message, 'error')
+    } finally {
+      importingSource = null
+    }
+  }
+
+  async function deleteBlockedSource(source) {
+    if (!confirm(`Delete all IPs from "${source}"?`)) return
+    try {
+      const res = await apiDelete(`/api/fw/blocked/source/${source}`)
+      toast(`Deleted ${res.deleted} IPs from ${source}`, 'success')
+      await reloadSection('blocked')
+      await loadStatus()
+    } catch (e) {
+      toast('Failed: ' + e.message, 'error')
+    }
+  }
+
+  // Helpers
   function formatTimeRemaining(expiresAt) {
     if (!expiresAt) return 'Permanent'
     const expires = new Date(expiresAt)
@@ -586,51 +649,8 @@
     </div>
 
     <!-- Tabs Card -->
-    <div class="bg-card border border-border rounded-xl overflow-hidden">
-      <!-- Tab buttons -->
-      <div class="flex border-b border-border">
-        <button
-          onclick={() => switchTab('ports')}
-          class="px-5 py-3 text-sm font-medium transition-colors relative {activeTab === 'ports' ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}"
-        >
-          Ports
-          {#if activeTab === 'ports'}
-            <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-primary"></div>
-          {/if}
-        </button>
-        <button
-          onclick={() => switchTab('blocked')}
-          class="px-5 py-3 text-sm font-medium transition-colors relative {activeTab === 'blocked' ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}"
-        >
-          Blocked
-          {#if (status?.blockedIPCount || 0) > 0}
-            <span class="ml-1.5 px-1.5 py-0.5 text-xs bg-destructive/15 text-destructive rounded-full">
-              {status?.blockedIPCount}
-            </span>
-          {/if}
-          {#if activeTab === 'blocked'}
-            <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-primary"></div>
-          {/if}
-        </button>
-        <button
-          onclick={() => switchTab('attempts')}
-          class="px-5 py-3 text-sm font-medium transition-colors relative {activeTab === 'attempts' ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}"
-        >
-          Activity
-          {#if activeTab === 'attempts'}
-            <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-primary"></div>
-          {/if}
-        </button>
-        <button
-          onclick={() => switchTab('jails')}
-          class="px-5 py-3 text-sm font-medium transition-colors relative {activeTab === 'jails' ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}"
-        >
-          Jails
-          {#if activeTab === 'jails'}
-            <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-primary"></div>
-          {/if}
-        </button>
-      </div>
+    <div class="bg-card border border-border rounded-lg overflow-hidden">
+      <Tabs {tabs} bind:activeTab urlKey="tab" />
 
       <!-- Tab Content -->
       <div class="p-5">
@@ -792,6 +812,9 @@
 
               <div class="ml-auto"></div>
 
+              <Button onclick={openImportModal} variant="outline" size="sm" icon="download">
+                Import
+              </Button>
               <Button onclick={() => showBlockModal = true} size="sm" icon="plus">
                 Block IP
               </Button>
@@ -804,8 +827,8 @@
                 <table class="w-full">
                   <thead>
                     <tr class="border-b border-slate-200 dark:border-zinc-700">
-                      <th class="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-slate-400 dark:text-zinc-500">IP Address</th>
-                      <th class="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-slate-400 dark:text-zinc-500">Jail</th>
+                      <th class="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-slate-400 dark:text-zinc-500">IP / Range</th>
+                      <th class="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-slate-400 dark:text-zinc-500">Source</th>
                       <th class="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-slate-400 dark:text-zinc-500">Reason</th>
                       <th class="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-slate-400 dark:text-zinc-500">Blocked</th>
                       <th class="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-slate-400 dark:text-zinc-500">Expires</th>
@@ -816,7 +839,17 @@
                     {#each blockedIPs as blocked}
                       <tr class="group hover:bg-slate-50 dark:hover:bg-zinc-800/50 transition-colors">
                         <td class="px-4 py-3 align-top">
-                          <code class="text-sm font-mono text-slate-900 dark:text-zinc-100">{blocked.ip}</code>
+                          <div class="flex items-center gap-2">
+                            <code class="text-sm font-mono text-slate-900 dark:text-zinc-100">{blocked.ip}</code>
+                            {#if blocked.isRange}
+                              <Badge variant="info" size="sm">Range</Badge>
+                            {/if}
+                          </div>
+                          {#if blocked.escalatedFrom}
+                            <div class="text-xs text-muted-foreground mt-0.5">
+                              Auto-escalated from {blocked.escalatedFrom}
+                            </div>
+                          {/if}
                         </td>
                         <td class="px-4 py-3 align-top">
                           <button
@@ -824,10 +857,10 @@
                             class="inline-flex"
                           >
                             <Badge
-                              variant={blocked.manual ? 'info' : blocked.jailName === 'sshd' ? 'danger' : 'warning'}
+                              variant={blocked.source === 'manual' ? 'info' : blocked.source?.startsWith('jail:') ? (blocked.jailName === 'sshd' ? 'danger' : 'warning') : 'secondary'}
                               size="sm"
                             >
-                              {blocked.jailName || 'manual'}
+                              {blocked.source || blocked.jailName || 'manual'}
                             </Badge>
                           </button>
                         </td>
@@ -1073,6 +1106,12 @@
                           Disabled
                         </span>
                       {/if}
+                      {#if jail.escalateEnabled}
+                        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-purple-500/10 text-purple-600 dark:bg-purple-500/20 dark:text-purple-400" title="Auto-escalates to /24 range block when {jail.escalateThreshold}+ IPs blocked">
+                          <Icon name="trending-up" size={12} />
+                          Auto
+                        </span>
+                      {/if}
                       <button
                         onclick={() => openEditJail(jail)}
                         class="p-1.5 rounded text-slate-400 hover:text-primary hover:bg-primary/10 transition-colors"
@@ -1135,12 +1174,13 @@
 {/if}
 
 <!-- Block IP Modal -->
-<Modal bind:open={showBlockModal} title="Block IP Address" size="sm">
+<Modal bind:open={showBlockModal} title="Block IP or Range" size="sm">
   <div class="space-y-4">
     <Input
-      label="IP Address"
+      label="IP Address or CIDR Range"
       bind:value={blockForm.ip}
-      placeholder="e.g. 192.168.1.100"
+      placeholder="e.g. 192.168.1.100 or 192.168.1.0/24"
+      helperText="Use CIDR notation (e.g., /24) to block an entire range"
     />
     <Input
       label="Reason"
@@ -1162,7 +1202,7 @@
 
   {#snippet footer()}
     <Button onclick={() => showBlockModal = false} variant="secondary">Cancel</Button>
-    <Button onclick={blockIP} variant="destructive" icon="ban">Block IP</Button>
+    <Button onclick={blockIP} variant="destructive" icon="ban">Block</Button>
   {/snippet}
 </Modal>
 
@@ -1311,6 +1351,43 @@
         </select>
       </div>
     </div>
+
+    <!-- Auto-Escalation Settings -->
+    <div class="border-t border-slate-200 dark:border-zinc-700 pt-4 mt-4">
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <label class="kt-label mb-0">Auto-Escalation</label>
+          <p class="text-xs text-muted-foreground">Automatically block entire /24 range when threshold IPs are blocked</p>
+        </div>
+        <label class="relative inline-flex items-center cursor-pointer">
+          <input type="checkbox" bind:checked={jailForm.escalateEnabled} class="sr-only peer">
+          <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-zinc-600 peer-checked:bg-primary"></div>
+        </label>
+      </div>
+
+      {#if jailForm.escalateEnabled}
+        <div class="grid grid-cols-2 gap-4 p-3 bg-slate-50 dark:bg-zinc-800/50 rounded-lg">
+          <Input
+            label="IP Threshold"
+            type="number"
+            bind:value={jailForm.escalateThreshold}
+            min="2"
+            max="20"
+            helperText="Block /24 when this many IPs blocked"
+          />
+          <div>
+            <label class="kt-label">Time Window</label>
+            <select bind:value={jailForm.escalateWindow} class="kt-input w-full">
+              <option value={1800}>30 minutes</option>
+              <option value={3600}>1 hour</option>
+              <option value={7200}>2 hours</option>
+              <option value={14400}>4 hours</option>
+              <option value={86400}>24 hours</option>
+            </select>
+          </div>
+        </div>
+      {/if}
+    </div>
   </div>
 
   {#snippet footer()}
@@ -1346,5 +1423,90 @@
     <Button onclick={deleteJail} variant="destructive" icon="trash">
       Delete Jail
     </Button>
+  {/snippet}
+</Modal>
+
+<!-- Blocklist Import Modal -->
+<Modal bind:open={showImportModal} title="Import Blocklist" size="md">
+  <div class="space-y-5">
+    {#if loadingBlocklists}
+      <div class="flex flex-col items-center justify-center py-8">
+        <div class="w-6 h-6 border-2 border-muted border-t-primary rounded-full animate-spin"></div>
+        <p class="mt-2 text-sm text-muted-foreground">Loading sources...</p>
+      </div>
+    {:else}
+      <!-- Internet Scanners -->
+      <div>
+        <h4 class="text-sm font-medium text-foreground mb-2">Internet Scanners</h4>
+        <p class="text-xs text-muted-foreground mb-3">Block known scanning services like Censys, Shodan</p>
+        <div class="flex flex-wrap gap-2">
+          {#each blocklists.filter(b => b.id === 'censys' || b.id === 'shodan') as source}
+            <Button
+              onclick={() => importBlocklist(source.id)}
+              variant="outline"
+              size="sm"
+              disabled={importingSource === source.id}
+            >
+              {#if importingSource === source.id}
+                <div class="w-3 h-3 border-2 border-muted border-t-primary rounded-full animate-spin mr-1"></div>
+              {/if}
+              {source.name}
+              <span class="text-xs text-muted-foreground ml-1">(~{source.count})</span>
+            </Button>
+          {/each}
+        </div>
+      </div>
+
+      <!-- Threat Intelligence -->
+      <div>
+        <h4 class="text-sm font-medium text-foreground mb-2">Threat Intelligence</h4>
+        <p class="text-xs text-muted-foreground mb-3">IP addresses flagged as malicious by multiple sources</p>
+        <div class="flex flex-wrap gap-2">
+          {#each blocklists.filter(b => b.id.startsWith('ipsum') || b.id.startsWith('firehol')) as source}
+            <Button
+              onclick={() => importBlocklist(source.id)}
+              variant="outline"
+              size="sm"
+              disabled={importingSource === source.id}
+            >
+              {#if importingSource === source.id}
+                <div class="w-3 h-3 border-2 border-muted border-t-primary rounded-full animate-spin mr-1"></div>
+              {/if}
+              {source.name}
+              <span class="text-xs text-muted-foreground ml-1">(~{source.count?.toLocaleString()})</span>
+            </Button>
+          {/each}
+        </div>
+      </div>
+
+      <!-- Custom URL -->
+      <div>
+        <h4 class="text-sm font-medium text-foreground mb-2">Custom URL</h4>
+        <p class="text-xs text-muted-foreground mb-3">Import from any IP/CIDR list URL</p>
+        <div class="flex gap-2">
+          <Input
+            bind:value={customURL}
+            placeholder="https://example.com/blocklist.txt"
+            class="flex-1"
+          />
+          <Button
+            onclick={() => importBlocklist('custom')}
+            variant="outline"
+            size="sm"
+            disabled={!customURL || importingSource === 'custom'}
+          >
+            {#if importingSource === 'custom'}
+              <div class="w-3 h-3 border-2 border-muted border-t-primary rounded-full animate-spin mr-1"></div>
+            {/if}
+            Import
+          </Button>
+        </div>
+        <p class="text-xs text-muted-foreground mt-2">Supports: plain IP lists, CIDR notation, ipsum format, FireHOL netset</p>
+      </div>
+    {/if}
+  </div>
+
+  {#snippet footer()}
+    <Button onclick={() => showImportModal = false} variant="secondary">Close</Button>
   {/snippet}
 </Modal>

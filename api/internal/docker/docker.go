@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -18,10 +19,10 @@ import (
 // validContainerName matches valid Docker container names (alphanumeric, underscore, dash, dot)
 var validContainerName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
 
-// Service handles Docker operations via Unix socket
+// Service handles Docker operations via Unix socket or TCP
 type Service struct {
-	socketPath string
-	client     *http.Client
+	host   string // tcp://host:port or unix:///path
+	client *http.Client
 }
 
 // Container represents a Docker container
@@ -56,19 +57,43 @@ type ContainerStats struct {
 
 // New creates a new Docker service
 func New() *Service {
-	// Create HTTP client that uses Unix socket
-	client := &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				return net.Dial("unix", "/var/run/docker.sock")
+	// Check DOCKER_HOST env var for TCP or Unix socket
+	dockerHost := os.Getenv("DOCKER_HOST")
+	if dockerHost == "" {
+		dockerHost = "unix:///var/run/docker.sock"
+	}
+
+	var client *http.Client
+
+	if strings.HasPrefix(dockerHost, "tcp://") {
+		// TCP connection to docker socket proxy
+		tcpAddr := strings.TrimPrefix(dockerHost, "tcp://")
+		client = &http.Client{
+			Transport: &http.Transport{
+				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+					return net.Dial("tcp", tcpAddr)
+				},
 			},
-		},
-		Timeout: 30 * time.Second,
+			Timeout: 30 * time.Second,
+		}
+		log.Printf("Docker service using TCP: %s", tcpAddr)
+	} else {
+		// Unix socket (default)
+		socketPath := strings.TrimPrefix(dockerHost, "unix://")
+		client = &http.Client{
+			Transport: &http.Transport{
+				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+					return net.Dial("unix", socketPath)
+				},
+			},
+			Timeout: 30 * time.Second,
+		}
+		log.Printf("Docker service using Unix socket: %s", socketPath)
 	}
 
 	return &Service{
-		socketPath: "/var/run/docker.sock",
-		client:     client,
+		host:   dockerHost,
+		client: client,
 	}
 }
 
