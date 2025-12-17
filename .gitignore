@@ -12,8 +12,12 @@ api_data/
 
 # Generated configs from templates
 headscale/config/config.yaml
+headscale/config/acl.json
 traefik/traefik.yml
 traefik/dynamic.yml
+
+# Screenshots
+Capture.PNG
 
 # Node modules
 ui/node_modules/
