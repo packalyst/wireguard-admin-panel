@@ -192,9 +192,9 @@ type Attempt struct {
 type TrafficLog struct {
 	ID        int64     `json:"id"`
 	Timestamp time.Time `json:"timestamp"`
-	ClientIP  string    `json:"clientIP"`
-	DestIP    string    `json:"destIP"`
-	DestPort  int       `json:"destPort"`
+	ClientIP  string    `json:"src_ip"`
+	DestIP    string    `json:"dest_ip"`
+	DestPort  int       `json:"dest_port"`
 	Protocol  string    `json:"protocol"`
 	Domain    string    `json:"domain"`
 }

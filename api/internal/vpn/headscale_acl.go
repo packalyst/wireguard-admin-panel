@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 
 	"api/internal/database"
@@ -56,16 +55,9 @@ func GenerateAndApplyHeadscaleACL() error {
 		return fmt.Errorf("failed to write Headscale ACL: %v", err)
 	}
 
-	// Reload Headscale policy
-	// Note: Headscale reads the policy file on startup and when receiving SIGHUP
-	cmd := exec.Command("pkill", "-HUP", "headscale")
-	if err := cmd.Run(); err != nil {
-		// Try docker approach if direct signal fails
-		cmd = exec.Command("docker", "exec", "headscale", "kill", "-HUP", "1")
-		if err := cmd.Run(); err != nil {
-			log.Printf("Warning: Could not signal Headscale to reload policy: %v", err)
-			// Not a fatal error - the policy will be applied on next restart
-		}
+	// Reload Headscale policy via Docker exec
+	if err := helper.DockerExec("headscale", []string{"kill", "-HUP", "1"}); err != nil {
+		log.Printf("Warning: Could not signal Headscale to reload policy: %v", err)
 	}
 
 	log.Printf("Applied Headscale ACL policy")

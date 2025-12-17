@@ -23,6 +23,7 @@
   let bidirectionalMap = $state({}) // targetId -> boolean
   let aclLoading = $state(false)
   let aclSyncing = $state(false)
+  let hasDNS = $state(false)
 
   let routes = $state([])
   let pollInterval = null
@@ -75,6 +76,7 @@
       selectedVpnClient = data.client
       aclPolicy = data.client.aclPolicy || 'selected'
       allowedClientIds = (data.rules || []).map(r => r.targetClientId)
+      hasDNS = data.hasDNS || false
       // Build bidirectional map from API response
       const biMap = {}
       for (const rule of (data.rules || [])) {
@@ -109,6 +111,17 @@
       toast('Failed to save access rules: ' + e.message, 'error')
     } finally {
       aclLoading = false
+    }
+  }
+
+  async function toggleDNS() {
+    if (!selectedVpnClient) return
+    try {
+      await apiPut(`/api/vpn/clients/${selectedVpnClient.id}/dns`, { enabled: !hasDNS })
+      hasDNS = !hasDNS
+      toast(hasDNS ? 'DNS enabled' : 'DNS disabled', 'success')
+    } catch (e) {
+      toast('Failed to toggle DNS: ' + e.message, 'error')
     }
   }
 
@@ -302,7 +315,10 @@
     aclPolicy = 'selected'
     allowedClientIds = []
     bidirectionalMap = {}
+    hasDNS = false
     showNodeModal = true
+    // Load VPN client for DNS toggle
+    loadVpnClientByIp(node._ip)
   }
 
   // Load VPN client when switching to 'access' tab
@@ -706,6 +722,7 @@
             <Badge variant={selectedNode._type === 'wireguard' ? 'info' : 'primary'} size="sm">{selectedNode._type === 'wireguard' ? 'WG' : 'TS'}</Badge>
             {#if selectedNode._type === 'wireguard' && !selectedNode.enabled}<Badge variant="warning" size="sm">Disabled</Badge>{/if}
             {#if isExitNode}<Badge variant="success" size="sm">Exit</Badge>{/if}
+            <button onclick={toggleDNS} class="kt-badge kt-badge-sm {hasDNS ? 'kt-badge-info' : 'kt-badge-outline kt-badge-secondary'} cursor-pointer" title="Toggle DNS rewrite">DNS</button>
           </div>
         </div>
       </div>

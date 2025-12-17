@@ -80,6 +80,7 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"UpdateACL":     s.handleUpdateACL,
 		"SyncClients":   s.handleSyncClients,
 		"ApplyRules":    s.handleApplyRules,
+		"ToggleDNS":     s.handleToggleDNS,
 		// Router Management
 		"GetRouterStatus": s.handleGetRouterStatus,
 		"SetupRouter":     s.handleSetupRouter,
@@ -168,7 +169,51 @@ func (s *Service) handleGetClient(w http.ResponseWriter, r *http.Request) {
 	router.JSON(w, map[string]interface{}{
 		"client": c,
 		"rules":  rules,
+		"hasDNS": HasClientDNS(c.Name),
 	})
+}
+
+func (s *Service) handleToggleDNS(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/vpn/clients/")
+	parts := strings.Split(path, "/")
+	if len(parts) < 2 {
+		router.JSONError(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+	id, err := strconv.Atoi(parts[0])
+	if err != nil {
+		router.JSONError(w, "invalid client ID", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		router.JSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	db := database.Get()
+	var name, ip string
+	err = db.QueryRow(`SELECT name, ip FROM vpn_clients WHERE id = ?`, id).Scan(&name, &ip)
+	if err != nil {
+		router.JSONError(w, "client not found", http.StatusNotFound)
+		return
+	}
+
+	if req.Enabled {
+		err = AddClientDNS(name, ip)
+	} else {
+		err = RemoveClientDNS(name, ip)
+	}
+
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	router.JSON(w, map[string]bool{"enabled": req.Enabled})
 }
 
 func (s *Service) handleUpdateACL(w http.ResponseWriter, r *http.Request) {

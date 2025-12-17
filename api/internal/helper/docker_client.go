@@ -2,6 +2,8 @@ package helper
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -52,4 +54,45 @@ func NewDockerHTTPClientWithTimeout(timeout time.Duration) *http.Client {
 		Transport: transport,
 		Timeout:   timeout,
 	}
+}
+
+// DockerExec runs a command in a container via Docker API
+func DockerExec(container string, cmd []string) error {
+	client := NewDockerHTTPClientWithTimeout(30 * time.Second)
+
+	cmdJSON, _ := json.Marshal(cmd)
+	execBody := fmt.Sprintf(`{"AttachStdout":true,"AttachStderr":true,"Cmd":%s}`, cmdJSON)
+
+	resp, err := client.Post(
+		fmt.Sprintf("http://localhost/containers/%s/exec", container),
+		"application/json",
+		strings.NewReader(execBody),
+	)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 201 {
+		return fmt.Errorf("exec create failed: status %d", resp.StatusCode)
+	}
+
+	var execCreate struct {
+		Id string `json:"Id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&execCreate); err != nil {
+		return err
+	}
+
+	resp2, err := client.Post(
+		fmt.Sprintf("http://localhost/exec/%s/start", execCreate.Id),
+		"application/json",
+		strings.NewReader(`{"Detach":true}`),
+	)
+	if err != nil {
+		return err
+	}
+	resp2.Body.Close()
+
+	return nil
 }

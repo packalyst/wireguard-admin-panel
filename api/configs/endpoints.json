@@ -189,6 +189,7 @@
         {"path": "/clients", "methods": ["GET"], "handler": "GetClients", "description": "List all VPN clients (WG + HS unified)"},
         {"path": "/clients/{id}", "methods": ["GET"], "handler": "GetClient", "description": "Get client with ACL rules"},
         {"path": "/clients/{id}/acl", "methods": ["PUT"], "handler": "UpdateACL", "description": "Update client ACL policy"},
+        {"path": "/clients/{id}/dns", "methods": ["PUT"], "handler": "ToggleDNS", "description": "Toggle DNS rewrite for client"},
         {"path": "/sync", "methods": ["POST"], "handler": "SyncClients", "description": "Sync clients from WG + Headscale"},
         {"path": "/apply", "methods": ["POST"], "handler": "ApplyRules", "description": "Apply nftables + Headscale ACL"},
         {"path": "/router/status", "methods": ["GET"], "handler": "GetRouterStatus", "description": "Get router status"},

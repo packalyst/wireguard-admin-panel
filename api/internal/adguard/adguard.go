@@ -554,3 +554,49 @@ func newBytesReader(b []byte) io.Reader {
 	return bytes.NewReader(b)
 }
 
+// Rewrite represents a DNS rewrite entry
+type Rewrite struct {
+	Domain string `json:"domain"`
+	Answer string `json:"answer"`
+}
+
+// GetRewrites returns all DNS rewrites
+func GetRewrites() ([]Rewrite, error) {
+	svc := New()
+	resp, err := svc.doRequest("GET", "/control/rewrite/list", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var rewrites []Rewrite
+	if err := json.NewDecoder(resp.Body).Decode(&rewrites); err != nil {
+		return nil, err
+	}
+	return rewrites, nil
+}
+
+// AddRewrite adds a DNS rewrite
+func AddRewrite(domain, answer string) error {
+	svc := New()
+	body, _ := json.Marshal(Rewrite{Domain: domain, Answer: answer})
+	resp, err := svc.doRequest("POST", "/control/rewrite/add", newBytesReader(body))
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
+}
+
+// DeleteRewrite removes a DNS rewrite
+func DeleteRewrite(domain, answer string) error {
+	svc := New()
+	body, _ := json.Marshal(Rewrite{Domain: domain, Answer: answer})
+	resp, err := svc.doRequest("POST", "/control/rewrite/delete", newBytesReader(body))
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
+}
+
