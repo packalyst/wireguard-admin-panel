@@ -283,7 +283,14 @@ func (s *Service) initWireGuard() error {
 	if err := exec.Command("ip", "addr", "flush", "dev", s.config.Interface).Run(); err != nil {
 		log.Printf("Warning: failed to flush addresses: %v", err)
 	}
-	if err := exec.Command("ip", "addr", "add", s.config.ServerIP+"/10", "dev", s.config.Interface).Run(); err != nil {
+	// Extract netmask from IPRange env var (e.g., "100.65.0.0/16" -> "/16")
+	_, ipNet, err := net.ParseCIDR(s.config.IPRange)
+	if err != nil {
+		return fmt.Errorf("invalid IP range %s: %v", s.config.IPRange, err)
+	}
+	ones, _ := ipNet.Mask.Size()
+	serverIPWithMask := fmt.Sprintf("%s/%d", s.config.ServerIP, ones)
+	if err := exec.Command("ip", "addr", "add", serverIPWithMask, "dev", s.config.Interface).Run(); err != nil {
 		return fmt.Errorf("failed to set IP: %v", err)
 	}
 
