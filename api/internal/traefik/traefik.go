@@ -236,12 +236,8 @@ func updateTraefikDashboardAddress(configPath string, enabled bool) error {
 }
 
 func (s *Service) handleLogs(w http.ResponseWriter, r *http.Request) {
-	limit := 100
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if parsed, err := strconv.Atoi(l); err == nil {
-			limit = parsed
-		}
-	}
+	p := router.ParsePagination(r, 100)
+	limit := p.Limit
 
 	file, err := os.Open(s.accessLogPath)
 	if err != nil {

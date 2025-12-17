@@ -12,13 +12,12 @@
     routes: () => import('./RoutesView.svelte'),
     authkeys: () => import('./AuthKeysView.svelte'),
     apikeys: () => import('./ApiKeysView.svelte'),
-    traffic: () => import('./TrafficView.svelte'),
     traefik: () => import('./TraefikView.svelte'),
     adguard: () => import('./AdGuardView.svelte'),
     docker: () => import('./DockerView.svelte'),
+    logs: () => import('./LogsView.svelte'),
     settings: () => import('./SettingsView.svelte'),
-    'traefik-logs': () => import('./TraefikLogsView.svelte'),
-    'adguard-logs': () => import('./AdGuardLogsView.svelte')
+    about: () => import('./AboutView.svelte')
   }
 
   let { onLogout, showAdguardBanner = false, onDismissAdguardBanner } = $props()
@@ -26,12 +25,22 @@
   let sidebarOpen = $state(false)
   let loading = $state(true)
 
+  // Topbar dropdown state
+  let githubDropdownOpen = $state(false)
+  let docsDropdownOpen = $state(false)
+
+  // Close dropdowns when clicking outside
+  function handleClickOutside(e) {
+    if (!e.target.closest('.dropdown-github') && !e.target.closest('.dropdown-docs')) {
+      githubDropdownOpen = false
+      docsDropdownOpen = false
+    }
+  }
+
   // Expand menu only if current view is a child of it
   const headscaleChildren = ['nodes', 'routes', 'users', 'authkeys', 'apikeys']
-  const logsChildren = ['traffic', 'traefik-logs', 'adguard-logs']
   let expandedMenus = $state({
-    headscale: headscaleChildren.includes($currentView),
-    logs: logsChildren.includes($currentView)
+    headscale: headscaleChildren.includes($currentView)
   })
 
   // Stats
@@ -40,20 +49,19 @@
 
   async function loadStats() {
     try {
-      const [nodesRes, wgRes] = await Promise.all([
-        apiGet('/api/hs/nodes'),
-        apiGet('/api/wg/peers')
-      ])
-      const nodes = nodesRes.nodes || []
-      const wgPeers = Array.isArray(wgRes) ? wgRes : (wgRes.peers || [])
-      const allPeers = [...nodes, ...wgPeers]
-      const online = allPeers.filter(n => n.online).length
+      const clients = await apiGet('/api/vpn/clients')
+      const clientList = Array.isArray(clients) ? clients : []
+
+      // Count online from rawData
+      const online = clientList.filter(c => c.rawData?.online).length
+      const hsNodes = clientList.filter(c => c.type === 'headscale').length
+      const wgPeers = clientList.filter(c => c.type === 'wireguard').length
 
       stats = {
         online,
-        offline: allPeers.length - online,
-        hsNodes: nodes.length,
-        wgPeers: wgPeers.length
+        offline: clientList.length - online,
+        hsNodes,
+        wgPeers
       }
     } catch (e) {
       // Silent fail for stats
@@ -88,18 +96,10 @@
     { id: 'adguard', label: 'AdGuard', icon: 'shield-check' },
     { id: 'docker', label: 'Docker', icon: 'box' },
     { id: 'divider2', divider: true },
-    {
-      id: 'logs',
-      label: 'Logs',
-      icon: 'file-text',
-      children: [
-        { id: 'traffic', label: 'Traffic', icon: 'activity' },
-        { id: 'traefik-logs', label: 'Traefik', icon: 'world' },
-        { id: 'adguard-logs', label: 'AdGuard', icon: 'shield-check' },
-      ]
-    },
+    { id: 'logs', label: 'Logs', icon: 'file-text' },
     { id: 'divider3', divider: true },
-    { id: 'settings', label: 'Settings', icon: 'settings' }
+    { id: 'settings', label: 'Settings', icon: 'settings' },
+    { id: 'about', label: 'About', icon: 'info-circle' }
   ]
 
   // Check if current view is a child of a menu
@@ -122,7 +122,7 @@
     loading = true
     // Close all dropdowns when navigating to non-child items
     if (!isChild) {
-      expandedMenus = { headscale: false, logs: false }
+      expandedMenus = { headscale: false }
     }
   }
 
@@ -142,6 +142,8 @@
     return 'Dashboard'
   }
 </script>
+
+<svelte:window onclick={handleClickOutside} />
 
 <!-- Root container -->
 <div class="flex h-screen bg-slate-100 text-slate-900 antialiased dark:bg-zinc-950 dark:text-zinc-100">
@@ -342,25 +344,87 @@
 
         <div class="mx-1 h-5 w-px bg-slate-200 dark:bg-zinc-700"></div>
 
-        <!-- External links -->
-        <a
-          href="https://github.com/juanfont/headscale"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
-          title="GitHub"
-        >
-          <Icon name="brand-github" size={16} />
-        </a>
-        <a
-          href="https://headscale.net/stable/"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
-          title="Documentation"
-        >
-          <Icon name="book" size={16} />
-        </a>
+        <!-- GitHub Dropdown -->
+        <div class="relative dropdown-github">
+          <button
+            onclick={() => { githubDropdownOpen = !githubDropdownOpen; docsDropdownOpen = false }}
+            class="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-300 cursor-pointer"
+            title="GitHub"
+          >
+            <Icon name="brand-github" size={16} />
+          </button>
+          {#if githubDropdownOpen}
+            <div class="absolute right-0 top-full mt-1 w-52 bg-card border border-border rounded-lg shadow-lg py-1 z-50">
+              <a href="https://github.com/packalyst/wireguard-admin-panel" target="_blank" rel="noopener noreferrer"
+                class="flex items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-muted font-medium">
+                <Icon name="brand-github" size={12} class="text-muted-foreground" />
+                WireGuard Admin Panel
+              </a>
+              <div class="border-t border-dashed border-border my-1"></div>
+              <a href="https://github.com/juanfont/headscale" target="_blank" rel="noopener noreferrer"
+                class="flex items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-muted">
+                <Icon name="brand-github" size={12} class="text-muted-foreground" />
+                Headscale
+              </a>
+              <div class="border-t border-dashed border-border my-1"></div>
+              <a href="https://github.com/AdguardTeam/AdGuardHome" target="_blank" rel="noopener noreferrer"
+                class="flex items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-muted">
+                <Icon name="brand-github" size={12} class="text-muted-foreground" />
+                AdGuard Home
+              </a>
+              <div class="border-t border-dashed border-border my-1"></div>
+              <a href="https://github.com/traefik/traefik" target="_blank" rel="noopener noreferrer"
+                class="flex items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-muted">
+                <Icon name="brand-github" size={12} class="text-muted-foreground" />
+                Traefik
+              </a>
+              <div class="border-t border-dashed border-border my-1"></div>
+              <a href="https://github.com/WireGuard" target="_blank" rel="noopener noreferrer"
+                class="flex items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-muted">
+                <Icon name="brand-github" size={12} class="text-muted-foreground" />
+                WireGuard
+              </a>
+            </div>
+          {/if}
+        </div>
+
+        <!-- Documentation Dropdown -->
+        <div class="relative dropdown-docs">
+          <button
+            onclick={() => { docsDropdownOpen = !docsDropdownOpen; githubDropdownOpen = false }}
+            class="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-300 cursor-pointer"
+            title="Documentation"
+          >
+            <Icon name="book" size={16} />
+          </button>
+          {#if docsDropdownOpen}
+            <div class="absolute right-0 top-full mt-1 w-48 bg-card border border-border rounded-lg shadow-lg py-1 z-50">
+              <a href="https://headscale.net/stable/" target="_blank" rel="noopener noreferrer"
+                class="flex items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-muted">
+                <Icon name="book" size={12} class="text-muted-foreground" />
+                Headscale Docs
+              </a>
+              <div class="border-t border-dashed border-border my-1"></div>
+              <a href="https://github.com/AdguardTeam/AdGuardHome/wiki" target="_blank" rel="noopener noreferrer"
+                class="flex items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-muted">
+                <Icon name="book" size={12} class="text-muted-foreground" />
+                AdGuard Home Wiki
+              </a>
+              <div class="border-t border-dashed border-border my-1"></div>
+              <a href="https://doc.traefik.io/traefik/" target="_blank" rel="noopener noreferrer"
+                class="flex items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-muted">
+                <Icon name="book" size={12} class="text-muted-foreground" />
+                Traefik Docs
+              </a>
+              <div class="border-t border-dashed border-border my-1"></div>
+              <a href="https://www.wireguard.com/" target="_blank" rel="noopener noreferrer"
+                class="flex items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-muted">
+                <Icon name="book" size={12} class="text-muted-foreground" />
+                WireGuard Docs
+              </a>
+            </div>
+          {/if}
+        </div>
       </div>
     </header>
 

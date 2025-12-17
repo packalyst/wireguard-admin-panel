@@ -11,6 +11,7 @@
   import LoadingSpinner from '../components/LoadingSpinner.svelte'
   import Input from '../components/Input.svelte'
   import Button from '../components/Button.svelte'
+  import Tabs from '../components/Tabs.svelte'
   import blocklists from '../data/blocklists.json'
 
   let { loading = $bindable(true) } = $props()
@@ -441,23 +442,9 @@
       <StatCard icon="globe" color="warning" value={blockedServices.length} label="Blocked Services" />
     </div>
 
-    <!-- Tabs (like Traefik) -->
+    <!-- Tabs -->
     <div class="bg-card border border-border rounded-lg overflow-hidden">
-      <div class="flex border-b border-border overflow-x-auto">
-        {#each tabs as tab}
-          <button
-            onclick={() => activeTab = tab.id}
-            class="flex items-center gap-2 px-4 py-3 text-sm font-medium whitespace-nowrap transition-colors relative
-              {activeTab === tab.id ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}"
-          >
-            <Icon name={tab.icon} size={16} />
-            {tab.label}
-            {#if activeTab === tab.id}
-              <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-primary"></div>
-            {/if}
-          </button>
-        {/each}
-      </div>
+      <Tabs {tabs} bind:activeTab urlKey="tab" />
 
       <div class="p-5">
         <!-- Overview Tab -->

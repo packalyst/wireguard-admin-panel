@@ -10,6 +10,7 @@
     required = false,
     autocomplete = undefined,
     class: className = '',
+    size = 'sm',
 
     // Label support
     label = undefined,
@@ -38,6 +39,13 @@
     tooltip = undefined,
     ...restProps
   } = $props();
+
+  // Size classes mapping (sm is default)
+  const sizeClasses = {
+    sm: 'kt-input-sm',
+    lg: ''
+  };
+  const sizeClass = sizeClasses[size] || sizeClasses.sm;
 
   // Determine wrapper type
   const hasInputGroup = prefixAddon || suffixAddon || prefixAddonIcon || suffixAddonIcon;
@@ -68,7 +76,7 @@
           {readonly}
           {required}
           {autocomplete}
-          class="kt-input w-full"
+          class="kt-input {sizeClass} w-full"
           {onkeydown}
           {onclick}
           {oninput}
@@ -85,7 +93,7 @@
         {/if}
       </div>
     {:else if hasWrapper}
-      <div class="kt-input {className}" data-kt-tooltip={tooltip}>
+      <div class="kt-input {sizeClass} {className}" data-kt-tooltip={tooltip}>
         {#if prefixIcon}
           <Icon name={prefixIcon} size={14} />
         {/if}
@@ -123,7 +131,7 @@
         {readonly}
         {required}
         {autocomplete}
-        class="kt-input {className}"
+        class="kt-input {sizeClass} {className}"
         data-kt-tooltip={tooltip}
         {onkeydown}
         {onclick}
@@ -156,7 +164,7 @@
         {readonly}
         {required}
         {autocomplete}
-        class="kt-input w-full"
+        class="kt-input {sizeClass} w-full"
         {onkeydown}
         {onclick}
         {oninput}
@@ -173,7 +181,7 @@
       {/if}
     </div>
   {:else if hasWrapper}
-    <div class="kt-input {className}" data-kt-tooltip={tooltip}>
+    <div class="kt-input {sizeClass} {className}" data-kt-tooltip={tooltip}>
       {#if prefixIcon}
         <Icon name={prefixIcon} size={14} />
       {/if}
@@ -211,7 +219,7 @@
       {readonly}
       {required}
       {autocomplete}
-      class="kt-input {className}"
+      class="kt-input {sizeClass} {className}"
       data-kt-tooltip={tooltip}
       {onkeydown}
       {onclick}

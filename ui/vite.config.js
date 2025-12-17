@@ -2,8 +2,14 @@ import { defineConfig } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 import tailwindcss from '@tailwindcss/vite'
 import { visualizer } from 'rollup-plugin-visualizer'
+import path from 'path'
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      $lib: path.resolve('./src/lib')
+    }
+  },
   plugins: [
     svelte(),
     tailwindcss(),

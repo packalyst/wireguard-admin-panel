@@ -1,15 +1,20 @@
 <script>
   import { onMount } from 'svelte'
-  import { theme, toast, apiGet, apiPost, apiPut, generateAdguardCredentials } from '../stores/app.js'
+  import { theme, toast, apiGet, apiPost, apiPut, apiDelete, generateAdguardCredentials } from '../stores/app.js'
   import Icon from '../components/Icon.svelte'
   import Input from '../components/Input.svelte'
   import Button from '../components/Button.svelte'
+  import Badge from '../components/Badge.svelte'
 
   let { loading = $bindable(true) } = $props()
   let savingAdguard = $state(false)
   let savingSession = $state(false)
   let savingTraefik = $state(false)
   let regeneratingKey = $state(false)
+
+  // VPN Router state
+  let routerStatus = $state(null)
+  let routerLoading = $state(false)
 
   // Headscale settings
   let headscaleApiUrl = $state('')  // Internal API URL (readonly)
@@ -279,6 +284,54 @@
     theme.update(t => t === 'dark' ? 'light' : 'dark')
   }
 
+  // VPN Router functions
+  async function loadRouterStatus() {
+    try {
+      routerStatus = await apiGet('/api/vpn/router/status')
+    } catch (e) {
+      routerStatus = { status: 'not_started', message: 'Failed to fetch status' }
+    }
+  }
+
+  async function setupRouter() {
+    routerLoading = true
+    try {
+      await apiPost('/api/vpn/router/setup')
+      toast('VPN Router setup started', 'success')
+      await loadRouterStatus()
+    } catch (e) {
+      toast('Failed to setup router: ' + e.message, 'error')
+    } finally {
+      routerLoading = false
+    }
+  }
+
+  async function restartRouter() {
+    routerLoading = true
+    try {
+      await apiPost('/api/vpn/router/restart')
+      toast('VPN Router restarted', 'success')
+      await loadRouterStatus()
+    } catch (e) {
+      toast('Failed to restart router: ' + e.message, 'error')
+    } finally {
+      routerLoading = false
+    }
+  }
+
+  async function removeRouter() {
+    routerLoading = true
+    try {
+      await apiDelete('/api/vpn/router')
+      toast('VPN Router removed', 'success')
+      await loadRouterStatus()
+    } catch (e) {
+      toast('Failed to remove router: ' + e.message, 'error')
+    } finally {
+      routerLoading = false
+    }
+  }
+
   // Set VPN-only mode
   async function setVPNOnlyMode(mode) {
     vpnOnlyLoading = true
@@ -306,7 +359,10 @@
     toast('Credentials generated', 'success')
   }
 
-  onMount(loadSettings)
+  onMount(() => {
+    loadSettings()
+    loadRouterStatus()
+  })
 </script>
 
 <div class="space-y-4">
@@ -701,6 +757,73 @@
             {/if}
           </Button>
         </div>
+      </div>
+    </div>
+
+    <!-- Cross-Network Router - Full width -->
+    <div class="bg-card border border-border rounded-lg overflow-hidden">
+      <div class="px-4 py-3 border-b border-border bg-muted/30">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <Icon name="route" size={16} class="text-primary" />
+            <h3 class="text-sm font-semibold text-foreground">Cross-Network Router</h3>
+          </div>
+          {#if routerStatus?.status === 'running'}
+            <Badge variant="success" size="sm">Running</Badge>
+          {:else if routerStatus?.status === 'starting'}
+            <Badge variant="warning" size="sm">Starting</Badge>
+          {:else}
+            <Badge variant="muted" size="sm">Disabled</Badge>
+          {/if}
+        </div>
+      </div>
+      <div class="p-4">
+        {#if routerStatus?.status === 'running'}
+          <!-- Running state -->
+          <div class="grid grid-cols-2 gap-3 mb-4">
+            <div class="p-3 bg-muted/50 rounded-lg">
+              <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Router IP</div>
+              <code class="text-sm font-mono text-foreground">{routerStatus.ip || '—'}</code>
+            </div>
+            <div class="p-3 bg-muted/50 rounded-lg">
+              <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Advertised Route</div>
+              <code class="text-sm font-mono text-foreground">{routerStatus.advertisedRoute || '—'}</code>
+            </div>
+          </div>
+          <p class="text-xs text-muted-foreground mb-3">
+            Routing traffic between WireGuard ({routerStatus.wgIPRange || 'N/A'}) and Tailscale/Headscale ({routerStatus.headscaleIPRange || 'N/A'}) networks.
+          </p>
+          <div class="flex gap-2">
+            <Button onclick={restartRouter} size="sm" variant="secondary" icon="refresh" disabled={routerLoading}>
+              {routerLoading ? 'Restarting...' : 'Restart'}
+            </Button>
+            <Button onclick={removeRouter} size="sm" variant="destructive" icon="trash" disabled={routerLoading}>
+              {routerLoading ? 'Removing...' : 'Remove'}
+            </Button>
+          </div>
+        {:else if routerStatus?.status === 'starting'}
+          <!-- Starting state -->
+          <div class="flex items-center gap-3 mb-4 p-3 bg-warning/10 rounded-lg">
+            <div class="w-5 h-5 border-2 border-warning/30 border-t-warning rounded-full animate-spin"></div>
+            <div class="text-sm text-foreground">Router is starting up and connecting to Headscale...</div>
+          </div>
+          <Button onclick={loadRouterStatus} size="sm" variant="secondary" icon="refresh">
+            Check Status
+          </Button>
+        {:else}
+          <!-- Not started state -->
+          <p class="text-xs text-muted-foreground mb-3">
+            Enable cross-network communication between WireGuard clients ({routerStatus?.wgIPRange || 'N/A'}) and Tailscale/Headscale clients ({routerStatus?.headscaleIPRange || 'N/A'}).
+            This creates a Tailscale container that advertises the WireGuard subnet as a route.
+          </p>
+          <div class="p-3 bg-info/10 border border-info/20 rounded-lg text-xs text-muted-foreground mb-4">
+            <strong class="text-foreground">How it works:</strong> A Tailscale container joins your Headscale network and advertises the WireGuard
+            subnet. Traffic between networks flows through this router. Access control rules can be configured per-node.
+          </div>
+          <Button onclick={setupRouter} size="sm" icon="play" disabled={routerLoading}>
+            {routerLoading ? 'Setting up...' : 'Enable Cross-Network Routing'}
+          </Button>
+        {/if}
       </div>
     </div>
 

@@ -1,6 +1,8 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
   import { toast, apiGet, apiPost, apiPut, apiDelete, apiGetText, apiGetBlob } from '../stores/app.js'
+  import { formatDate, timeAgo } from '$lib/utils/format.js'
+  import { copyToClipboard as copyText } from '$lib/utils/clipboard.js'
   import Icon from '../components/Icon.svelte'
   import Badge from '../components/Badge.svelte'
   import Modal from '../components/Modal.svelte'
@@ -10,20 +12,28 @@
 
   let { loading = $bindable(true) } = $props()
 
-  let nodes = $state([])
-  let wgPeers = $state([])
+  // VPN Router state (minimal - for Access tab visibility)
+  let routerRunning = $state(false)
+
+  // ACL state
+  let vpnClients = $state([])
+  let selectedVpnClient = $state(null)
+  let aclPolicy = $state('selected')
+  let aclDirection = $state('bidirectional')
+  let allowedClientIds = $state([])
+  let aclLoading = $state(false)
+  let aclSyncing = $state(false)
+
   let routes = $state([])
   let pollInterval = null
 
   async function loadData() {
     try {
-      const [nodesRes, wgRes, routesRes] = await Promise.all([
-        apiGet('/api/hs/nodes'),
-        apiGet('/api/wg/peers'),
+      const [clientsRes, routesRes] = await Promise.all([
+        apiGet('/api/vpn/clients'),
         apiGet('/api/hs/routes')
       ])
-      nodes = nodesRes.nodes || []
-      wgPeers = Array.isArray(wgRes) ? wgRes : (wgRes.peers || [])
+      vpnClients = Array.isArray(clientsRes) ? clientsRes : []
       routes = routesRes.routes || []
     } catch (e) {
       toast('Failed to load nodes: ' + e.message, 'error')
@@ -32,9 +42,80 @@
     }
   }
 
+  async function checkRouterStatus() {
+    try {
+      const status = await apiGet('/api/vpn/router/status')
+      routerRunning = status?.status === 'running'
+    } catch (e) {
+      routerRunning = false
+    }
+  }
+
+  // ACL functions - sync now happens automatically on loadData via /api/vpn/clients
+  async function syncVpnClients() {
+    aclSyncing = true
+    try {
+      await loadData()
+      toast('VPN clients synced', 'success')
+    } catch (e) {
+      toast('Failed to sync clients: ' + e.message, 'error')
+    } finally {
+      aclSyncing = false
+    }
+  }
+
+  async function loadVpnClientByIp(ip) {
+    if (!ip) return null
+    // Find VPN client that matches this IP
+    const client = vpnClients.find(c => c.ip === ip)
+    if (!client) return null
+
+    try {
+      const data = await apiGet(`/api/vpn/clients/${client.id}`)
+      selectedVpnClient = data.client
+      aclPolicy = data.client.aclPolicy || 'selected'
+      aclDirection = data.client.defaultDirection || 'bidirectional'
+      allowedClientIds = (data.rules || []).map(r => r.targetClientId)
+      return data.client
+    } catch (e) {
+      return null
+    }
+  }
+
+  async function saveAcl() {
+    if (!selectedVpnClient) return
+    aclLoading = true
+    try {
+      await apiPut(`/api/vpn/clients/${selectedVpnClient.id}/acl`, {
+        policy: aclPolicy,
+        defaultDirection: aclDirection,
+        allowedClientIds: allowedClientIds
+      })
+      // Auto-apply rules after saving
+      await apiPost('/api/vpn/apply')
+      toast('Access rules saved and applied', 'success')
+    } catch (e) {
+      toast('Failed to save access rules: ' + e.message, 'error')
+    } finally {
+      aclLoading = false
+    }
+  }
+
+  function toggleAllowedClient(clientId) {
+    if (allowedClientIds.includes(clientId)) {
+      allowedClientIds = allowedClientIds.filter(id => id !== clientId)
+    } else {
+      allowedClientIds = [...allowedClientIds, clientId]
+    }
+  }
+
   onMount(() => {
     loadData()
-    pollInterval = setInterval(loadData, 30000)
+    checkRouterStatus()
+    pollInterval = setInterval(() => {
+      loadData()
+      checkRouterStatus()
+    }, 30000)
   })
 
   onDestroy(() => {
@@ -112,36 +193,45 @@
     }
   })
 
-  // Combine Headscale nodes and WireGuard peers into unified list
-  const allNodes = $derived([
-    ...nodes.map(n => ({
-      ...n,
-      _type: 'tailscale',
-      _displayName: n.givenName || n.name,
-      _ip: n.ipAddresses?.[0],
-      _online: n.online
-    })),
-    ...wgPeers.map(p => ({
-      id: `wg-${p.id}`,
-      _wgId: p.id,
-      _type: 'wireguard',
-      _displayName: p.name,
-      _ip: p.ipAddress,
-      _online: p.online,
-      online: p.online,
-      lastHandshake: p.lastHandshake,
-      name: p.name,
-      givenName: p.name,
-      ipAddresses: [p.ipAddress],
-      createdAt: p.createdAt,
-      lastSeen: p.lastSeen,
-      user: { name: 'WireGuard' },
-      enabled: p.enabled,
-      publicKey: p.publicKey,
-      privateKey: p.privateKey,
-      presharedKey: p.presharedKey
-    }))
-  ])
+  // Build unified node list from vpnClients (which contains rawData with full info)
+  const allNodes = $derived(vpnClients.map(client => {
+    const raw = client.rawData || {}
+
+    if (client.type === 'wireguard') {
+      return {
+        id: `wg-${client.externalId}`,
+        _wgId: client.externalId,
+        _type: 'wireguard',
+        _displayName: client.name,
+        _ip: client.ip,
+        _online: raw.online || false,
+        online: raw.online || false,
+        lastHandshake: raw.lastHandshake,
+        name: client.name,
+        givenName: client.name,
+        ipAddresses: [client.ip],
+        createdAt: raw.createdAt || client.createdAt,
+        lastSeen: raw.lastSeen,
+        user: { name: 'WireGuard' },
+        enabled: raw.enabled !== false,
+        publicKey: raw.publicKey,
+        privateKey: raw.privateKey,
+        presharedKey: raw.presharedKey
+      }
+    } else {
+      // Headscale node
+      return {
+        ...raw,
+        id: client.externalId,
+        _type: 'tailscale',
+        _displayName: raw.givenName || raw.name || client.name,
+        _ip: client.ip,
+        _online: raw.online || false,
+        ipAddresses: raw.ipAddresses || [client.ip],
+        user: raw.user || { name: 'Unknown' }
+      }
+    }
+  }))
 
   const filteredNodes = $derived(allNodes.filter(n => {
     // Status filter
@@ -171,23 +261,6 @@
     : [])
   const isExitNode = $derived(nodeRoutes.some(r => r.prefix === '0.0.0.0/0'))
 
-  function formatDate(dateStr) {
-    if (!dateStr || dateStr.startsWith('0001')) return 'Never'
-    const date = new Date(dateStr)
-    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  }
-
-  function timeAgo(dateStr) {
-    if (!dateStr || dateStr.startsWith('0001')) return 'Never'
-    const date = new Date(dateStr)
-    const now = new Date()
-    const diff = Math.floor((now - date) / 1000)
-    if (diff < 60) return 'just now'
-    if (diff < 3600) return Math.floor(diff / 60) + 'm ago'
-    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago'
-    return Math.floor(diff / 86400) + 'd ago'
-  }
-
   function getDeviceIcon(node) {
     if (node._type === 'wireguard') return 'lock'
     const lower = node.name?.toLowerCase() || ''
@@ -205,8 +278,20 @@
     tunnelMode = 'full'
     newName = node._displayName
     newTags = (node.forcedTags || []).map(t => t.replace('tag:', '')).join(', ')
+    // Reset ACL state
+    selectedVpnClient = null
+    aclPolicy = 'selected'
+    aclDirection = 'bidirectional'
+    allowedClientIds = []
     showNodeModal = true
   }
+
+  // Load VPN client when switching to 'access' tab
+  $effect(() => {
+    if (activeTab === 'access' && selectedNode && !selectedVpnClient) {
+      loadVpnClientByIp(selectedNode._ip)
+    }
+  })
 
   function closeModal() {
     showNodeModal = false
@@ -331,28 +416,9 @@
     }
   }
 
-  function copyToClipboard(text) {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(() => toast('Copied!', 'success')).catch(() => fallbackCopy(text))
-    } else {
-      fallbackCopy(text)
-    }
-  }
-
-  function fallbackCopy(text) {
-    const textarea = document.createElement('textarea')
-    textarea.value = text
-    textarea.style.position = 'fixed'
-    textarea.style.opacity = '0'
-    document.body.appendChild(textarea)
-    textarea.select()
-    try {
-      document.execCommand('copy')
-      toast('Copied!', 'success')
-    } catch (e) {
-      toast('Failed to copy', 'error')
-    }
-    document.body.removeChild(textarea)
+  async function copyToClipboard(text) {
+    const success = await copyText(text)
+    toast(success ? 'Copied!' : 'Failed to copy', success ? 'success' : 'error')
   }
 </script>
 
@@ -397,8 +463,8 @@
 
           <div class="my-2 border-t border-slate-200 dark:border-zinc-700"></div>
           <div class="mb-2 text-[10px] font-medium uppercase text-slate-400 dark:text-zinc-500">Type</div>
-          <span onclick={() => typeFilter = 'tailscale'} class="kt-badge kt-badge-outline {typeFilter === 'tailscale' ? 'kt-badge-info' : 'kt-badge-secondary'} w-full justify-center mb-1 cursor-pointer"><Icon name="cloud" size={12} /> Tailscale ({nodes.length})</span>
-          <span onclick={() => typeFilter = 'wireguard'} class="kt-badge kt-badge-outline {typeFilter === 'wireguard' ? 'kt-badge-success' : 'kt-badge-secondary'} w-full justify-center cursor-pointer"><Icon name="shield" size={12} /> WireGuard ({wgPeers.length})</span>
+          <span onclick={() => typeFilter = 'tailscale'} class="kt-badge kt-badge-outline {typeFilter === 'tailscale' ? 'kt-badge-info' : 'kt-badge-secondary'} w-full justify-center mb-1 cursor-pointer"><Icon name="cloud" size={12} /> Tailscale ({vpnClients.filter(c => c.type === 'headscale').length})</span>
+          <span onclick={() => typeFilter = 'wireguard'} class="kt-badge kt-badge-outline {typeFilter === 'wireguard' ? 'kt-badge-success' : 'kt-badge-secondary'} w-full justify-center cursor-pointer"><Icon name="shield" size={12} /> WireGuard ({vpnClients.filter(c => c.type === 'wireguard').length})</span>
         </div>
       {/if}
     </div>
@@ -437,7 +503,7 @@
       >
         <Icon name="cloud" size={14} />
         Tailscale
-        <span class="kt-badge kt-badge-xs kt-badge-info">{nodes.length}</span>
+        <span class="kt-badge kt-badge-xs kt-badge-info">{vpnClients.filter(c => c.type === 'headscale').length}</span>
       </span>
       <span
         onclick={() => typeFilter = typeFilter === 'wireguard' ? 'all' : 'wireguard'}
@@ -445,7 +511,7 @@
       >
         <Icon name="shield" size={14} />
         WireGuard
-        <span class="kt-badge kt-badge-xs kt-badge-success">{wgPeers.length}</span>
+        <span class="kt-badge kt-badge-xs kt-badge-success">{vpnClients.filter(c => c.type === 'wireguard').length}</span>
       </span>
     </div>
   </Toolbar>
@@ -630,7 +696,7 @@
       <!-- Tabs -->
       <div class="flex border-b border-border px-4 bg-muted/30">
         {#if selectedNode._type === 'wireguard'}
-          {#each [{id:'overview',label:'Overview'},{id:'qr',label:'QR & Config'},{id:'actions',label:'Actions'}] as tab}
+          {#each [{id:'overview',label:'Overview'},{id:'qr',label:'QR & Config'},...(routerRunning ? [{id:'access',label:'Access'}] : []),{id:'actions',label:'Actions'}] as tab}
             <button
               onclick={() => activeTab = tab.id}
               class="px-3 py-2.5 text-xs font-medium border-b-2 -mb-px transition-colors
@@ -638,7 +704,7 @@
             >{tab.label}</button>
           {/each}
         {:else}
-          {#each [{id:'overview',label:'Overview'},{id:'network',label:'Network'},{id:'security',label:'Actions'}] as tab}
+          {#each [{id:'overview',label:'Overview'},{id:'network',label:'Network'},...(routerRunning ? [{id:'access',label:'Access'}] : []),{id:'security',label:'Actions'}] as tab}
             <button
               onclick={() => activeTab = tab.id}
               class="px-3 py-2.5 text-xs font-medium border-b-2 -mb-px transition-colors
@@ -819,6 +885,112 @@
                 <span class="text-muted-foreground text-sm">Failed to load</span>
               {/if}
             </div>
+          </div>
+
+        {:else if activeTab === 'access'}
+          <!-- Access Control Tab -->
+          <div class="space-y-4">
+            {#if !selectedVpnClient}
+              <!-- Not synced yet -->
+              <div class="text-center py-6">
+                <div class="w-12 h-12 rounded-full bg-muted/50 flex items-center justify-center mx-auto mb-3">
+                  <Icon name="shield-lock" size={24} class="text-muted-foreground" />
+                </div>
+                <p class="text-sm text-muted-foreground mb-3">
+                  This node hasn't been synced to the VPN access control system yet.
+                </p>
+                <Button onclick={syncVpnClients} size="sm" icon="refresh" disabled={aclSyncing}>
+                  {aclSyncing ? 'Syncing...' : 'Sync VPN Clients'}
+                </Button>
+              </div>
+            {:else}
+              <!-- Access Policy -->
+              <div>
+                <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Access Policy</div>
+                <div class="grid grid-cols-2 gap-2">
+                  <button
+                    onclick={() => aclPolicy = 'block_all'}
+                    class="p-3 border rounded-lg text-left transition-all {aclPolicy === 'block_all' ? 'border-destructive bg-destructive/10' : 'border-border hover:border-destructive/50'}"
+                  >
+                    <div class="text-sm font-medium text-foreground">Block All</div>
+                    <div class="text-[10px] text-muted-foreground">Isolated</div>
+                  </button>
+                  <button
+                    onclick={() => aclPolicy = 'selected'}
+                    class="p-3 border rounded-lg text-left transition-all {aclPolicy === 'selected' ? 'border-primary bg-primary/10' : 'border-border hover:border-primary/50'}"
+                  >
+                    <div class="text-sm font-medium text-foreground">Selected</div>
+                    <div class="text-[10px] text-muted-foreground">Choose below</div>
+                  </button>
+                  <button
+                    onclick={() => aclPolicy = 'allow_all_future'}
+                    class="p-3 border rounded-lg text-left transition-all col-span-2 {aclPolicy === 'allow_all_future' ? 'border-warning bg-warning/10' : 'border-border hover:border-warning/50'}"
+                  >
+                    <div class="text-sm font-medium text-foreground">Allow All</div>
+                    <div class="text-[10px] text-muted-foreground">Full access to all clients (current + future)</div>
+                  </button>
+                </div>
+              </div>
+
+              {#if aclPolicy === 'selected'}
+                <!-- Direction -->
+                <div>
+                  <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Default Direction</div>
+                  <div class="flex gap-2">
+                    <button
+                      onclick={() => aclDirection = 'bidirectional'}
+                      class="flex-1 p-2 border rounded-lg text-center transition-all {aclDirection === 'bidirectional' ? 'border-primary bg-primary/10' : 'border-border'}"
+                    >
+                      <div class="text-xs font-medium">Bidirectional</div>
+                    </button>
+                    <button
+                      onclick={() => aclDirection = 'outbound_only'}
+                      class="flex-1 p-2 border rounded-lg text-center transition-all {aclDirection === 'outbound_only' ? 'border-primary bg-primary/10' : 'border-border'}"
+                    >
+                      <div class="text-xs font-medium">Outbound Only</div>
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Client Selection -->
+                <div>
+                  <div class="flex items-center justify-between mb-2">
+                    <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Allowed Clients</div>
+                    <span class="text-[10px] text-muted-foreground">{allowedClientIds.length} selected</span>
+                  </div>
+                  <div class="border border-border rounded-lg max-h-48 overflow-y-auto">
+                    {#each vpnClients.filter(c => c.id !== selectedVpnClient?.id) as client}
+                      <button
+                        onclick={() => toggleAllowedClient(client.id)}
+                        class="w-full flex items-center gap-3 p-2.5 text-left border-b border-border last:border-b-0 hover:bg-accent/30 transition-colors"
+                      >
+                        <div class="w-5 h-5 rounded border flex items-center justify-center shrink-0
+                          {allowedClientIds.includes(client.id) ? 'bg-primary border-primary text-white' : 'border-border'}">
+                          {#if allowedClientIds.includes(client.id)}
+                            <Icon name="check" size={12} />
+                          {/if}
+                        </div>
+                        <div class="flex-1 min-w-0">
+                          <div class="text-sm font-medium text-foreground truncate">{client.name}</div>
+                          <div class="text-[10px] text-muted-foreground">{client.ip} • {client.type === 'wireguard' ? 'WG' : 'TS'}</div>
+                        </div>
+                      </button>
+                    {:else}
+                      <div class="p-4 text-center text-sm text-muted-foreground">
+                        No other clients found
+                      </div>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
+
+              <!-- Save Button -->
+              <div class="pt-2">
+                <Button onclick={saveAcl} class="w-full justify-center" disabled={aclLoading}>
+                  {aclLoading ? 'Saving...' : 'Save & Apply Rules'}
+                </Button>
+              </div>
+            {/if}
           </div>
 
         {:else if activeTab === 'actions' || activeTab === 'security'}

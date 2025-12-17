@@ -1,17 +1,16 @@
 package setup
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"api/internal/auth"
+	"api/internal/helper"
 	"api/internal/router"
 	"api/internal/settings"
 )
@@ -90,18 +89,11 @@ func (s *Service) Handlers() router.ServiceHandlers {
 
 // detectHeadscaleURL finds headscale by querying Docker socket
 func detectHeadscaleURL() (string, error) {
-	// Create HTTP client that connects via Unix socket
-	client := &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				return net.Dial("unix", "/var/run/docker.sock")
-			},
-		},
-		Timeout: 5 * time.Second,
-	}
+	// Create HTTP client that connects to Docker (via socket or proxy)
+	client := helper.NewDockerHTTPClientWithTimeout(5 * time.Second)
 
 	// Query Docker API for headscale container
-	resp, err := client.Get("http://localhost/containers/headscale/json")
+	resp, err := client.Get("http://docker/containers/headscale/json")
 	if err != nil {
 		return "", fmt.Errorf("failed to query Docker: %v", err)
 	}
@@ -289,14 +281,7 @@ func getHeadscaleKeyExpiration() (time.Duration, error) {
 
 // dockerExec runs a command in a container via Docker API
 func dockerExec(container string, cmd []string) (string, error) {
-	client := &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				return net.Dial("unix", "/var/run/docker.sock")
-			},
-		},
-		Timeout: 30 * time.Second,
-	}
+	client := helper.NewDockerHTTPClientWithTimeout(30 * time.Second)
 
 	// Build exec create body
 	cmdJSON, _ := json.Marshal(cmd)

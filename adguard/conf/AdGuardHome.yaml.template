@@ -14,7 +14,8 @@ language: en
 theme: light
 dns:
   bind_hosts:
-    - 0.0.0.0
+    - 127.0.0.1
+    - ${WG_SERVER_IP}
   port: ${DNS_PORT}
   anonymize_client_ip: false
   ratelimit: 0

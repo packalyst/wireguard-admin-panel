@@ -3,6 +3,7 @@
   import { toast, apiGet } from '../stores/app.js'
   import Icon from '../components/Icon.svelte'
   import Badge from '../components/Badge.svelte'
+  import Tabs from '../components/Tabs.svelte'
 
   let { loading = $bindable(true) } = $props()
 
@@ -11,6 +12,13 @@
   let middlewares = $state([])
   let overview = $state(null)
   let activeTab = $state('overview')
+
+  const tabs = [
+    { id: 'overview', label: 'Overview', icon: 'layout' },
+    { id: 'routers', label: 'Routers', icon: 'git-branch' },
+    { id: 'services', label: 'Services', icon: 'server' },
+    { id: 'middlewares', label: 'Middlewares', icon: 'shield' }
+  ]
 
   async function loadData() {
     try {
@@ -126,26 +134,7 @@
 
     <!-- Tabs -->
     <div class="bg-card border border-border rounded-lg overflow-hidden">
-      <div class="flex border-b border-border overflow-x-auto">
-        {#each [
-          { id: 'overview', label: 'Overview', icon: 'layout' },
-          { id: 'routers', label: 'Routers', icon: 'git-branch' },
-          { id: 'services', label: 'Services', icon: 'server' },
-          { id: 'middlewares', label: 'Middlewares', icon: 'shield' }
-        ] as tab}
-          <button
-            onclick={() => activeTab = tab.id}
-            class="flex items-center gap-2 px-4 py-3 text-sm font-medium whitespace-nowrap transition-colors relative
-              {activeTab === tab.id ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}"
-          >
-            <Icon name={tab.icon} size={16} />
-            {tab.label}
-            {#if activeTab === tab.id}
-              <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-primary"></div>
-            {/if}
-          </button>
-        {/each}
-      </div>
+      <Tabs {tabs} bind:activeTab urlKey="tab" />
 
       <div class="p-5">
         <!-- Overview Tab -->

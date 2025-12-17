@@ -1,0 +1,101 @@
+package helper
+
+import "time"
+
+// ACL Policy constants
+const (
+	ACLPolicyBlockAll       = "block_all"
+	ACLPolicySelected       = "selected"
+	ACLPolicySnapshotAll    = "snapshot_all"
+	ACLPolicyAllowAllFuture = "allow_all_future"
+)
+
+// ACL Direction constants
+const (
+	ACLDirectionBidirectional = "bidirectional"
+	ACLDirectionOutboundOnly  = "outbound_only"
+	ACLDirectionInboundOnly   = "inbound_only"
+)
+
+// Default ACL values
+const (
+	DefaultACLPolicy    = ACLPolicySelected
+	DefaultACLDirection = ACLDirectionBidirectional
+)
+
+// ValidACLPolicies is the set of valid ACL policy values
+var ValidACLPolicies = map[string]bool{
+	ACLPolicyBlockAll:       true,
+	ACLPolicySelected:       true,
+	ACLPolicySnapshotAll:    true,
+	ACLPolicyAllowAllFuture: true,
+}
+
+// ValidACLDirections is the set of valid ACL direction values
+var ValidACLDirections = map[string]bool{
+	ACLDirectionBidirectional: true,
+	ACLDirectionOutboundOnly:  true,
+	ACLDirectionInboundOnly:   true,
+}
+
+// IsValidACLPolicy checks if a policy value is valid
+func IsValidACLPolicy(policy string) bool {
+	return ValidACLPolicies[policy]
+}
+
+// IsValidACLDirection checks if a direction value is valid
+func IsValidACLDirection(direction string) bool {
+	return ValidACLDirections[direction]
+}
+
+// VPN Router configuration defaults
+const (
+	DefaultRouterName     = "vpn-router"
+	DefaultRouterImage    = "tailscale/tailscale:latest"
+	DefaultRouterDataPath = "/var/lib/tailscale-vpn-router"
+)
+
+// Timeout constants
+const (
+	RouterRegistrationTimeout = 30 * time.Second
+	PreAuthKeyExpiration      = 1 * time.Hour
+	PeerOnlineThreshold       = 3 * time.Minute
+	DockerRequestTimeout      = 60 * time.Second
+)
+
+// Path constants
+const (
+	DefaultNFTablesACLPath  = "/etc/nftables.d/vpn-acl.nft"
+	DefaultHeadscaleACLPath = "/etc/headscale/acl.json"
+	DefaultOutputInterface  = "eth0"
+)
+
+// GetRouterName returns the configured router container name
+func GetRouterName() string {
+	return GetEnvOptional("VPN_ROUTER_NAME", DefaultRouterName)
+}
+
+// GetRouterImage returns the configured router image
+func GetRouterImage() string {
+	return GetEnvOptional("VPN_ROUTER_IMAGE", DefaultRouterImage)
+}
+
+// GetRouterDataPath returns the configured router data path
+func GetRouterDataPath() string {
+	return GetEnvOptional("VPN_ROUTER_DATA", DefaultRouterDataPath)
+}
+
+// GetNFTablesACLPath returns the configured nftables ACL path
+func GetNFTablesACLPath() string {
+	return GetEnvOptional("NFTABLES_ACL_PATH", DefaultNFTablesACLPath)
+}
+
+// GetHeadscaleACLPath returns the configured Headscale ACL path
+func GetHeadscaleACLPath() string {
+	return GetEnvOptional("HEADSCALE_ACL_PATH", DefaultHeadscaleACLPath)
+}
+
+// GetOutputInterface returns the configured output interface for NAT
+func GetOutputInterface() string {
+	return GetEnvOptional("OUTPUT_INTERFACE", DefaultOutputInterface)
+}
