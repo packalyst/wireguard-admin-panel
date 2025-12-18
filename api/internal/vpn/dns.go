@@ -8,9 +8,14 @@ import (
 	"api/internal/helper"
 )
 
-// getVPNDNSSuffix returns the DNS suffix for VPN clients from env
+// getVPNDNSSuffix returns the DNS suffix for VPN clients
+// Uses HEADSCALE_BASE_DOMAIN to match what Tailscale clients query
 func getVPNDNSSuffix() string {
-	return helper.GetEnvOptional("VPN_DNS_SUFFIX", ".vpn")
+	baseDomain := helper.GetEnvOptional("HEADSCALE_BASE_DOMAIN", "")
+	if baseDomain == "" {
+		return ""
+	}
+	return "." + baseDomain
 }
 
 // AddClientDNS adds a DNS rewrite for a VPN client
