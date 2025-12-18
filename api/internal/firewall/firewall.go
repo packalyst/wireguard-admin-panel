@@ -406,10 +406,66 @@ func (s *Service) ApplyRules() error {
 	}
 	rows.Close()
 
-	// Build nftables script
+	// Build nftables script with sets for O(1) lookup
 	script := `#!/usr/sbin/nft -f
 
 table inet firewall {
+    # Blocked IPs set - O(1) lookup instead of O(n) rules
+    set blocked_ips {
+        type ipv4_addr
+        flags interval
+`
+
+	// Add blocked IPs to set
+	if len(blockedIPs) > 0 {
+		script += "        elements = { "
+		for i, ip := range blockedIPs {
+			if i > 0 {
+				script += ", "
+			}
+			script += ip
+		}
+		script += " }\n"
+	}
+
+	script += `    }
+
+    # Allowed TCP ports set
+    set allowed_tcp_ports {
+        type inet_service
+`
+
+	if len(allowedPorts) > 0 {
+		script += "        elements = { "
+		for i, port := range allowedPorts {
+			if i > 0 {
+				script += ", "
+			}
+			script += fmt.Sprintf("%d", port)
+		}
+		script += " }\n"
+	}
+
+	script += `    }
+
+    # Allowed UDP ports set
+    set allowed_udp_ports {
+        type inet_service
+`
+
+	if len(allowedPorts) > 0 {
+		script += "        elements = { "
+		for i, port := range allowedPorts {
+			if i > 0 {
+				script += ", "
+			}
+			script += fmt.Sprintf("%d", port)
+		}
+		script += " }\n"
+	}
+
+	script += `    }
+
     chain input {
         type filter hook input priority 0; policy drop;
 
@@ -423,20 +479,13 @@ table inet firewall {
         ip protocol icmp accept
         ip6 nexthdr icmpv6 accept
 
-`
+        # Drop blocked IPs (single rule, O(1) set lookup)
+        ip saddr @blocked_ips drop
 
-	// Add blocked IPs
-	for _, ip := range blockedIPs {
-		script += fmt.Sprintf("        ip saddr %s drop\n", ip)
-	}
+        # Allow ports (single rule per protocol, O(1) set lookup)
+        tcp dport @allowed_tcp_ports accept
+        udp dport @allowed_udp_ports accept
 
-	// Add allowed ports
-	for _, port := range allowedPorts {
-		script += fmt.Sprintf("        tcp dport %d accept\n", port)
-		script += fmt.Sprintf("        udp dport %d accept\n", port)
-	}
-
-	script += `
         # Log dropped packets
         limit rate 5/minute log prefix "FIREWALL_DROP: " drop
     }
