@@ -575,7 +575,7 @@
 
   // Helpers
   function formatTimeRemaining(expiresAt) {
-    if (!expiresAt) return 'Permanent'
+    if (!expiresAt || expiresAt.startsWith('0001-')) return 'Permanent'
     const expires = new Date(expiresAt)
     const now = new Date()
     const diff = expires - now
