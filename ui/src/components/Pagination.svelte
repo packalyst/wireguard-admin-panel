@@ -1,5 +1,6 @@
 <script>
   import Icon from './Icon.svelte'
+  import Select from './Select.svelte'
 
   let {
     page = $bindable(1),
@@ -11,6 +12,13 @@
 
   const totalPages = $derived(Math.ceil(total / perPage) || 1)
   const offset = $derived((page - 1) * perPage)
+
+  const perPageOptions = [
+    { value: 10, label: '10' },
+    { value: 25, label: '25' },
+    { value: 50, label: '50' },
+    { value: 100, label: '100' }
+  ]
 
   function goToPage(p) {
     if (p < 1 || p > totalPages) return
@@ -54,22 +62,18 @@
 </script>
 
 <div class="kt-datatable-toolbar">
-  <div class="kt-datatable-info">
+  <div class="kt-datatable-info text-[11px]">
     <div class="kt-datatable-length">
       <span>Show</span>
-      <select
-        value={perPage}
+      <Select
+        bind:value={perPage}
+        options={perPageOptions}
         onchange={(e) => changePerPage(parseInt(e.target.value))}
-        class="kt-input kt-input-sm w-16"
-      >
-        <option value={10}>10</option>
-        <option value={25}>25</option>
-        <option value={50}>50</option>
-        <option value={100}>100</option>
-      </select>
+        class="w-14 text-[11px]"
+      />
       <span>entries</span>
     </div>
-    <span class="hidden sm:inline">
+    <span>
       Showing {offset + 1} to {Math.min(offset + perPage, total)} of {total.toLocaleString()} entries
     </span>
   </div>

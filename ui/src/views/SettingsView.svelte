@@ -5,6 +5,8 @@
   import Input from '../components/Input.svelte'
   import Button from '../components/Button.svelte'
   import Badge from '../components/Badge.svelte'
+  import Select from '../components/Select.svelte'
+  import LoadingSpinner from '../components/LoadingSpinner.svelte'
 
   let { loading = $bindable(true) } = $props()
   let savingAdguard = $state(false)
@@ -383,9 +385,7 @@
   </div>
 
   {#if loading}
-    <div class="flex justify-center py-12">
-      <div class="w-8 h-8 border-2 border-muted border-t-primary rounded-full animate-spin"></div>
-    </div>
+    <LoadingSpinner centered size="lg" />
   {:else}
     <!-- Two column grid -->
     <div class="grid gap-4 lg:grid-cols-2">
@@ -549,17 +549,18 @@
           </div>
         </div>
         <div class="p-4 space-y-3">
-          <div>
-            <label for="sessionTimeout" class="block text-xs font-medium text-foreground mb-1">Session Timeout</label>
-            <select id="sessionTimeout" bind:value={sessionTimeout} class="kt-input w-full text-xs">
-              <option value="1">1 hour</option>
-              <option value="8">8 hours</option>
-              <option value="24">24 hours</option>
-              <option value="168">7 days</option>
-              <option value="720">30 days</option>
-            </select>
-            <p class="text-[10px] text-muted-foreground mt-1">How long until you need to login again</p>
-          </div>
+          <Select
+            label="Session Timeout"
+            bind:value={sessionTimeout}
+            options={[
+              { value: '1', label: '1 hour' },
+              { value: '8', label: '8 hours' },
+              { value: '24', label: '24 hours' },
+              { value: '168', label: '7 days' },
+              { value: '720', label: '30 days' }
+            ]}
+            helperText="How long until you need to login again"
+          />
           <div class="pt-2">
             <Button
               onclick={saveSession}
@@ -601,14 +602,18 @@
             </Button>
           </div>
           <div class="border-t border-border pt-3">
-            <label for="itemsPerPage" class="block text-xs font-medium text-foreground mb-1">Items per page</label>
-            <div class="flex items-center gap-2">
-              <select id="itemsPerPage" bind:value={itemsPerPage} class="kt-input flex-1 text-xs">
-                <option value="10">10</option>
-                <option value="25">25</option>
-                <option value="50">50</option>
-                <option value="100">100</option>
-              </select>
+            <div class="flex items-end gap-2">
+              <Select
+                label="Items per page"
+                bind:value={itemsPerPage}
+                options={[
+                  { value: '10', label: '10' },
+                  { value: '25', label: '25' },
+                  { value: '50', label: '50' },
+                  { value: '100', label: '100' }
+                ]}
+                class="flex-1"
+              />
               <Button
                 onclick={saveUISettings}
                 variant="secondary"
@@ -689,16 +694,16 @@
             {#if vpnOnlyLoading}
               <span class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
             {/if}
-            <select
-              class="kt-input text-xs py-1 px-2"
+            <Select
               value={vpnOnlyMode}
+              options={[
+                { value: 'off', label: 'Disabled' },
+                { value: '403', label: '403 Forbidden' },
+                { value: 'silent', label: 'Silent Drop' }
+              ]}
               onchange={(e) => setVPNOnlyMode(e.target.value)}
               disabled={vpnOnlyLoading}
-            >
-              <option value="off">Disabled</option>
-              <option value="403">403 Forbidden</option>
-              <option value="silent">Silent Drop</option>
-            </select>
+            />
           </div>
         </div>
 

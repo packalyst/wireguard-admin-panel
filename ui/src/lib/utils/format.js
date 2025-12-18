@@ -194,3 +194,54 @@ export function isExpiringSoon(date, days = 7) {
   threshold.setDate(threshold.getDate() + days)
   return d > new Date() && d < threshold
 }
+
+/**
+ * Get days until expiry (negative if expired)
+ * @param {string|Date|object} date - Date to check
+ * @returns {number|null} Days until expiry or null if no date
+ */
+export function getDaysUntilExpiry(date) {
+  const d = parseDate(date)
+  if (!d) return null
+  const now = new Date()
+  return Math.ceil((d - now) / (1000 * 60 * 60 * 24))
+}
+
+/**
+ * Format expiry date as relative string (e.g., "Expires in 3 days", "Expired yesterday")
+ * @param {string|Date|object} date - Date to format
+ * @returns {string} Expiry string
+ */
+export function formatExpiryDate(date) {
+  const d = parseDate(date)
+  if (!d) return 'Never'
+
+  const now = new Date()
+  const diffMs = d - now
+  const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24))
+
+  if (diffDays < 0) {
+    const absDays = Math.abs(diffDays)
+    if (absDays === 1) return 'Expired yesterday'
+    if (absDays < 7) return `Expired ${absDays} days ago`
+    if (absDays < 30) return `Expired ${Math.floor(absDays / 7)} weeks ago`
+    return `Expired ${Math.floor(absDays / 30)} months ago`
+  }
+  if (diffDays === 0) return 'Expires today'
+  if (diffDays === 1) return 'Expires tomorrow'
+  if (diffDays < 7) return `Expires in ${diffDays} days`
+  if (diffDays < 30) return `Expires in ${Math.floor(diffDays / 7)} weeks`
+  if (diffDays < 365) return `Expires in ${Math.floor(diffDays / 30)} months`
+  return `Expires in ${Math.floor(diffDays / 365)} years`
+}
+
+/**
+ * Format date to simple locale date string
+ * @param {string|Date|object} date - Date to format
+ * @returns {string} Formatted date or 'Never'
+ */
+export function formatDateShort(date) {
+  const d = parseDate(date)
+  if (!d) return 'Never'
+  return d.toLocaleDateString()
+}

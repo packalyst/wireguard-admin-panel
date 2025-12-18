@@ -552,7 +552,7 @@
   </Toolbar>
 
   <!-- Nodes grid -->
-  <div class="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+  <div class="mt-4 grid-cards">
     {#each filteredNodes as node (node.id)}
       {@const isKeyExpired = node._type === 'tailscale' && node.expiry && !node.expiry.startsWith('0001') && new Date(node.expiry) < new Date()}
       <article
@@ -663,7 +663,7 @@
     {#if filteredNodes.length > 0}
       <article
         onclick={() => { showCreateModal = true; newPeerName = ''; createdPeer = null }}
-        class="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-center text-xs text-slate-500 transition hover:border-slate-400 hover:bg-slate-100 dark:border-zinc-700 dark:bg-zinc-900/70 dark:text-zinc-300 dark:hover:border-zinc-600 dark:hover:bg-zinc-800/70"
+        class="add-item-card"
       >
         <div class="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200/80 text-slate-600 dark:bg-zinc-700 dark:text-zinc-100">
           <Icon name="plus" size={16} />
