@@ -374,19 +374,25 @@ func (s *Service) ApplyRules() error {
 	s.dbMutex.RLock()
 	defer s.dbMutex.RUnlock()
 
-	// Get blocked IPs
-	rows, err := s.db.Query("SELECT ip FROM blocked_ips WHERE expires_at IS NULL OR expires_at > datetime('now')")
+	// Get blocked IPs - separate single IPs from CIDR ranges
+	rows, err := s.db.Query("SELECT ip, is_range FROM blocked_ips WHERE expires_at IS NULL OR expires_at > datetime('now')")
 	if err != nil {
 		return err
 	}
-	var blockedIPs []string
+	var blockedIPs []string   // Single IPs
+	var blockedRanges []string // CIDR ranges
 	for rows.Next() {
 		var ip string
-		if err := rows.Scan(&ip); err != nil {
+		var isRange bool
+		if err := rows.Scan(&ip, &isRange); err != nil {
 			log.Printf("Warning: failed to scan blocked IP: %v", err)
 			continue
 		}
-		blockedIPs = append(blockedIPs, ip)
+		if isRange || strings.Contains(ip, "/") {
+			blockedRanges = append(blockedRanges, ip)
+		} else {
+			blockedIPs = append(blockedIPs, ip)
+		}
 	}
 	rows.Close()
 
@@ -410,16 +416,35 @@ func (s *Service) ApplyRules() error {
 	script := `#!/usr/sbin/nft -f
 
 table inet firewall {
-    # Blocked IPs set - O(1) lookup instead of O(n) rules
+    # Blocked single IPs set
     set blocked_ips {
+        type ipv4_addr
+`
+
+	// Add blocked single IPs to set
+	if len(blockedIPs) > 0 {
+		script += "        elements = { "
+		for i, ip := range blockedIPs {
+			if i > 0 {
+				script += ", "
+			}
+			script += ip
+		}
+		script += " }\n"
+	}
+
+	script += `    }
+
+    # Blocked CIDR ranges set (with interval flag)
+    set blocked_ranges {
         type ipv4_addr
         flags interval
 `
 
-	// Add blocked IPs to set
-	if len(blockedIPs) > 0 {
+	// Add blocked CIDR ranges to set
+	if len(blockedRanges) > 0 {
 		script += "        elements = { "
-		for i, ip := range blockedIPs {
+		for i, ip := range blockedRanges {
 			if i > 0 {
 				script += ", "
 			}
@@ -479,8 +504,9 @@ table inet firewall {
         ip protocol icmp accept
         ip6 nexthdr icmpv6 accept
 
-        # Drop blocked IPs (single rule, O(1) set lookup)
+        # Drop blocked IPs and ranges (O(1) set lookups)
         ip saddr @blocked_ips drop
+        ip saddr @blocked_ranges drop
 
         # Allow ports (single rule per protocol, O(1) set lookup)
         tcp dport @allowed_tcp_ports accept
@@ -519,7 +545,7 @@ table inet firewall {
 		return fmt.Errorf("nft error: %v - %s", err, string(out))
 	}
 
-	log.Printf("Firewall rules applied: %d ports allowed, %d IPs blocked", len(allowedPorts), len(blockedIPs))
+	log.Printf("Firewall rules applied: %d ports, %d IPs blocked, %d ranges blocked", len(allowedPorts), len(blockedIPs), len(blockedRanges))
 	return nil
 }
 
