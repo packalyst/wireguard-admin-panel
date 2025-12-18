@@ -218,57 +218,28 @@ type BlocklistSource struct {
 	Count    int      `json:"count,omitempty"` // Approximate count for display
 }
 
-// Preset blocklist sources
-var blocklistSources = map[string]BlocklistSource{
-	"censys": {
-		ID:   "censys",
-		Name: "Censys Scanner",
-		Type: "static",
-		Ranges: []string{
-			"192.35.168.0/23",
-			"162.142.125.0/24",
-			"74.120.14.0/24",
-			"167.248.133.0/24",
-		},
-		Count: 4,
-	},
-	"shodan": {
-		ID:    "shodan",
-		Name:  "Shodan Scanner",
-		Type:  "url",
-		URL:   "https://gist.githubusercontent.com/jgamblin/2928d45730543fc7ef10cf56e5a980b0/raw/",
-		Count: 31,
-	},
-	"ipsum-high": {
-		ID:       "ipsum-high",
-		Name:     "ipsum (Score 5+)",
-		Type:     "url",
-		URL:      "https://raw.githubusercontent.com/stamparm/ipsum/master/ipsum.txt",
-		MinScore: 5,
-		Count:    2000,
-	},
-	"ipsum-medium": {
-		ID:       "ipsum-medium",
-		Name:     "ipsum (Score 3+)",
-		Type:     "url",
-		URL:      "https://raw.githubusercontent.com/stamparm/ipsum/master/ipsum.txt",
-		MinScore: 3,
-		Count:    10000,
-	},
-	"firehol-l1": {
-		ID:    "firehol-l1",
-		Name:  "FireHOL Level 1",
-		Type:  "url",
-		URL:   "https://iplists.firehol.org/files/firehol_level1.netset",
-		Count: 5000,
-	},
-	"firehol-l2": {
-		ID:    "firehol-l2",
-		Name:  "FireHOL Level 2",
-		Type:  "url",
-		URL:   "https://iplists.firehol.org/files/firehol_level2.netset",
-		Count: 50000,
-	},
+// Blocklist sources loaded from config file
+var blocklistSources map[string]BlocklistSource
+
+func init() {
+	blocklistSources = make(map[string]BlocklistSource)
+	loadBlocklistSources()
+}
+
+func loadBlocklistSources() {
+	configPath := "/app/configs/blocklist-sources.json"
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		log.Printf("Warning: failed to load blocklist sources from %s: %v", configPath, err)
+		return
+	}
+
+	if err := json.Unmarshal(data, &blocklistSources); err != nil {
+		log.Printf("Warning: failed to parse blocklist sources: %v", err)
+		return
+	}
+
+	log.Printf("Loaded %d blocklist sources from config", len(blocklistSources))
 }
 
 // New creates a new firewall service
