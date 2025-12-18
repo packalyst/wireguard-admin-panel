@@ -17,7 +17,8 @@
     { id: 'ports', label: 'Ports', icon: 'lock' },
     { id: 'blocked', label: 'Blocked', icon: 'ban', badge: (status?.blockedIPCount || 0) > 0 ? status?.blockedIPCount : undefined },
     { id: 'attempts', label: 'Activity', icon: 'activity' },
-    { id: 'jails', label: 'Jails', icon: 'shield' }
+    { id: 'jails', label: 'Jails', icon: 'shield' },
+    { id: 'countries', label: 'Countries', icon: 'world' }
   ])
 
   // Data state
@@ -135,6 +136,17 @@
   let loadingBlocklists = $state(false)
   let importingSource = $state(null)
   let customURL = $state('')
+
+  // Country blocking state
+  let availableCountries = $state([])
+  let blockedCountries = $state([])
+  let countryStatus = $state(null)
+  let loadingCountries = $state(false)
+  let blockingCountry = $state(null)
+  let showSchedulerModal = $state(false)
+  let schedulerForm = $state({ enabled: false, hour: 3 })
+  let savingScheduler = $state(false)
+  let refreshingZones = $state(false)
 
   // Load status on mount
   async function loadStatus() {
@@ -308,6 +320,28 @@
     }
   }
 
+  async function loadCountries() {
+    loadingCountries = true
+    try {
+      const [avail, blocked, status] = await Promise.all([
+        apiGet('/api/fw/countries'),
+        apiGet('/api/fw/countries/blocked'),
+        apiGet('/api/fw/countries/status')
+      ])
+      availableCountries = avail || []
+      blockedCountries = blocked || []
+      countryStatus = status || {}
+      schedulerForm = {
+        enabled: status?.autoUpdateEnabled || false,
+        hour: status?.autoUpdateHour ?? 3
+      }
+    } catch (e) {
+      toast('Failed to load countries: ' + e.message, 'error')
+    } finally {
+      loadingCountries = false
+    }
+  }
+
   // Reload specific section
   async function reloadSection(section) {
     if (section === 'ports') {
@@ -321,6 +355,8 @@
     } else if (section === 'jails') {
       jails = []
       await loadJails()
+    } else if (section === 'countries') {
+      await loadCountries()
     }
   }
 
@@ -331,6 +367,7 @@
     else if (activeTab === 'blocked') loadBlocked()
     else if (activeTab === 'attempts') loadAttempts()
     else if (activeTab === 'jails') loadJails()
+    else if (activeTab === 'countries') loadCountries()
   })
 
   // Sorted ports (avoid mutation in template)
@@ -573,9 +610,96 @@
     }
   }
 
+  // Country blocking actions
+  async function blockCountry(code) {
+    blockingCountry = code
+    try {
+      const res = await apiPost('/api/fw/countries/blocked', { countryCode: code, direction: 'inbound' })
+      if (res.warning) {
+        toast(`${res.name} added with warning: ${res.warning}`, 'warning')
+      } else {
+        toast(`${res.name} blocked (${res.rangeCount?.toLocaleString()} ranges)`, 'success')
+      }
+      await loadCountries()
+    } catch (e) {
+      toast('Failed: ' + e.message, 'error')
+    } finally {
+      blockingCountry = null
+    }
+  }
+
+  async function unblockCountry(code) {
+    try {
+      await apiDelete(`/api/fw/countries/${code}`)
+      toast(`Country ${code} unblocked`, 'success')
+      await loadCountries()
+    } catch (e) {
+      toast('Failed: ' + e.message, 'error')
+    }
+  }
+
+  async function toggleCountryDirection(code, currentDirection) {
+    const newDirection = currentDirection === 'inbound' ? 'both' : 'inbound'
+    try {
+      await apiPost('/api/fw/countries/blocked', { countryCode: code, direction: newDirection })
+      toast(`${code} direction changed to ${newDirection}`, 'success')
+      await loadCountries()
+    } catch (e) {
+      toast('Failed: ' + e.message, 'error')
+    }
+  }
+
+  async function saveScheduler() {
+    savingScheduler = true
+    try {
+      await apiPut('/api/fw/countries/scheduler', schedulerForm)
+      toast(`Scheduler ${schedulerForm.enabled ? 'enabled' : 'disabled'}${schedulerForm.enabled ? ` (${schedulerForm.hour}:00)` : ''}`, 'success')
+      showSchedulerModal = false
+      await loadCountries()
+    } catch (e) {
+      toast('Failed: ' + e.message, 'error')
+    } finally {
+      savingScheduler = false
+    }
+  }
+
+  async function refreshZones() {
+    refreshingZones = true
+    try {
+      const res = await apiPost('/api/fw/countries/refresh')
+      toast(`Refreshed ${res.updated} countries${res.errors > 0 ? ` (${res.errors} errors)` : ''}`, res.errors > 0 ? 'warning' : 'success')
+      await loadCountries()
+    } catch (e) {
+      toast('Failed: ' + e.message, 'error')
+    } finally {
+      refreshingZones = false
+    }
+  }
+
+  // Country flag emoji helper
+  function getFlagEmoji(code) {
+    if (!code || code.length !== 2) return ''
+    const codePoints = code.toUpperCase().split('').map(char => 127397 + char.charCodeAt())
+    return String.fromCodePoint(...codePoints)
+  }
+
+  // Get country name from config or blocked list
+  function getCountryName(code) {
+    const blocked = blockedCountries.find(c => c.countryCode === code)
+    if (blocked) return blocked.name
+    const avail = availableCountries.find(c => c.code === code)
+    if (avail) return avail.name
+    return code
+  }
+
+  // Countries not yet blocked
+  const unblockedCountries = $derived(
+    availableCountries.filter(c => !blockedCountries.some(b => b.countryCode === c.code))
+  )
+
   // Helpers
   function formatTimeRemaining(expiresAt) {
-    if (!expiresAt) return 'Permanent'
+    if (!expiresAt || expiresAt.startsWith('0001-')) return 'Permanent'
     const expires = new Date(expiresAt)
     const now = new Date()
     const diff = expires - now
@@ -1167,6 +1291,160 @@
               {/each}
             </div>
           {/if}
+
+        <!-- Countries Tab -->
+        {:else if activeTab === 'countries'}
+          <!-- Status & Toolbar -->
+          <div class="rounded-xl border border-slate-200 bg-slate-50/90 px-4 py-3 mb-4 dark:border-zinc-800 dark:bg-zinc-900/80">
+            <div class="flex flex-wrap items-center gap-3">
+              <div class="flex items-center gap-2">
+                <Icon name="world" size={16} class="text-muted-foreground" />
+                <span class="text-sm text-muted-foreground">
+                  {countryStatus?.blockedCount || 0} countries blocked
+                  {#if countryStatus?.totalRanges > 0}
+                    <span class="text-xs text-slate-400 dark:text-zinc-500">
+                      ({countryStatus.totalRanges.toLocaleString()} ranges)
+                    </span>
+                  {/if}
+                </span>
+              </div>
+              {#if countryStatus?.autoUpdateEnabled}
+                <Badge variant="success" size="sm">
+                  <Icon name="clock" size={12} />
+                  Auto-update {countryStatus.autoUpdateHour}:00
+                </Badge>
+              {/if}
+              <div class="ml-auto flex items-center gap-2">
+                <Button
+                  onclick={refreshZones}
+                  variant="outline"
+                  size="sm"
+                  icon="refresh"
+                  disabled={refreshingZones || blockedCountries.length === 0}
+                >
+                  {refreshingZones ? 'Refreshing...' : 'Refresh Zones'}
+                </Button>
+                <Button
+                  onclick={() => showSchedulerModal = true}
+                  variant="outline"
+                  size="sm"
+                  icon="clock"
+                >
+                  Scheduler
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          {#if loadingCountries}
+            <div class="flex flex-col items-center justify-center py-8">
+              <div class="w-6 h-6 border-2 border-muted border-t-primary rounded-full animate-spin"></div>
+              <p class="mt-2 text-sm text-muted-foreground">Loading countries...</p>
+            </div>
+          {:else}
+            <div class="space-y-6">
+              <!-- Quick Select (unblocked countries) -->
+              {#if unblockedCountries.length > 0}
+                <div>
+                  <h4 class="text-sm font-medium text-foreground mb-3">Quick Block</h4>
+                  <div class="flex flex-wrap gap-2">
+                    {#each unblockedCountries as country}
+                      <button
+                        onclick={() => blockCountry(country.code)}
+                        disabled={blockingCountry === country.code}
+                        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 dark:border-zinc-700 dark:bg-zinc-800 dark:hover:bg-zinc-700 transition-colors disabled:opacity-50"
+                      >
+                        {#if blockingCountry === country.code}
+                          <div class="w-3 h-3 border-2 border-muted border-t-primary rounded-full animate-spin"></div>
+                        {:else}
+                          <span class="text-base">{getFlagEmoji(country.code)}</span>
+                        {/if}
+                        {country.name}
+                      </button>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
+
+              <!-- Currently Blocked Countries -->
+              <div>
+                <h4 class="text-sm font-medium text-foreground mb-3">
+                  Blocked Countries
+                  {#if blockedCountries.length > 0}
+                    <span class="text-xs text-muted-foreground ml-1">({blockedCountries.length})</span>
+                  {/if}
+                </h4>
+                {#if blockedCountries.length > 0}
+                  <div class="rounded-xl border border-slate-200 bg-white overflow-hidden dark:border-zinc-800 dark:bg-zinc-900">
+                    <div class="overflow-x-auto">
+                      <table class="w-full">
+                        <thead>
+                          <tr class="border-b border-slate-200 dark:border-zinc-700">
+                            <th class="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-slate-400 dark:text-zinc-500">Country</th>
+                            <th class="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-slate-400 dark:text-zinc-500">Direction</th>
+                            <th class="px-4 py-3 text-right text-[11px] font-medium uppercase tracking-wider text-slate-400 dark:text-zinc-500">IP Ranges</th>
+                            <th class="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-slate-400 dark:text-zinc-500">Added</th>
+                            <th class="px-4 py-3 w-10"></th>
+                          </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100 dark:divide-zinc-800">
+                          {#each blockedCountries as country}
+                            <tr class="group hover:bg-slate-50 dark:hover:bg-zinc-800/50 transition-colors">
+                              <td class="px-4 py-3 align-middle">
+                                <div class="flex items-center gap-2">
+                                  <span class="text-xl">{getFlagEmoji(country.countryCode)}</span>
+                                  <div>
+                                    <div class="font-medium text-slate-900 dark:text-zinc-100">{country.name}</div>
+                                    <div class="text-xs text-slate-500 dark:text-zinc-500">{country.countryCode}</div>
+                                  </div>
+                                </div>
+                              </td>
+                              <td class="px-4 py-3 align-middle">
+                                <button
+                                  onclick={() => toggleCountryDirection(country.countryCode, country.direction || 'inbound')}
+                                  class="cursor-pointer hover:opacity-80 transition-opacity"
+                                  title="Click to toggle: inbound only / inbound + outbound"
+                                >
+                                  <Badge variant={country.direction === 'both' ? 'warning' : 'secondary'} size="sm">
+                                    {country.direction === 'both' ? 'in + out' : 'inbound'}
+                                  </Badge>
+                                </button>
+                              </td>
+                              <td class="px-4 py-3 align-middle text-right">
+                                <span class="text-sm font-mono text-slate-600 dark:text-zinc-400">
+                                  {country.rangeCount?.toLocaleString() || '—'}
+                                </span>
+                              </td>
+                              <td class="px-4 py-3 align-middle">
+                                <span class="text-sm text-slate-600 dark:text-zinc-400">{timeAgo(country.createdAt)}</span>
+                              </td>
+                              <td class="px-4 py-3 align-middle">
+                                <button
+                                  onclick={() => unblockCountry(country.countryCode)}
+                                  class="p-1.5 rounded text-slate-400 hover:text-success hover:bg-success/10 transition-colors"
+                                  title="Unblock country"
+                                >
+                                  <Icon name="lock-open" size={14} />
+                                </button>
+                              </td>
+                            </tr>
+                          {/each}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                {:else}
+                  <div class="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 py-12 text-center dark:border-zinc-700 dark:bg-zinc-900/70">
+                    <div class="flex h-12 w-12 items-center justify-center rounded-full bg-slate-200/80 text-slate-500 dark:bg-zinc-700 dark:text-zinc-300">
+                      <Icon name="world" size={24} />
+                    </div>
+                    <h4 class="mt-4 text-base font-medium text-slate-700 dark:text-zinc-200">No countries blocked</h4>
+                    <p class="mt-1 text-sm text-slate-500 dark:text-zinc-400">Use the quick block buttons above to block traffic from specific countries</p>
+                  </div>
+                {/if}
+              </div>
+            </div>
+          {/if}
         {/if}
       </div>
     </div>
@@ -1508,5 +1786,52 @@
 
   {#snippet footer()}
     <Button onclick={() => showImportModal = false} variant="secondary">Close</Button>
+  {/snippet}
+</Modal>
+
+<!-- Country Scheduler Modal -->
+<Modal bind:open={showSchedulerModal} title="Zone Update Scheduler" size="sm">
+  <div class="space-y-4">
+    <p class="text-sm text-muted-foreground">
+      Configure automatic daily updates of country IP zones from ipdeny.com
+    </p>
+
+    <div class="flex items-center justify-between p-3 bg-slate-50 dark:bg-zinc-800/50 rounded-lg">
+      <div>
+        <div class="font-medium text-foreground">Auto-Update</div>
+        <div class="text-xs text-muted-foreground">Update zones daily at scheduled time</div>
+      </div>
+      <label class="relative inline-flex items-center cursor-pointer">
+        <input type="checkbox" bind:checked={schedulerForm.enabled} class="sr-only peer">
+        <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-zinc-600 peer-checked:bg-primary"></div>
+      </label>
+    </div>
+
+    {#if schedulerForm.enabled}
+      <div>
+        <label class="kt-label">Update Time (Hour)</label>
+        <select bind:value={schedulerForm.hour} class="kt-input w-full">
+          {#each Array(24) as _, i}
+            <option value={i}>{i.toString().padStart(2, '0')}:00</option>
+          {/each}
+        </select>
+        <p class="text-xs text-muted-foreground mt-1">Server time. Current: {new Date().toLocaleTimeString()}</p>
+      </div>
+    {/if}
+
+    {#if countryStatus?.lastUpdate}
+      <div class="text-xs text-muted-foreground">
+        Last update: {countryStatus.lastUpdate}
+      </div>
+    {/if}
+  </div>
+
+  {#snippet footer()}
+    <Button onclick={() => showSchedulerModal = false} variant="secondary" disabled={savingScheduler}>
+      Cancel
+    </Button>
+    <Button onclick={saveScheduler} icon="check" disabled={savingScheduler}>
+      {savingScheduler ? 'Saving...' : 'Save'}
+    </Button>
   {/snippet}
 </Modal>
