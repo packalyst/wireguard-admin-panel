@@ -108,6 +108,21 @@ func createSchema(db *sql.DB) error {
 		PRIMARY KEY (port, protocol)
 	);
 
+	CREATE TABLE IF NOT EXISTS blocked_countries (
+		country_code TEXT PRIMARY KEY,
+		name TEXT,
+		direction TEXT DEFAULT 'inbound' CHECK(direction IN ('inbound', 'both')),
+		enabled BOOLEAN DEFAULT 1,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS country_zones_cache (
+		country_code TEXT PRIMARY KEY,
+		zones TEXT,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (country_code) REFERENCES blocked_countries(country_code) ON DELETE CASCADE
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_blocked_ips_ip ON blocked_ips(ip);
 	CREATE INDEX IF NOT EXISTS idx_blocked_ips_expires ON blocked_ips(expires_at);
 	CREATE INDEX IF NOT EXISTS idx_blocked_ips_jail ON blocked_ips(jail_name);

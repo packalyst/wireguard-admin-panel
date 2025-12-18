@@ -109,8 +109,7 @@ func (s *Service) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name string `json:"name"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadRequest)
+	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
 	body, _ := json.Marshal(req)
@@ -180,8 +179,7 @@ func (s *Service) handleUpdateNodeTags(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Tags []string `json:"tags"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadRequest)
+	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
 
@@ -228,8 +226,7 @@ func (s *Service) handleCreatePreAuthKey(w http.ResponseWriter, r *http.Request)
 		Ephemeral  bool   `json:"ephemeral"`
 		Expiration string `json:"expiration"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadRequest)
+	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
 
@@ -242,8 +239,7 @@ func (s *Service) handleExpirePreAuthKey(w http.ResponseWriter, r *http.Request)
 		User string `json:"user"`
 		Key  string `json:"key"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadRequest)
+	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
 	body, _ := json.Marshal(req)
@@ -260,8 +256,7 @@ func (s *Service) handleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Expiration string `json:"expiration"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadRequest)
+	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
 	body, _ := json.Marshal(req)

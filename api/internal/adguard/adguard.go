@@ -156,8 +156,7 @@ func (s *Service) handleSetFiltering(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Enabled bool `json:"enabled"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadRequest)
+	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
 
@@ -183,8 +182,7 @@ func (s *Service) handleAddFilter(w http.ResponseWriter, r *http.Request) {
 		Name string `json:"name"`
 		URL  string `json:"url"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadRequest)
+	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
 
@@ -212,8 +210,7 @@ func (s *Service) handleRemoveFilter(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		URL string `json:"url"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadRequest)
+	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
 
@@ -242,8 +239,7 @@ func (s *Service) handleToggleFilter(w http.ResponseWriter, r *http.Request) {
 		Name    string `json:"name"`
 		Enabled bool   `json:"enabled"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadRequest)
+	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
 
@@ -295,8 +291,7 @@ func (s *Service) handleSetFilteringRules(w http.ResponseWriter, r *http.Request
 	var req struct {
 		Rules []string `json:"rules"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadRequest)
+	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
 
@@ -322,8 +317,7 @@ func (s *Service) handleSetProtection(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Enabled bool `json:"enabled"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadRequest)
+	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
 
@@ -351,8 +345,7 @@ func (s *Service) handleSetBlockedServices(w http.ResponseWriter, r *http.Reques
 	var req struct {
 		IDs []string `json:"ids"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadRequest)
+	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
 
@@ -391,8 +384,7 @@ func (s *Service) handleSetSafeBrowsing(w http.ResponseWriter, r *http.Request) 
 	var req struct {
 		Enabled bool `json:"enabled"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadRequest)
+	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
 
@@ -425,8 +417,7 @@ func (s *Service) handleSetParental(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Enabled bool `json:"enabled"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadRequest)
+	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
 
@@ -459,8 +450,7 @@ func (s *Service) handleSetSafeSearch(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Enabled bool `json:"enabled"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadRequest)
+	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
 
@@ -494,8 +484,7 @@ func (s *Service) handleAddRewrite(w http.ResponseWriter, r *http.Request) {
 		Domain string `json:"domain"`
 		Answer string `json:"answer"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadRequest)
+	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
 
@@ -520,8 +509,7 @@ func (s *Service) handleDeleteRewrite(w http.ResponseWriter, r *http.Request) {
 		Domain string `json:"domain"`
 		Answer string `json:"answer"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadRequest)
+	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
 

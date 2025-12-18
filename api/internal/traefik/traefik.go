@@ -151,8 +151,7 @@ func (s *Service) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		IPAllowEnabled   bool     `json:"ipAllowEnabled"`
 		DashboardEnabled *bool    `json:"dashboardEnabled,omitempty"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadRequest)
+	if !router.DecodeJSONOrError(w, r, &config) {
 		return
 	}
 
@@ -650,8 +649,7 @@ func (s *Service) handleSetVPNOnly(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Mode string `json:"mode"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadRequest)
+	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
 

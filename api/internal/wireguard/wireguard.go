@@ -619,8 +619,7 @@ func (s *Service) handleCreatePeer(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name string `json:"name"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadRequest)
+	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
 
@@ -685,8 +684,7 @@ func (s *Service) handleUpdatePeer(w http.ResponseWriter, r *http.Request) {
 		Name    *string `json:"name"`
 		Enabled *bool   `json:"enabled"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadRequest)
+	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
 

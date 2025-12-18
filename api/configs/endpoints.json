@@ -75,6 +75,13 @@
         {"path": "/blocklists", "methods": ["GET"], "handler": "GetBlocklists", "description": "Get available blocklist sources"},
         {"path": "/blocklists/import", "methods": ["POST"], "handler": "ImportBlocklist", "description": "Import blocklist from source"},
         {"path": "/blocked/source/{source}", "methods": ["DELETE"], "handler": "DeleteBlockedSource", "description": "Delete all IPs from source"},
+        {"path": "/countries", "methods": ["GET"], "handler": "GetCountries", "description": "Get available countries"},
+        {"path": "/countries/blocked", "methods": ["GET"], "handler": "GetBlockedCountries", "description": "Get blocked countries"},
+        {"path": "/countries/blocked", "methods": ["POST"], "handler": "BlockCountry", "description": "Block a country"},
+        {"path": "/countries/{code}", "methods": ["DELETE"], "handler": "UnblockCountry", "description": "Unblock a country"},
+        {"path": "/countries/status", "methods": ["GET"], "handler": "GetCountryStatus", "description": "Get country blocking status"},
+        {"path": "/countries/scheduler", "methods": ["PUT"], "handler": "UpdateCountryScheduler", "description": "Update zone scheduler settings"},
+        {"path": "/countries/refresh", "methods": ["POST"], "handler": "RefreshCountryZones", "description": "Refresh all country zones"},
         {"path": "/health", "methods": ["GET"], "handler": "Health", "description": "Health check"}
       ]
     },

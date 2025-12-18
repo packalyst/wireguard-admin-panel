@@ -1,0 +1,152 @@
+{
+  "CN": {
+    "code": "CN",
+    "name": "China",
+    "flag": "cn"
+  },
+  "RU": {
+    "code": "RU",
+    "name": "Russia",
+    "flag": "ru"
+  },
+  "KP": {
+    "code": "KP",
+    "name": "North Korea",
+    "flag": "kp"
+  },
+  "IR": {
+    "code": "IR",
+    "name": "Iran",
+    "flag": "ir"
+  },
+  "BY": {
+    "code": "BY",
+    "name": "Belarus",
+    "flag": "by"
+  },
+  "VN": {
+    "code": "VN",
+    "name": "Vietnam",
+    "flag": "vn"
+  },
+  "IN": {
+    "code": "IN",
+    "name": "India",
+    "flag": "in"
+  },
+  "PK": {
+    "code": "PK",
+    "name": "Pakistan",
+    "flag": "pk"
+  },
+  "BD": {
+    "code": "BD",
+    "name": "Bangladesh",
+    "flag": "bd"
+  },
+  "ID": {
+    "code": "ID",
+    "name": "Indonesia",
+    "flag": "id"
+  },
+  "BR": {
+    "code": "BR",
+    "name": "Brazil",
+    "flag": "br"
+  },
+  "NG": {
+    "code": "NG",
+    "name": "Nigeria",
+    "flag": "ng"
+  },
+  "UA": {
+    "code": "UA",
+    "name": "Ukraine",
+    "flag": "ua"
+  },
+  "RO": {
+    "code": "RO",
+    "name": "Romania",
+    "flag": "ro"
+  },
+  "TH": {
+    "code": "TH",
+    "name": "Thailand",
+    "flag": "th"
+  },
+  "PH": {
+    "code": "PH",
+    "name": "Philippines",
+    "flag": "ph"
+  },
+  "AR": {
+    "code": "AR",
+    "name": "Argentina",
+    "flag": "ar"
+  },
+  "MX": {
+    "code": "MX",
+    "name": "Mexico",
+    "flag": "mx"
+  },
+  "ZA": {
+    "code": "ZA",
+    "name": "South Africa",
+    "flag": "za"
+  },
+  "EG": {
+    "code": "EG",
+    "name": "Egypt",
+    "flag": "eg"
+  },
+  "VE": {
+    "code": "VE",
+    "name": "Venezuela",
+    "flag": "ve"
+  },
+  "CO": {
+    "code": "CO",
+    "name": "Colombia",
+    "flag": "co"
+  },
+  "KZ": {
+    "code": "KZ",
+    "name": "Kazakhstan",
+    "flag": "kz"
+  },
+  "TW": {
+    "code": "TW",
+    "name": "Taiwan",
+    "flag": "tw"
+  },
+  "HK": {
+    "code": "HK",
+    "name": "Hong Kong",
+    "flag": "hk"
+  },
+  "SG": {
+    "code": "SG",
+    "name": "Singapore",
+    "flag": "sg"
+  },
+  "MY": {
+    "code": "MY",
+    "name": "Malaysia",
+    "flag": "my"
+  },
+  "TR": {
+    "code": "TR",
+    "name": "Turkey",
+    "flag": "tr"
+  },
+  "IL": {
+    "code": "IL",
+    "name": "Israel",
+    "flag": "il"
+  },
+  "SA": {
+    "code": "SA",
+    "name": "Saudi Arabia",
+    "flag": "sa"
+  }
+}
