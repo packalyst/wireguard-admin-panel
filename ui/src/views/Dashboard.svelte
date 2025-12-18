@@ -155,7 +155,7 @@
   >
     <!-- Sidebar header (logo) -->
     <div class="flex h-14 items-center gap-3 border-b border-slate-200 bg-slate-100/90 px-4 dark:border-zinc-800 dark:bg-zinc-900/90">
-      <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-sky-500/10 text-sky-500 dark:bg-sky-500/15 dark:text-sky-300">
+      <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
         <Icon name="network" size={16} />
       </div>
       <div>
@@ -181,7 +181,7 @@
             >
               <span class="flex h-6 w-6 items-center justify-center rounded-md
                 {isChildActive(item)
-                  ? 'bg-sky-500/10 text-sky-500 dark:bg-sky-500/15 dark:text-sky-400'
+                  ? 'bg-primary/10 text-primary'
                   : 'bg-slate-200/70 text-slate-500 dark:bg-zinc-800 dark:text-zinc-400'}">
                 <Icon name={item.icon} size={14} />
               </span>
@@ -240,21 +240,21 @@
       <!-- Stats row -->
       <div class="mb-2.5 grid grid-cols-2 gap-2 text-[11px]">
         <div class="flex items-center gap-2 rounded-md bg-white px-2.5 py-2 dark:bg-zinc-800/80">
-          <span class="h-2 w-2 rounded-full bg-emerald-500"></span>
+          <span class="h-2 w-2 rounded-full bg-success"></span>
           <span class="text-slate-600 dark:text-zinc-300">{stats.online} online</span>
         </div>
         <div class="flex items-center gap-2 rounded-md bg-white px-2.5 py-2 dark:bg-zinc-800/80">
-          <span class="h-2 w-2 rounded-full bg-slate-400 dark:bg-zinc-500"></span>
+          <span class="h-2 w-2 rounded-full bg-muted-foreground"></span>
           <span class="text-slate-500 dark:text-zinc-400">{stats.offline} offline</span>
         </div>
       </div>
       <div class="mb-2.5 grid grid-cols-2 gap-2 text-[11px]">
         <div class="flex items-center gap-2 rounded-md bg-white px-2.5 py-2 dark:bg-zinc-800/80">
-          <Icon name="cloud" size={12} class="text-sky-500" />
+          <Icon name="cloud" size={12} class="text-primary" />
           <span class="text-slate-600 dark:text-zinc-300">{stats.hsNodes} Tailscale</span>
         </div>
         <div class="flex items-center gap-2 rounded-md bg-white px-2.5 py-2 dark:bg-zinc-800/80">
-          <Icon name="shield" size={12} class="text-emerald-500" />
+          <Icon name="shield" size={12} class="text-success" />
           <span class="text-slate-600 dark:text-zinc-300">{stats.wgPeers} WireGuard</span>
         </div>
       </div>
@@ -320,23 +320,17 @@
       </div>
 
       <div class="flex items-center gap-2">
-        <!-- Status indicator -->
-        <div class="hidden items-center gap-2 rounded-full bg-slate-100 px-3 py-1.5 text-[11px] dark:bg-zinc-800 sm:flex">
-          <span class="h-2 w-2 rounded-full bg-emerald-500"></span>
-          <span class="font-medium text-slate-600 dark:text-zinc-300">Connected</span>
-        </div>
-
         <!-- Quick actions -->
         <button
           onclick={() => navigate('nodes')}
-          class="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+          class="custom_btns"
           title="Nodes"
         >
           <Icon name="server" size={16} />
         </button>
         <button
           onclick={() => navigate('settings')}
-          class="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+          class="custom_btns"
           title="Settings"
         >
           <Icon name="settings" size={16} />
@@ -348,40 +342,40 @@
         <div class="relative dropdown-github">
           <button
             onclick={() => { githubDropdownOpen = !githubDropdownOpen; docsDropdownOpen = false }}
-            class="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-300 cursor-pointer"
+            class="custom_btns"
             title="GitHub"
           >
             <Icon name="brand-github" size={16} />
           </button>
           {#if githubDropdownOpen}
-            <div class="absolute right-0 top-full mt-1 w-52 bg-card border border-border rounded-lg shadow-lg py-1 z-50">
+            <div class="kt-dropdown w-52">
               <a href="https://github.com/packalyst/wireguard-admin-panel" target="_blank" rel="noopener noreferrer"
-                class="flex items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-muted font-medium">
-                <Icon name="brand-github" size={12} class="text-muted-foreground" />
+                class="kt-dropdown-item font-medium">
+                <Icon name="brand-github" size={14} class="kt-dropdown-item-icon" />
                 WireGuard Admin Panel
               </a>
-              <div class="border-t border-dashed border-border my-1"></div>
+              <div class="kt-dropdown-divider"></div>
               <a href="https://github.com/juanfont/headscale" target="_blank" rel="noopener noreferrer"
-                class="flex items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-muted">
-                <Icon name="brand-github" size={12} class="text-muted-foreground" />
+                class="kt-dropdown-item">
+                <Icon name="brand-github" size={14} class="kt-dropdown-item-icon" />
                 Headscale
               </a>
-              <div class="border-t border-dashed border-border my-1"></div>
+              <div class="kt-dropdown-divider"></div>
               <a href="https://github.com/AdguardTeam/AdGuardHome" target="_blank" rel="noopener noreferrer"
-                class="flex items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-muted">
-                <Icon name="brand-github" size={12} class="text-muted-foreground" />
+                class="kt-dropdown-item">
+                <Icon name="brand-github" size={14} class="kt-dropdown-item-icon" />
                 AdGuard Home
               </a>
-              <div class="border-t border-dashed border-border my-1"></div>
+              <div class="kt-dropdown-divider"></div>
               <a href="https://github.com/traefik/traefik" target="_blank" rel="noopener noreferrer"
-                class="flex items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-muted">
-                <Icon name="brand-github" size={12} class="text-muted-foreground" />
+                class="kt-dropdown-item">
+                <Icon name="brand-github" size={14} class="kt-dropdown-item-icon" />
                 Traefik
               </a>
-              <div class="border-t border-dashed border-border my-1"></div>
+              <div class="kt-dropdown-divider"></div>
               <a href="https://github.com/WireGuard" target="_blank" rel="noopener noreferrer"
-                class="flex items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-muted">
-                <Icon name="brand-github" size={12} class="text-muted-foreground" />
+                class="kt-dropdown-item">
+                <Icon name="brand-github" size={14} class="kt-dropdown-item-icon" />
                 WireGuard
               </a>
             </div>
@@ -392,34 +386,34 @@
         <div class="relative dropdown-docs">
           <button
             onclick={() => { docsDropdownOpen = !docsDropdownOpen; githubDropdownOpen = false }}
-            class="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-300 cursor-pointer"
+            class="custom_btns"
             title="Documentation"
           >
             <Icon name="book" size={16} />
           </button>
           {#if docsDropdownOpen}
-            <div class="absolute right-0 top-full mt-1 w-48 bg-card border border-border rounded-lg shadow-lg py-1 z-50">
+            <div class="kt-dropdown">
               <a href="https://headscale.net/stable/" target="_blank" rel="noopener noreferrer"
-                class="flex items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-muted">
-                <Icon name="book" size={12} class="text-muted-foreground" />
+                class="kt-dropdown-item">
+                <Icon name="book" size={14} class="kt-dropdown-item-icon" />
                 Headscale Docs
               </a>
-              <div class="border-t border-dashed border-border my-1"></div>
+              <div class="kt-dropdown-divider"></div>
               <a href="https://github.com/AdguardTeam/AdGuardHome/wiki" target="_blank" rel="noopener noreferrer"
-                class="flex items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-muted">
-                <Icon name="book" size={12} class="text-muted-foreground" />
+                class="kt-dropdown-item">
+                <Icon name="book" size={14} class="kt-dropdown-item-icon" />
                 AdGuard Home Wiki
               </a>
-              <div class="border-t border-dashed border-border my-1"></div>
+              <div class="kt-dropdown-divider"></div>
               <a href="https://doc.traefik.io/traefik/" target="_blank" rel="noopener noreferrer"
-                class="flex items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-muted">
-                <Icon name="book" size={12} class="text-muted-foreground" />
+                class="kt-dropdown-item">
+                <Icon name="book" size={14} class="kt-dropdown-item-icon" />
                 Traefik Docs
               </a>
-              <div class="border-t border-dashed border-border my-1"></div>
+              <div class="kt-dropdown-divider"></div>
               <a href="https://www.wireguard.com/" target="_blank" rel="noopener noreferrer"
-                class="flex items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-muted">
-                <Icon name="book" size={12} class="text-muted-foreground" />
+                class="kt-dropdown-item">
+                <Icon name="book" size={14} class="kt-dropdown-item-icon" />
                 WireGuard Docs
               </a>
             </div>

@@ -810,25 +810,78 @@ func (s *Service) handleGetBlockedCountries(w http.ResponseWriter, r *http.Reque
 	router.JSON(w, countries)
 }
 
-// handleBlockCountry blocks a country
+// blockSingleCountry blocks a single country and returns result info
+func (s *Service) blockSingleCountry(countryCode, direction string) (name string, rangeCount int, warning string, err error) {
+	countryCode = strings.ToUpper(countryCode)
+	if len(countryCode) != 2 {
+		return "", 0, "", fmt.Errorf("invalid country code: %s", countryCode)
+	}
+
+	name = countryCode
+	if cfg, exists := countryConfigs[countryCode]; exists {
+		name = cfg.Name
+	}
+
+	if direction == "" {
+		direction = "inbound"
+	}
+
+	var cachedZones string
+	queryErr := s.db.QueryRow("SELECT zones FROM country_zones_cache WHERE country_code = ?", countryCode).Scan(&cachedZones)
+	zonesExist := queryErr == nil && cachedZones != ""
+
+	_, err = s.db.Exec(`
+		INSERT INTO blocked_countries (country_code, name, direction, enabled)
+		VALUES (?, ?, ?, 1)
+		ON CONFLICT(country_code) DO UPDATE SET direction = ?, enabled = 1
+	`, countryCode, name, direction, direction)
+	if err != nil {
+		return name, 0, "", err
+	}
+
+	if !zonesExist {
+		zones, fetchErr := s.fetchCountryZones(countryCode)
+		if fetchErr != nil {
+			log.Printf("Warning: failed to fetch zones for %s: %v", countryCode, fetchErr)
+			return name, 0, "failed to fetch zones: " + fetchErr.Error(), nil
+		}
+
+		_, err = s.db.Exec(`
+			INSERT INTO country_zones_cache (country_code, zones, updated_at)
+			VALUES (?, ?, datetime('now'))
+			ON CONFLICT(country_code) DO UPDATE SET zones = ?, updated_at = datetime('now')
+		`, countryCode, zones, zones)
+		if err != nil {
+			log.Printf("Warning: failed to cache zones for %s: %v", countryCode, err)
+		}
+		rangeCount = strings.Count(zones, "\n") + 1
+		log.Printf("Country blocked: %s (%s), %d ranges (fetched)", countryCode, name, rangeCount)
+	} else {
+		rangeCount = strings.Count(cachedZones, "\n") + 1
+		if direction == "both" {
+			if err := s.updateCountryOutboundSet(cachedZones, true); err != nil {
+				log.Printf("Warning: failed to add to outbound set: %v", err)
+			}
+		} else {
+			if err := s.updateCountryOutboundSet(cachedZones, false); err != nil {
+				log.Printf("Warning: failed to remove from outbound set: %v", err)
+			}
+		}
+		log.Printf("Country direction updated: %s (%s) -> %s (fast path)", countryCode, name, direction)
+	}
+
+	return name, rangeCount, "", nil
+}
+
+// handleBlockCountry blocks one or more countries
 func (s *Service) handleBlockCountry(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		CountryCode string `json:"countryCode"`
-		Direction   string `json:"direction"`
+		CountryCode  string   `json:"countryCode"`
+		CountryCodes []string `json:"countryCodes"`
+		Direction    string   `json:"direction"`
 	}
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
-	}
-
-	req.CountryCode = strings.ToUpper(req.CountryCode)
-	if len(req.CountryCode) != 2 {
-		router.JSONError(w, "invalid country code", http.StatusBadRequest)
-		return
-	}
-
-	name := req.CountryCode
-	if cfg, exists := countryConfigs[req.CountryCode]; exists {
-		name = cfg.Name
 	}
 
 	if req.Direction == "" {
@@ -839,67 +892,75 @@ func (s *Service) handleBlockCountry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var cachedZones string
-	var rangeCount int
-	err := s.db.QueryRow("SELECT zones FROM country_zones_cache WHERE country_code = ?", req.CountryCode).Scan(&cachedZones)
-	zonesExist := err == nil && cachedZones != ""
-
-	_, err = s.db.Exec(`
-		INSERT INTO blocked_countries (country_code, name, direction, enabled)
-		VALUES (?, ?, ?, 1)
-		ON CONFLICT(country_code) DO UPDATE SET direction = ?, enabled = 1
-	`, req.CountryCode, name, req.Direction, req.Direction)
-	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+	// Build list of country codes to block
+	var codes []string
+	if len(req.CountryCodes) > 0 {
+		codes = req.CountryCodes
+	} else if req.CountryCode != "" {
+		codes = []string{req.CountryCode}
+	} else {
+		router.JSONError(w, "countryCode or countryCodes required", http.StatusBadRequest)
 		return
 	}
 
-	if !zonesExist {
-		zones, err := s.fetchCountryZones(req.CountryCode)
+	// Block each country
+	type result struct {
+		CountryCode string `json:"countryCode"`
+		Name        string `json:"name"`
+		RangeCount  int    `json:"rangeCount"`
+		Warning     string `json:"warning,omitempty"`
+		Error       string `json:"error,omitempty"`
+	}
+	results := make([]result, 0, len(codes))
+	successCount := 0
+
+	for _, code := range codes {
+		name, rangeCount, warning, err := s.blockSingleCountry(code, req.Direction)
+		r := result{CountryCode: strings.ToUpper(code), Name: name, RangeCount: rangeCount}
 		if err != nil {
-			log.Printf("Warning: failed to fetch zones for %s: %v", req.CountryCode, err)
-			router.JSON(w, map[string]interface{}{
-				"status":      "added",
-				"countryCode": req.CountryCode,
-				"name":        name,
-				"warning":     "failed to fetch zones: " + err.Error(),
-			})
+			r.Error = err.Error()
+		} else {
+			successCount++
+			if warning != "" {
+				r.Warning = warning
+			}
+		}
+		results = append(results, r)
+	}
+
+	// Apply rules once after all countries are blocked
+	if successCount > 0 {
+		if err := s.ApplyRules(); err != nil {
+			log.Printf("Warning: failed to apply rules after blocking countries: %v", err)
+		}
+	}
+
+	// Return single result for single country (backwards compatibility)
+	if len(codes) == 1 {
+		r := results[0]
+		resp := map[string]interface{}{
+			"status":      "added",
+			"countryCode": r.CountryCode,
+			"name":        r.Name,
+			"rangeCount":  r.RangeCount,
+		}
+		if r.Warning != "" {
+			resp["warning"] = r.Warning
+		}
+		if r.Error != "" {
+			router.JSONError(w, r.Error, http.StatusInternalServerError)
 			return
 		}
-
-		_, err = s.db.Exec(`
-			INSERT INTO country_zones_cache (country_code, zones, updated_at)
-			VALUES (?, ?, datetime('now'))
-			ON CONFLICT(country_code) DO UPDATE SET zones = ?, updated_at = datetime('now')
-		`, req.CountryCode, zones, zones)
-		if err != nil {
-			log.Printf("Warning: failed to cache zones for %s: %v", req.CountryCode, err)
-		}
-		rangeCount = strings.Count(zones, "\n") + 1
-		log.Printf("Country blocked: %s (%s), %d ranges (fetched)", req.CountryCode, name, rangeCount)
-	} else {
-		rangeCount = strings.Count(cachedZones, "\n") + 1
-		if req.Direction == "both" {
-			if err := s.updateCountryOutboundSet(cachedZones, true); err != nil {
-				log.Printf("Warning: failed to add to outbound set: %v", err)
-			}
-		} else {
-			if err := s.updateCountryOutboundSet(cachedZones, false); err != nil {
-				log.Printf("Warning: failed to remove from outbound set: %v", err)
-			}
-		}
-		log.Printf("Country direction updated: %s (%s) -> %s (fast path)", req.CountryCode, name, req.Direction)
+		router.JSON(w, resp)
+		return
 	}
 
-	if err := s.ApplyRules(); err != nil {
-		log.Printf("Warning: failed to apply rules after blocking country: %v", err)
-	}
-
+	// Return bulk result
 	router.JSON(w, map[string]interface{}{
-		"status":      "added",
-		"countryCode": req.CountryCode,
-		"name":        name,
-		"rangeCount":  rangeCount,
+		"status":   "added",
+		"count":    successCount,
+		"total":    len(codes),
+		"results":  results,
 	})
 }
 

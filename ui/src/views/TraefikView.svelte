@@ -4,6 +4,8 @@
   import Icon from '../components/Icon.svelte'
   import Badge from '../components/Badge.svelte'
   import Tabs from '../components/Tabs.svelte'
+  import LoadingSpinner from '../components/LoadingSpinner.svelte'
+  import EmptyState from '../components/EmptyState.svelte'
 
   let { loading = $bindable(true) } = $props()
 
@@ -88,9 +90,7 @@
   </div>
 
   {#if loading}
-    <div class="flex justify-center py-12">
-      <div class="w-8 h-8 border-2 border-muted border-t-primary rounded-full animate-spin"></div>
-    </div>
+    <LoadingSpinner centered size="lg" />
   {:else}
     <!-- Stats Grid -->
     <div class="grid grid-cols-2 md:grid-cols-4 gap-3">

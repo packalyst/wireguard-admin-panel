@@ -230,36 +230,48 @@
       <!-- Traffic Tab -->
       {#if activeTab === 'traffic'}
         <div class="space-y-4">
-          <!-- Filters -->
-          <div class="flex flex-wrap gap-3 items-center">
-            <div class="flex-1 min-w-[200px]">
-              <Input
-                type="text"
-                placeholder="Search IP, hostname..."
-                value={trafficSearchQuery}
-                oninput={handleTrafficSearchInput}
-              />
+          <!-- Toolbar -->
+          <div class="rounded-xl border border-slate-200 bg-slate-50/90 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/80">
+            <div class="flex flex-col sm:flex-row sm:items-center gap-3">
+              <!-- Search & Filter -->
+              <div class="flex flex-col sm:flex-row gap-3 flex-1">
+                <Input
+                  type="search"
+                  value={trafficSearchQuery}
+                  oninput={handleTrafficSearchInput}
+                  placeholder="Search IP, hostname..."
+                  prefixIcon="search"
+                  class="sm:w-64"
+                />
+                {#if trafficClients.length > 0}
+                  <Select
+                    value={trafficClientFilter}
+                    onchange={(e) => { trafficClientFilter = e.target.value; trafficPage = 1; loadTrafficData() }}
+                    class="sm:w-40"
+                  >
+                    <option value="">All clients</option>
+                    {#each trafficClients as client}
+                      <option value={client}>{client}</option>
+                    {/each}
+                  </Select>
+                {/if}
+              </div>
+
+              <!-- Action buttons -->
+              <div class="kt-btn-group self-end sm:self-auto">
+                <Button
+                  variant={trafficAutoRefresh ? 'mono' : 'outline'}
+                  size="sm"
+                  icon={trafficAutoRefresh ? 'player-pause' : 'player-play'}
+                  onclick={toggleTrafficAutoRefresh}
+                >
+                  {trafficAutoRefresh ? 'Pause' : 'Auto'}
+                </Button>
+                <Button variant="outline" size="sm" icon="refresh" onclick={loadTrafficData}>
+                  Refresh
+                </Button>
+              </div>
             </div>
-            <Select
-              bind:value={trafficClientFilter}
-              onchange={() => { trafficPage = 1; loadTrafficData() }}
-            >
-              <option value="">All Clients</option>
-              {#each trafficClients as client}
-                <option value={client}>{client}</option>
-              {/each}
-            </Select>
-            <Button
-              variant={trafficAutoRefresh ? 'mono' : 'secondary'}
-              size="sm"
-              icon={trafficAutoRefresh ? 'player-pause' : 'player-play'}
-              onclick={toggleTrafficAutoRefresh}
-            >
-              {trafficAutoRefresh ? 'Pause' : 'Auto'}
-            </Button>
-            <Button variant="primary" size="sm" icon="refresh" onclick={loadTrafficData}>
-              Refresh
-            </Button>
           </div>
 
           {#if trafficLoading && trafficLogs.length === 0}
@@ -308,17 +320,27 @@
       <!-- Traefik Tab -->
       {:else if activeTab === 'traefik'}
         <div class="space-y-4">
-          <div class="flex flex-wrap gap-3 items-center">
-            <div class="flex-1 min-w-[200px]">
-              <Input
-                type="text"
-                placeholder="Search path, client IP, method..."
-                bind:value={traefikSearch}
-              />
+          <!-- Toolbar -->
+          <div class="rounded-xl border border-slate-200 bg-slate-50/90 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/80">
+            <div class="flex flex-col sm:flex-row sm:items-center gap-3">
+              <!-- Search -->
+              <div class="flex-1">
+                <Input
+                  type="search"
+                  bind:value={traefikSearch}
+                  placeholder="Search path, client IP, method..."
+                  prefixIcon="search"
+                  class="sm:w-64"
+                />
+              </div>
+
+              <!-- Action buttons -->
+              <div class="kt-btn-group self-end sm:self-auto">
+                <Button variant="outline" size="sm" icon="refresh" onclick={loadTraefikLogs}>
+                  Refresh
+                </Button>
+              </div>
             </div>
-            <Button variant="primary" size="sm" icon="refresh" onclick={loadTraefikLogs}>
-              Refresh
-            </Button>
           </div>
 
           {#if traefikLoading && traefikLogs.length === 0}
@@ -370,17 +392,27 @@
       <!-- AdGuard Tab -->
       {:else if activeTab === 'adguard'}
         <div class="space-y-4">
-          <div class="flex flex-wrap gap-3 items-center">
-            <div class="flex-1 min-w-[200px]">
-              <Input
-                type="text"
-                placeholder="Search domains, clients..."
-                bind:value={adguardSearch}
-              />
+          <!-- Toolbar -->
+          <div class="rounded-xl border border-slate-200 bg-slate-50/90 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/80">
+            <div class="flex flex-col sm:flex-row sm:items-center gap-3">
+              <!-- Search -->
+              <div class="flex-1">
+                <Input
+                  type="search"
+                  bind:value={adguardSearch}
+                  placeholder="Search domains, clients..."
+                  prefixIcon="search"
+                  class="sm:w-64"
+                />
+              </div>
+
+              <!-- Action buttons -->
+              <div class="kt-btn-group self-end sm:self-auto">
+                <Button variant="outline" size="sm" icon="refresh" onclick={loadAdGuardLogs}>
+                  Refresh
+                </Button>
+              </div>
             </div>
-            <Button variant="primary" size="sm" icon="refresh" onclick={loadAdGuardLogs}>
-              Refresh
-            </Button>
           </div>
 
           {#if adguardLoading && adguardLogs.length === 0}

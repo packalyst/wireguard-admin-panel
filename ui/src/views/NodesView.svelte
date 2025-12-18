@@ -552,14 +552,14 @@
   </Toolbar>
 
   <!-- Nodes grid -->
-  <div class="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+  <div class="mt-4 grid-cards">
     {#each filteredNodes as node (node.id)}
       {@const isKeyExpired = node._type === 'tailscale' && node.expiry && !node.expiry.startsWith('0001') && new Date(node.expiry) < new Date()}
       <article
         onclick={() => selectNode(node)}
         class="group flex cursor-pointer flex-col rounded-lg border shadow-sm transition hover:shadow-md
           {node._online
-            ? 'border-emerald-200/70 bg-white dark:border-emerald-700/50 dark:bg-zinc-900'
+            ? 'border-success/30 bg-white dark:border-success/20 dark:bg-zinc-900'
             : 'border-slate-200 bg-white dark:border-zinc-800 dark:bg-zinc-900'}"
       >
         <!-- Header: Icon + Name + Status -->
@@ -567,7 +567,7 @@
           <!-- Device icon -->
           <div class="flex h-9 w-9 items-center justify-center rounded-lg shrink-0
             {node._online
-              ? 'bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400'
+              ? 'bg-success/10 text-success'
               : 'bg-slate-100 text-slate-500 dark:bg-zinc-800 dark:text-zinc-400'}">
             <Icon name={getDeviceIcon(node)} size={18} />
           </div>
@@ -585,17 +585,17 @@
           <div class="flex flex-col items-end gap-1 shrink-0">
             <span class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium
               {node._online
-                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300'
+                ? 'bg-success/10 text-success'
                 : 'bg-slate-100 text-slate-500 dark:bg-zinc-800 dark:text-zinc-400'}">
-              <span class="h-1.5 w-1.5 rounded-full {node._online ? 'bg-emerald-500' : 'bg-slate-400 dark:bg-zinc-500'}"></span>
+              <span class="status-dot {node._online ? 'status-dot-success' : 'status-dot-muted'}"></span>
               {node._online ? 'Online' : 'Offline'}
             </span>
             {#if isKeyExpired}
-              <span class="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300">
+              <span class="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-destructive/10 text-destructive">
                 Key Expired
               </span>
             {:else if node._type === 'wireguard' && !node.enabled}
-              <span class="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300">
+              <span class="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-warning/10 text-warning">
                 Disabled
               </span>
             {/if}
@@ -622,15 +622,15 @@
           <!-- Key expiry or enabled status -->
           {#if node._type === 'tailscale' && node.expiry && !node.expiry.startsWith('0001')}
             <div class="flex items-center gap-1.5">
-              <Icon name="key" size={12} class="{isKeyExpired ? 'text-red-500' : 'text-slate-400 dark:text-zinc-600'} shrink-0" />
-              <span class="{isKeyExpired ? 'text-red-600 dark:text-red-400' : 'text-slate-500 dark:text-zinc-500'} truncate">
+              <Icon name="key" size={12} class="{isKeyExpired ? 'text-destructive' : 'text-slate-400 dark:text-zinc-600'} shrink-0" />
+              <span class="{isKeyExpired ? 'text-destructive' : 'text-slate-500 dark:text-zinc-500'} truncate">
                 {isKeyExpired ? 'Expired' : timeAgo(node.expiry)}
               </span>
             </div>
           {:else if node._type === 'wireguard'}
             <div class="flex items-center gap-1.5">
-              <Icon name={node.enabled ? 'check' : 'ban'} size={12} class="{node.enabled ? 'text-emerald-500' : 'text-amber-500'} shrink-0" />
-              <span class="{node.enabled ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}">
+              <Icon name={node.enabled ? 'check' : 'ban'} size={12} class="{node.enabled ? 'text-success' : 'text-warning'} shrink-0" />
+              <span class="{node.enabled ? 'text-success' : 'text-warning'}">
                 {node.enabled ? 'Enabled' : 'Disabled'}
               </span>
             </div>
@@ -663,7 +663,7 @@
     {#if filteredNodes.length > 0}
       <article
         onclick={() => { showCreateModal = true; newPeerName = ''; createdPeer = null }}
-        class="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-center text-xs text-slate-500 transition hover:border-slate-400 hover:bg-slate-100 dark:border-zinc-700 dark:bg-zinc-900/70 dark:text-zinc-300 dark:hover:border-zinc-600 dark:hover:bg-zinc-800/70"
+        class="add-item-card"
       >
         <div class="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200/80 text-slate-600 dark:bg-zinc-700 dark:text-zinc-100">
           <Icon name="plus" size={16} />

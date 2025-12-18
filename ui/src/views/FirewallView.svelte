@@ -7,9 +7,9 @@
   import Modal from '../components/Modal.svelte'
   import Pagination from '../components/Pagination.svelte'
   import Input from '../components/Input.svelte'
+  import Select from '../components/Select.svelte'
   import Button from '../components/Button.svelte'
   import Tabs from '../components/Tabs.svelte'
-
   let { loading = $bindable(true) } = $props()
 
   // Tabs with dynamic badge for blocked count
@@ -142,8 +142,12 @@
   let blockedCountries = $state([])
   let countryStatus = $state(null)
   let loadingCountries = $state(false)
-  let blockingCountry = $state(null)
+  let blockingCountries = $state(false)
+  let selectedCountries = $state([])
+  let countrySearch = $state('')
+  let showBlockCountriesModal = $state(false)
   let showSchedulerModal = $state(false)
+  let showCountryActionsMenu = $state(false)
   let schedulerForm = $state({ enabled: false, hour: 3 })
   let savingScheduler = $state(false)
   let refreshingZones = $state(false)
@@ -320,8 +324,8 @@
     }
   }
 
-  async function loadCountries() {
-    loadingCountries = true
+  async function loadCountries(showLoading = true) {
+    if (showLoading) loadingCountries = true
     try {
       const [avail, blocked, status] = await Promise.all([
         apiGet('/api/fw/countries'),
@@ -611,28 +615,62 @@
   }
 
   // Country blocking actions
-  async function blockCountry(code) {
-    blockingCountry = code
+  async function blockSelectedCountries() {
+    if (selectedCountries.length === 0) return
+
+    blockingCountries = true
     try {
-      const res = await apiPost('/api/fw/countries/blocked', { countryCode: code, direction: 'inbound' })
-      if (res.warning) {
-        toast(`${res.name} added with warning: ${res.warning}`, 'warning')
+      const res = await apiPost('/api/fw/countries/blocked', {
+        countryCodes: selectedCountries,
+        direction: 'inbound'
+      })
+
+      if (selectedCountries.length === 1) {
+        // Single country response
+        if (res.warning) {
+          toast(`${res.name} added with warning: ${res.warning}`, 'warning')
+        } else {
+          toast(`${res.name} blocked (${res.rangeCount?.toLocaleString()} ranges)`, 'success')
+        }
       } else {
-        toast(`${res.name} blocked (${res.rangeCount?.toLocaleString()} ranges)`, 'success')
+        // Bulk response
+        const totalRanges = res.results?.reduce((sum, r) => sum + (r.rangeCount || 0), 0) || 0
+        toast(`${res.count} countries blocked (${totalRanges.toLocaleString()} ranges)`, 'success')
       }
-      await loadCountries()
+
+      selectedCountries = []
+      countrySearch = ''
+      showBlockCountriesModal = false
+      await loadCountries(false)
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
     } finally {
-      blockingCountry = null
+      blockingCountries = false
     }
+  }
+
+  function toggleCountrySelection(code) {
+    if (selectedCountries.includes(code)) {
+      selectedCountries = selectedCountries.filter(c => c !== code)
+    } else {
+      selectedCountries = [...selectedCountries, code]
+    }
+  }
+
+  function selectAllFilteredCountries() {
+    const filtered = filteredUnblockedCountries.map(c => c.code)
+    selectedCountries = [...new Set([...selectedCountries, ...filtered])]
+  }
+
+  function clearCountrySelection() {
+    selectedCountries = []
   }
 
   async function unblockCountry(code) {
     try {
       await apiDelete(`/api/fw/countries/${code}`)
       toast(`Country ${code} unblocked`, 'success')
-      await loadCountries()
+      await loadCountries(false)
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
     }
@@ -643,7 +681,7 @@
     try {
       await apiPost('/api/fw/countries/blocked', { countryCode: code, direction: newDirection })
       toast(`${code} direction changed to ${newDirection}`, 'success')
-      await loadCountries()
+      await loadCountries(false)
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
     }
@@ -697,6 +735,16 @@
     availableCountries.filter(c => !blockedCountries.some(b => b.countryCode === c.code))
   )
 
+  // Filtered unblocked countries (for search)
+  const filteredUnblockedCountries = $derived(
+    countrySearch.trim()
+      ? unblockedCountries.filter(c =>
+          c.name.toLowerCase().includes(countrySearch.toLowerCase()) ||
+          c.code.toLowerCase().includes(countrySearch.toLowerCase())
+        )
+      : unblockedCountries
+  )
+
   // Helpers
   function formatTimeRemaining(expiresAt) {
     if (!expiresAt || expiresAt.startsWith('0001-')) return 'Permanent'
@@ -745,28 +793,28 @@
   </div>
 {:else}
   <div class="space-y-4">
-    <!-- Status Card -->
-    <div class="bg-card border border-border rounded-xl p-4">
-      <div class="flex items-center gap-4">
-        <div class="w-12 h-12 rounded-xl flex items-center justify-center {status?.enabled ? 'bg-success/15 text-success' : 'bg-muted text-muted-foreground'}">
-          <Icon name="shield" size={24} />
+    <!-- Info Card -->
+    <div class="bg-gradient-to-r from-primary/5 to-info/5 border border-primary/20 rounded-lg p-4">
+      <div class="flex items-start gap-3">
+        <div class="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
+          <Icon name="shield" size={18} class="text-primary" />
         </div>
-        <div class="flex-1">
-          <div class="text-base font-semibold text-foreground">
+        <div class="flex-1 min-w-0">
+          <h3 class="text-sm font-medium text-foreground mb-1">
             {status?.enabled ? 'Firewall Active' : 'Firewall Inactive'}
-          </div>
-          <div class="text-sm text-muted-foreground">
-            Policy: {status?.defaultPolicy || 'drop'}
-          </div>
+          </h3>
+          <p class="text-xs text-muted-foreground leading-relaxed">
+            Default policy: <strong>{status?.defaultPolicy || 'drop'}</strong>. Managing ports, blocked IPs, country blocking, and intrusion detection jails.
+          </p>
         </div>
-        <div class="flex items-center gap-6">
-          <div class="flex items-center gap-2 text-sm text-muted-foreground">
-            <Icon name="ban" size={16} />
-            <span><strong class="text-foreground">{status?.blockedIPCount || 0}</strong> blocked</span>
+        <div class="hidden sm:flex items-center gap-6 text-center">
+          <div>
+            <div class="text-lg font-bold text-foreground">{status?.blockedIPCount || 0}</div>
+            <div class="text-[10px] text-muted-foreground">Blocked</div>
           </div>
-          <div class="flex items-center gap-2 text-sm text-muted-foreground">
-            <Icon name="lock" size={16} />
-            <span><strong class="text-foreground">{status?.activeJails || 0}</strong> jails</span>
+          <div>
+            <div class="text-lg font-bold text-foreground">{status?.activeJails || 0}</div>
+            <div class="text-[10px] text-muted-foreground">Jails</div>
           </div>
         </div>
       </div>
@@ -837,7 +885,7 @@
                         </td>
                         <td class="px-4 py-3 align-middle">
                           {#if p.essential}
-                            <span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-md bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400">
+                            <span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-md bg-warning/10 text-warning">
                               <Icon name="shield-check" size={12} />
                               Essential
                             </span>
@@ -864,7 +912,7 @@
                           {#if !p.essential}
                             <button
                               onclick={() => removePort(p.port, p.protocol)}
-                              class="p-1.5 rounded text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                              class="icon-btn-destructive"
                               title="Remove port"
                             >
                               <Icon name="trash" size={14} />
@@ -895,53 +943,49 @@
         {:else if activeTab === 'blocked'}
           <!-- Toolbar -->
           <div class="rounded-xl border border-slate-200 bg-slate-50/90 px-4 py-3 mb-4 dark:border-zinc-800 dark:bg-zinc-900/80">
-            <div class="flex flex-wrap items-center gap-3">
-              <!-- Search -->
-              <Input
-                type="search"
-                value={blockedSearchQuery}
-                oninput={handleBlockedSearchInput}
-                placeholder="Search IP, reason..."
-                prefixIcon="search"
-                class="min-w-[160px] flex-1 sm:flex-none sm:w-64"
-              />
+            <div class="flex flex-col sm:flex-row sm:items-center gap-3">
+              <!-- Search & Filter -->
+              <div class="flex flex-col sm:flex-row gap-3 flex-1">
+                <Input
+                  type="search"
+                  value={blockedSearchQuery}
+                  oninput={handleBlockedSearchInput}
+                  placeholder="Search IP, reason..."
+                  prefixIcon="search"
+                  class="sm:w-64"
+                />
+                {#if blockedJails.length > 0}
+                  <Select
+                    value={blockedJailFilter}
+                    onchange={(e) => setBlockedJailFilter(e.target.value)}
+                    class="sm:w-40"
+                  >
+                    <option value="">All jails</option>
+                    {#each blockedJails as jail}
+                      <option value={jail}>{jail}</option>
+                    {/each}
+                  </Select>
+                {/if}
+              </div>
 
-              <!-- Jail filter -->
-              {#if blockedJails.length > 0}
-                <select
-                  value={blockedJailFilter}
-                  onchange={(e) => setBlockedJailFilter(e.target.value)}
-                  class="kt-input w-full sm:w-auto sm:min-w-[140px]"
-                >
-                  <option value="">All jails</option>
-                  {#each blockedJails as jail}
-                    <option value={jail}>{jail}</option>
-                  {/each}
-                </select>
-              {/if}
-
-              <!-- Clear filters -->
-              {#if blockedSearch || blockedJailFilter}
-                <span
+              <!-- Action buttons -->
+              <div class="kt-btn-group self-end sm:self-auto">
+                <Button
                   onclick={clearBlockedFilters}
-                  class="kt-badge kt-badge-outline kt-badge-secondary cursor-pointer"
-                  role="button"
-                  tabindex="0"
-                  onkeydown={(e) => e.key === 'Enter' && clearBlockedFilters()}
+                  variant="outline"
+                  size="sm"
+                  icon="x"
+                  disabled={!blockedSearch && !blockedJailFilter}
                 >
-                  <Icon name="x" size={14} />
                   Clear
-                </span>
-              {/if}
-
-              <div class="ml-auto"></div>
-
-              <Button onclick={openImportModal} variant="outline" size="sm" icon="download">
-                Import
-              </Button>
-              <Button onclick={() => showBlockModal = true} size="sm" icon="plus">
-                Block IP
-              </Button>
+                </Button>
+                <Button onclick={openImportModal} variant="outline" size="sm" icon="download">
+                  Import
+                </Button>
+                <Button onclick={() => showBlockModal = true} size="sm" icon="plus">
+                  Block IP
+                </Button>
+              </div>
             </div>
           </div>
 
@@ -962,20 +1006,23 @@
                   <tbody class="divide-y divide-slate-100 dark:divide-zinc-800">
                     {#each blockedIPs as blocked}
                       <tr class="group hover:bg-slate-50 dark:hover:bg-zinc-800/50 transition-colors">
-                        <td class="px-4 py-3 align-top">
+                        <td class="p-2 align-middle">
                           <div class="flex items-center gap-2">
-                            <code class="text-sm font-mono text-slate-900 dark:text-zinc-100">{blocked.ip}</code>
+                            <Badge variant="mono" size="sm">
+                              <Icon name={blocked.isRange ? 'network' : 'globe'} size={12} class="mr-1" />
+                              {blocked.ip}
+                            </Badge>
                             {#if blocked.isRange}
                               <Badge variant="info" size="sm">Range</Badge>
                             {/if}
                           </div>
                           {#if blocked.escalatedFrom}
-                            <div class="text-xs text-muted-foreground mt-0.5">
+                            <div class="text-[10px] text-muted-foreground mt-0.5">
                               Auto-escalated from {blocked.escalatedFrom}
                             </div>
                           {/if}
                         </td>
-                        <td class="px-4 py-3 align-top">
+                        <td class="p-2 align-middle">
                           <button
                             onclick={() => setBlockedJailFilter(blocked.jailName)}
                             class="inline-flex"
@@ -988,23 +1035,32 @@
                             </Badge>
                           </button>
                         </td>
-                        <td class="px-4 py-3 align-top text-sm text-slate-600 dark:text-zinc-400 max-w-48 truncate" title={blocked.reason}>
+                        <td class="p-2 align-middle text-[11px] text-slate-400 dark:text-zinc-500 max-w-48 truncate" title={blocked.reason}>
                           {blocked.reason || '-'}
                         </td>
-                        <td class="px-4 py-3 align-top whitespace-nowrap">
-                          <div class="text-sm text-slate-600 dark:text-zinc-400">{timeAgo(blocked.blockedAt)}</div>
+                        <td class="p-2 align-middle whitespace-nowrap">
+                          <Badge variant="secondary" size="sm">
+                            <Icon name="clock" size={12} class="mr-1" />
+                            {timeAgo(blocked.blockedAt)}
+                          </Badge>
                         </td>
-                        <td class="px-4 py-3 align-top whitespace-nowrap">
+                        <td class="p-2 align-middle whitespace-nowrap">
                           {#if blocked.expiresAt}
-                            <span class="text-sm text-warning font-medium">{formatTimeRemaining(blocked.expiresAt)}</span>
+                            <Badge variant="warning" size="sm">
+                              <Icon name="clock" size={12} class="mr-1" />
+                              {formatTimeRemaining(blocked.expiresAt)}
+                            </Badge>
                           {:else}
-                            <span class="text-xs text-destructive uppercase font-semibold">Permanent</span>
+                            <Badge variant="danger" size="sm">
+                              <Icon name="ban" size={12} class="mr-1" />
+                              Permanent
+                            </Badge>
                           {/if}
                         </td>
-                        <td class="px-4 py-3 align-top">
+                        <td class="p-2 align-middle">
                           <button
                             onclick={() => confirmUnblock(blocked)}
-                            class="p-1.5 rounded text-muted-foreground hover:text-success hover:bg-success/10 transition-colors"
+                            class="custom_btns"
                             title="Unblock"
                           >
                             <Icon name="lock-open" size={14} />
@@ -1049,57 +1105,51 @@
         {:else if activeTab === 'attempts'}
           <!-- Toolbar -->
           <div class="rounded-xl border border-slate-200 bg-slate-50/90 px-4 py-3 mb-4 dark:border-zinc-800 dark:bg-zinc-900/80">
-            <div class="flex flex-wrap items-center gap-3">
-              <!-- Search -->
-              <Input
-                type="search"
-                value={attemptsSearchQuery}
-                oninput={handleAttemptsSearchInput}
-                placeholder="Search IP, port..."
-                prefixIcon="search"
-                class="min-w-[160px] flex-1 sm:flex-none sm:w-64"
-              />
+            <div class="flex flex-col sm:flex-row sm:items-center gap-3">
+              <!-- Search & Filter -->
+              <div class="flex flex-col sm:flex-row gap-3 flex-1">
+                <Input
+                  type="search"
+                  value={attemptsSearchQuery}
+                  oninput={handleAttemptsSearchInput}
+                  placeholder="Search IP, port..."
+                  prefixIcon="search"
+                  class="sm:w-64"
+                />
+                {#if attemptsJails.length > 0}
+                  <Select
+                    value={attemptsJailFilter}
+                    onchange={(e) => setAttemptsJailFilter(e.target.value)}
+                    class="sm:w-40"
+                  >
+                    <option value="">All jails</option>
+                    {#each attemptsJails as jail}
+                      <option value={jail}>{jail}</option>
+                    {/each}
+                  </Select>
+                {/if}
+              </div>
 
-              <!-- Jail filter -->
-              {#if attemptsJails.length > 0}
-                <select
-                  value={attemptsJailFilter}
-                  onchange={(e) => setAttemptsJailFilter(e.target.value)}
-                  class="kt-input w-full sm:w-auto sm:min-w-[140px]"
-                >
-                  <option value="">All jails</option>
-                  {#each attemptsJails as jail}
-                    <option value={jail}>{jail}</option>
-                  {/each}
-                </select>
-              {/if}
-
-              <!-- Clear filters -->
-              {#if attemptsSearch || attemptsJailFilter}
-                <span
+              <!-- Action buttons -->
+              <div class="kt-btn-group self-end sm:self-auto">
+                <Button
                   onclick={clearAttemptsFilters}
-                  class="kt-badge kt-badge-outline kt-badge-secondary cursor-pointer"
-                  role="button"
-                  tabindex="0"
-                  onkeydown={(e) => e.key === 'Enter' && clearAttemptsFilters()}
+                  variant="outline"
+                  size="sm"
+                  icon="x"
+                  disabled={!attemptsSearch && !attemptsJailFilter}
                 >
-                  <Icon name="x" size={14} />
                   Clear
-                </span>
-              {/if}
-
-              <div class="ml-auto"></div>
-
-              <span
-                onclick={() => loadAttempts()}
-                class="kt-badge kt-badge-outline kt-badge-secondary cursor-pointer"
-                role="button"
-                tabindex="0"
-                onkeydown={(e) => e.key === 'Enter' && loadAttempts()}
-              >
-                <Icon name="refresh" size={14} />
-                Refresh
-              </span>
+                </Button>
+                <Button
+                  onclick={() => loadAttempts()}
+                  variant="outline"
+                  size="sm"
+                  icon="refresh"
+                >
+                  Refresh
+                </Button>
+              </div>
             </div>
           </div>
 
@@ -1121,6 +1171,7 @@
                       <tr class="group hover:bg-slate-50 dark:hover:bg-zinc-800/50 transition-colors">
                         <td class="px-4 py-3 align-top whitespace-nowrap">
                           <div class="text-sm text-slate-600 dark:text-zinc-400">{timeAgo(attempt.timestamp)}</div>
+                          <div class="text-[10px] text-slate-400 dark:text-zinc-500">{new Date(attempt.timestamp).toLocaleString()}</div>
                         </td>
                         <td class="px-4 py-3 align-top">
                           <code class="text-sm font-mono text-slate-900 dark:text-zinc-100">{attempt.sourceIP}</code>
@@ -1205,87 +1256,63 @@
               </Button>
             </div>
           {:else}
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
               {#each jails as jail}
-                <div class="rounded-xl border border-slate-200 bg-white overflow-hidden dark:border-zinc-800 dark:bg-zinc-900 {!jail.enabled && 'opacity-60'}">
-                  <!-- Header -->
-                  <div class="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-zinc-800">
-                    <div class="flex items-center gap-3">
-                      <div class="flex h-10 w-10 items-center justify-center rounded-lg {jail.enabled ? 'bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400' : 'bg-slate-100 text-slate-400 dark:bg-zinc-800 dark:text-zinc-500'}">
-                        <Icon name={jail.name === 'sshd' ? 'key' : 'shield'} size={20} />
-                      </div>
-                      <div>
-                        <h3 class="font-semibold text-slate-900 dark:text-zinc-100 capitalize">{jail.name}</h3>
-                        <p class="text-xs text-slate-500 dark:text-zinc-500">Port {jail.port || 'all'}</p>
-                      </div>
+                <div class="rounded-lg border border-slate-200 bg-white dark:border-zinc-800 dark:bg-zinc-900 {!jail.enabled && 'opacity-50'}">
+                  <!-- Header row -->
+                  <div class="flex items-center gap-3 px-3 py-2.5 border-b border-slate-100 dark:border-zinc-800">
+                    <div class="flex h-7 w-7 items-center justify-center rounded-md {jail.enabled ? 'bg-success/10 text-success' : 'bg-slate-100 text-slate-400 dark:bg-zinc-800 dark:text-zinc-500'}">
+                      <Icon name={jail.name === 'sshd' ? 'key' : 'shield'} size={14} />
                     </div>
-                    <div class="flex items-center gap-2">
+                    <div class="flex-1 min-w-0">
+                      <h3 class="font-semibold text-sm text-slate-900 dark:text-zinc-100 capitalize truncate">{jail.name}</h3>
+                    </div>
+                    <!-- Status & Actions grouped -->
+                    <div class="flex items-center gap-1">
                       {#if jail.enabled}
-                        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400">
-                          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                          Active
-                        </span>
+                        <Badge variant="success" size="sm">
+                          <span class="w-1 h-1 rounded-full bg-current animate-pulse mr-1"></span>
+                          On
+                        </Badge>
                       {:else}
-                        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-500 dark:bg-zinc-800 dark:text-zinc-400">
-                          Disabled
-                        </span>
+                        <Badge variant="secondary" size="sm">Off</Badge>
                       {/if}
                       {#if jail.escalateEnabled}
-                        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-purple-500/10 text-purple-600 dark:bg-purple-500/20 dark:text-purple-400" title="Auto-escalates to /24 range block when {jail.escalateThreshold}+ IPs blocked">
-                          <Icon name="trending-up" size={12} />
-                          Auto
-                        </span>
+                        <Badge variant="info" size="sm" title="Auto-escalates to /24 when {jail.escalateThreshold}+ IPs blocked">
+                          <Icon name="wand" size={10} />
+                        </Badge>
                       {/if}
-                      <button
-                        onclick={() => openEditJail(jail)}
-                        class="p-1.5 rounded text-slate-400 hover:text-primary hover:bg-primary/10 transition-colors"
-                        title="Edit jail"
-                      >
-                        <Icon name="edit" size={14} />
-                      </button>
-                      <button
-                        onclick={() => confirmDeleteJail(jail)}
-                        class="p-1.5 rounded text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-                        title="Delete jail"
-                      >
-                        <Icon name="trash" size={14} />
-                      </button>
-                    </div>
-                  </div>
-
-                  <!-- Stats -->
-                  <div class="grid grid-cols-2 divide-x divide-slate-100 dark:divide-zinc-800">
-                    <div class="px-5 py-4 text-center">
-                      <div class="text-2xl font-bold text-slate-900 dark:text-zinc-100">{jail.currentlyBanned || 0}</div>
-                      <div class="text-xs text-slate-500 dark:text-zinc-500 mt-0.5">Currently Banned</div>
-                    </div>
-                    <div class="px-5 py-4 text-center">
-                      <div class="text-2xl font-bold text-slate-900 dark:text-zinc-100">{jail.totalBanned || 0}</div>
-                      <div class="text-xs text-slate-500 dark:text-zinc-500 mt-0.5">Total Banned</div>
-                    </div>
-                  </div>
-
-                  <!-- Config -->
-                  <div class="px-5 py-3 bg-slate-50 dark:bg-zinc-800/50 border-t border-slate-100 dark:border-zinc-800">
-                    <div class="flex items-center justify-between text-xs">
-                      <div class="flex items-center gap-4">
-                        <div class="flex items-center gap-1.5">
-                          <span class="text-slate-400 dark:text-zinc-500">Retry</span>
-                          <span class="font-semibold text-slate-700 dark:text-zinc-300">{jail.maxRetry || 5}</span>
-                        </div>
-                        <div class="flex items-center gap-1.5">
-                          <span class="text-slate-400 dark:text-zinc-500">Find</span>
-                          <span class="font-semibold text-slate-700 dark:text-zinc-300">{formatBanTime(jail.findTime)}</span>
-                        </div>
-                        <div class="flex items-center gap-1.5">
-                          <span class="text-slate-400 dark:text-zinc-500">Ban</span>
-                          <span class="font-semibold text-slate-700 dark:text-zinc-300">{formatBanTime(jail.banTime)}</span>
-                        </div>
+                      <div class="w-px h-4 bg-slate-200 dark:bg-zinc-700 mx-1"></div>
+                      <div class="kt-btn-group">
+                        <Button onclick={() => openEditJail(jail)} variant="outline" size="xs" icon="edit" title="Edit" />
+                        <Button onclick={() => confirmDeleteJail(jail)} variant="outline" size="xs" icon="trash" title="Delete" />
                       </div>
-                      <span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium uppercase tracking-wide bg-slate-200 text-slate-600 dark:bg-zinc-700 dark:text-zinc-400">
-                        {jail.action || 'drop'}
-                      </span>
                     </div>
+                  </div>
+
+                  <!-- Stats row -->
+                  <div class="flex items-center px-3 py-2 gap-3">
+                    <div class="flex-1 text-center">
+                      <div class="text-xl font-bold text-slate-900 dark:text-zinc-100">{jail.currentlyBanned || 0}</div>
+                      <div class="text-[10px] text-slate-400 dark:text-zinc-500">Banned</div>
+                    </div>
+                    <div class="w-px h-8 bg-slate-100 dark:bg-zinc-800"></div>
+                    <div class="flex-1 text-center">
+                      <div class="text-xl font-bold text-slate-900 dark:text-zinc-100">{jail.totalBanned || 0}</div>
+                      <div class="text-[10px] text-slate-400 dark:text-zinc-500">Total</div>
+                    </div>
+                  </div>
+
+                  <!-- Config row -->
+                  <div class="flex items-center justify-between gap-2 px-3 py-2 bg-slate-50 dark:bg-zinc-800/50 border-t border-slate-100 dark:border-zinc-800 text-[10px]">
+                    <div class="flex items-center gap-2 text-slate-500 dark:text-zinc-400">
+                      <span><strong class="text-slate-700 dark:text-zinc-300">{jail.maxRetry}</strong> retry</span>
+                      <span>·</span>
+                      <span><strong class="text-slate-700 dark:text-zinc-300">{formatBanTime(jail.findTime)}</strong> find</span>
+                      <span>·</span>
+                      <span><strong class="text-slate-700 dark:text-zinc-300">{formatBanTime(jail.banTime)}</strong> ban</span>
+                    </div>
+                    <Badge variant="mono" size="sm">{jail.action || 'drop'}</Badge>
                   </div>
                 </div>
               {/each}
@@ -1294,48 +1321,6 @@
 
         <!-- Countries Tab -->
         {:else if activeTab === 'countries'}
-          <!-- Status & Toolbar -->
-          <div class="rounded-xl border border-slate-200 bg-slate-50/90 px-4 py-3 mb-4 dark:border-zinc-800 dark:bg-zinc-900/80">
-            <div class="flex flex-wrap items-center gap-3">
-              <div class="flex items-center gap-2">
-                <Icon name="world" size={16} class="text-muted-foreground" />
-                <span class="text-sm text-muted-foreground">
-                  {countryStatus?.blockedCount || 0} countries blocked
-                  {#if countryStatus?.totalRanges > 0}
-                    <span class="text-xs text-slate-400 dark:text-zinc-500">
-                      ({countryStatus.totalRanges.toLocaleString()} ranges)
-                    </span>
-                  {/if}
-                </span>
-              </div>
-              {#if countryStatus?.autoUpdateEnabled}
-                <Badge variant="success" size="sm">
-                  <Icon name="clock" size={12} />
-                  Auto-update {countryStatus.autoUpdateHour}:00
-                </Badge>
-              {/if}
-              <div class="ml-auto flex items-center gap-2">
-                <Button
-                  onclick={refreshZones}
-                  variant="outline"
-                  size="sm"
-                  icon="refresh"
-                  disabled={refreshingZones || blockedCountries.length === 0}
-                >
-                  {refreshingZones ? 'Refreshing...' : 'Refresh Zones'}
-                </Button>
-                <Button
-                  onclick={() => showSchedulerModal = true}
-                  variant="outline"
-                  size="sm"
-                  icon="clock"
-                >
-                  Scheduler
-                </Button>
-              </div>
-            </div>
-          </div>
-
           {#if loadingCountries}
             <div class="flex flex-col items-center justify-center py-8">
               <div class="w-6 h-6 border-2 border-muted border-t-primary rounded-full animate-spin"></div>
@@ -1343,103 +1328,180 @@
             </div>
           {:else}
             <div class="space-y-6">
-              <!-- Quick Select (unblocked countries) -->
-              {#if unblockedCountries.length > 0}
-                <div>
-                  <h4 class="text-sm font-medium text-foreground mb-3">Quick Block</h4>
-                  <div class="flex flex-wrap gap-2">
-                    {#each unblockedCountries as country}
-                      <button
-                        onclick={() => blockCountry(country.code)}
-                        disabled={blockingCountry === country.code}
-                        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 dark:border-zinc-700 dark:bg-zinc-800 dark:hover:bg-zinc-700 transition-colors disabled:opacity-50"
-                      >
-                        {#if blockingCountry === country.code}
-                          <div class="w-3 h-3 border-2 border-muted border-t-primary rounded-full animate-spin"></div>
-                        {:else}
-                          <span class="text-base">{getFlagEmoji(country.code)}</span>
+              <!-- Currently Blocked Countries -->
+              <div class="rounded-xl border border-slate-200 bg-white overflow-hidden dark:border-zinc-800 dark:bg-zinc-900">
+                <!-- Table Header -->
+                <div class="px-4 py-3 border-b border-slate-200 dark:border-zinc-700 bg-slate-50 dark:bg-zinc-800/50">
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                      <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-destructive/10 text-destructive">
+                        <Icon name="shield" size={16} />
+                      </div>
+                      <div>
+                        <h4 class="text-sm font-semibold text-foreground">Blocked Countries</h4>
+                        <p class="text-xs text-muted-foreground">
+                          {blockedCountries.length} {blockedCountries.length === 1 ? 'country' : 'countries'} · {countryStatus?.totalRanges?.toLocaleString() || 0} IP ranges
+                        </p>
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <!-- Desktop buttons -->
+                      <div class="hidden sm:flex kt-btn-group">
+                        <Button
+                          onclick={() => showBlockCountriesModal = true}
+                          size="sm"
+                          icon="plus"
+                          disabled={unblockedCountries.length === 0}
+                        >
+                          Block Countries
+                        </Button>
+                        <Button
+                          onclick={refreshZones}
+                          variant="outline"
+                          size="sm"
+                          icon={refreshingZones ? undefined : 'refresh'}
+                          disabled={refreshingZones || blockedCountries.length === 0}
+                        >
+                          {#if refreshingZones}
+                            <Icon name="refresh" size={14} class="animate-spin" />
+                          {/if}
+                          {refreshingZones ? 'Refreshing...' : 'Refresh'}
+                        </Button>
+                        <Button
+                          onclick={() => showSchedulerModal = true}
+                          variant="outline"
+                          size="sm"
+                          icon="clock"
+                        >
+                          Scheduler
+                        </Button>
+                      </div>
+
+                      <!-- Mobile dropdown -->
+                      <div class="relative sm:hidden">
+                        <Button
+                          onclick={() => showCountryActionsMenu = !showCountryActionsMenu}
+                          variant="outline"
+                          size="sm"
+                          icon="dots"
+                        />
+                        {#if showCountryActionsMenu}
+                          <div class="kt-dropdown" role="menu">
+                            <button
+                              onclick={() => { showBlockCountriesModal = true; showCountryActionsMenu = false }}
+                              disabled={unblockedCountries.length === 0}
+                              class="kt-dropdown-item"
+                            >
+                              <Icon name="plus" size={14} class="kt-dropdown-item-icon" />
+                              Block Countries
+                            </button>
+                            <div class="kt-dropdown-divider"></div>
+                            <button
+                              onclick={() => { refreshZones(); showCountryActionsMenu = false }}
+                              disabled={refreshingZones || blockedCountries.length === 0}
+                              class="kt-dropdown-item"
+                            >
+                              <Icon name="refresh" size={14} class="kt-dropdown-item-icon {refreshingZones ? 'animate-spin' : ''}" />
+                              {refreshingZones ? 'Refreshing...' : 'Refresh Zones'}
+                            </button>
+                            <div class="kt-dropdown-divider"></div>
+                            <button
+                              onclick={() => { showSchedulerModal = true; showCountryActionsMenu = false }}
+                              class="kt-dropdown-item"
+                            >
+                              <Icon name="clock" size={14} class="kt-dropdown-item-icon" />
+                              Scheduler
+                            </button>
+                          </div>
+                          <button class="kt-dropdown-backdrop" onclick={() => showCountryActionsMenu = false} aria-label="Close menu"></button>
                         {/if}
-                        {country.name}
-                      </button>
-                    {/each}
+                      </div>
+                    </div>
                   </div>
                 </div>
-              {/if}
 
-              <!-- Currently Blocked Countries -->
-              <div>
-                <h4 class="text-sm font-medium text-foreground mb-3">
-                  Blocked Countries
-                  {#if blockedCountries.length > 0}
-                    <span class="text-xs text-muted-foreground ml-1">({blockedCountries.length})</span>
-                  {/if}
-                </h4>
                 {#if blockedCountries.length > 0}
-                  <div class="rounded-xl border border-slate-200 bg-white overflow-hidden dark:border-zinc-800 dark:bg-zinc-900">
-                    <div class="overflow-x-auto">
-                      <table class="w-full">
-                        <thead>
-                          <tr class="border-b border-slate-200 dark:border-zinc-700">
-                            <th class="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-slate-400 dark:text-zinc-500">Country</th>
-                            <th class="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-slate-400 dark:text-zinc-500">Direction</th>
-                            <th class="px-4 py-3 text-right text-[11px] font-medium uppercase tracking-wider text-slate-400 dark:text-zinc-500">IP Ranges</th>
-                            <th class="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-slate-400 dark:text-zinc-500">Added</th>
-                            <th class="px-4 py-3 w-10"></th>
-                          </tr>
-                        </thead>
-                        <tbody class="divide-y divide-slate-100 dark:divide-zinc-800">
-                          {#each blockedCountries as country}
-                            <tr class="group hover:bg-slate-50 dark:hover:bg-zinc-800/50 transition-colors">
-                              <td class="px-4 py-3 align-middle">
-                                <div class="flex items-center gap-2">
-                                  <span class="text-xl">{getFlagEmoji(country.countryCode)}</span>
-                                  <div>
-                                    <div class="font-medium text-slate-900 dark:text-zinc-100">{country.name}</div>
-                                    <div class="text-xs text-slate-500 dark:text-zinc-500">{country.countryCode}</div>
-                                  </div>
+                  <div class="overflow-x-auto">
+                    <table class="w-full">
+                      <thead>
+                        <tr class="border-b border-slate-100 dark:border-zinc-800 bg-slate-50/50 dark:bg-zinc-800/30">
+                          <th class="px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-zinc-400">Country</th>
+                          <th class="px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-zinc-400">Direction</th>
+                          <th class="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-zinc-400">IP Ranges</th>
+                          <th class="px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-zinc-400">Added</th>
+                          <th class="px-4 py-2.5 w-12"></th>
+                        </tr>
+                      </thead>
+                      <tbody class="divide-y divide-slate-100 dark:divide-zinc-800">
+                        {#each blockedCountries as country}
+                          <tr class="group hover:bg-slate-50 dark:hover:bg-zinc-800/50 transition-colors">
+                            <td class="px-3 py-2">
+                              <div class="flex items-center gap-3">
+                                <img
+                                  src="https://flagcdn.com/{country.countryCode.toLowerCase()}.svg"
+                                  width="24"
+                                  alt={country.countryCode}
+                                  class="rounded-sm shadow-sm"
+                                  loading="lazy"
+                                />
+                                <div class="font-medium text-slate-900 dark:text-zinc-100">
+                                  {country.name}<sup class="ml-1 text-[10px] text-slate-400 dark:text-zinc-500 font-mono">{country.countryCode}</sup>
                                 </div>
-                              </td>
-                              <td class="px-4 py-3 align-middle">
-                                <button
-                                  onclick={() => toggleCountryDirection(country.countryCode, country.direction || 'inbound')}
-                                  class="cursor-pointer hover:opacity-80 transition-opacity"
-                                  title="Click to toggle: inbound only / inbound + outbound"
-                                >
-                                  <Badge variant={country.direction === 'both' ? 'warning' : 'secondary'} size="sm">
-                                    {country.direction === 'both' ? 'in + out' : 'inbound'}
-                                  </Badge>
-                                </button>
-                              </td>
-                              <td class="px-4 py-3 align-middle text-right">
-                                <span class="text-sm font-mono text-slate-600 dark:text-zinc-400">
-                                  {country.rangeCount?.toLocaleString() || '—'}
-                                </span>
-                              </td>
-                              <td class="px-4 py-3 align-middle">
-                                <span class="text-sm text-slate-600 dark:text-zinc-400">{timeAgo(country.createdAt)}</span>
-                              </td>
-                              <td class="px-4 py-3 align-middle">
-                                <button
-                                  onclick={() => unblockCountry(country.countryCode)}
-                                  class="p-1.5 rounded text-slate-400 hover:text-success hover:bg-success/10 transition-colors"
-                                  title="Unblock country"
-                                >
-                                  <Icon name="lock-open" size={14} />
-                                </button>
-                              </td>
-                            </tr>
-                          {/each}
-                        </tbody>
-                      </table>
-                    </div>
+                              </div>
+                            </td>
+                            <td class="px-3 py-2">
+                              <button
+                                onclick={() => toggleCountryDirection(country.countryCode, country.direction || 'inbound')}
+                                class="cursor-pointer hover:opacity-80 transition-opacity"
+                                data-kt-tooltip
+                              >
+                                <Badge variant={country.direction === 'both' ? 'warning' : 'secondary'} size="sm">
+                                  {#if country.direction === 'both'}
+                                    <Icon name="arrow-left" size={10} class="mr-0.5" />
+                                    <Icon name="arrow-right" size={10} class="mr-1" />
+                                    Both
+                                  {:else}
+                                    <Icon name="arrow-left" size={10} class="mr-1" />
+                                    Inbound
+                                  {/if}
+                                </Badge>
+                                <span data-kt-tooltip-content class="kt-tooltip hidden">Click to toggle direction</span>
+                              </button>
+                            </td>
+                            <td class="px-3 py-2 text-right">
+                              <Badge variant="secondary" size="sm">
+                                <Icon name="network" size={12} class="mr-1" />
+                                {country.rangeCount?.toLocaleString() || '0'}
+                              </Badge>
+                            </td>
+                            <td class="px-3 py-2">
+                              <Badge variant="secondary" size="sm">
+                                <Icon name="clock" size={12} class="mr-1" />
+                                {timeAgo(country.createdAt)}
+                              </Badge>
+                            </td>
+                            <td class="px-3 py-2">
+                              <button
+                                onclick={() => unblockCountry(country.countryCode)}
+                                class="custom_btns "
+                                data-kt-tooltip
+                              >
+                                <Icon name="lock-open" size={16} />
+                                <span data-kt-tooltip-content class="kt-tooltip hidden">Unblock country</span>
+                              </button>
+                            </td>
+                          </tr>
+                        {/each}
+                      </tbody>
+                    </table>
                   </div>
                 {:else}
-                  <div class="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 py-12 text-center dark:border-zinc-700 dark:bg-zinc-900/70">
-                    <div class="flex h-12 w-12 items-center justify-center rounded-full bg-slate-200/80 text-slate-500 dark:bg-zinc-700 dark:text-zinc-300">
+                  <div class="flex flex-col items-center justify-center py-12 text-center">
+                    <div class="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-400 dark:bg-zinc-800 dark:text-zinc-500">
                       <Icon name="world" size={24} />
                     </div>
-                    <h4 class="mt-4 text-base font-medium text-slate-700 dark:text-zinc-200">No countries blocked</h4>
-                    <p class="mt-1 text-sm text-slate-500 dark:text-zinc-400">Use the quick block buttons above to block traffic from specific countries</p>
+                    <h4 class="mt-4 text-sm font-medium text-slate-600 dark:text-zinc-300">No countries blocked</h4>
+                    <p class="mt-1 text-xs text-slate-400 dark:text-zinc-500">Select countries above to block traffic</p>
                   </div>
                 {/if}
               </div>
@@ -1465,17 +1527,18 @@
       bind:value={blockForm.reason}
       placeholder="Manual block (optional)"
     />
-    <div>
-      <label class="kt-label">Duration</label>
-      <select bind:value={blockForm.duration} class="kt-input w-full">
-        <option value="1h">1 hour</option>
-        <option value="24h">24 hours</option>
-        <option value="7d">7 days</option>
-        <option value="30d">30 days</option>
-        <option value="90d">90 days</option>
-        <option value="permanent">Permanent</option>
-      </select>
-    </div>
+    <Select
+      label="Duration"
+      bind:value={blockForm.duration}
+      options={[
+        { value: '1h', label: '1 hour' },
+        { value: '24h', label: '24 hours' },
+        { value: '7d', label: '7 days' },
+        { value: '30d', label: '30 days' },
+        { value: '90d', label: '90 days' },
+        { value: 'permanent', label: 'Permanent' }
+      ]}
+    />
   </div>
 
   {#snippet footer()}
@@ -1560,13 +1623,10 @@
         placeholder="e.g. sshd, portscan"
         disabled={!!jailForm.id}
       />
-      <div>
-        <label class="kt-label">Status</label>
-        <select bind:value={jailForm.enabled} class="kt-input w-full">
-          <option value={true}>Enabled</option>
-          <option value={false}>Disabled</option>
-        </select>
-      </div>
+      <Select label="Status" bind:value={jailForm.enabled}>
+        <option value={true}>Enabled</option>
+        <option value={false}>Disabled</option>
+      </Select>
     </div>
 
     <Input
@@ -1591,28 +1651,22 @@
         min="1"
         max="100"
       />
-      <div>
-        <label class="kt-label">Find Time</label>
-        <select bind:value={jailForm.findTime} class="kt-input w-full">
-          <option value={300}>5 minutes</option>
-          <option value={600}>10 minutes</option>
-          <option value={1800}>30 minutes</option>
-          <option value={3600}>1 hour</option>
-          <option value={7200}>2 hours</option>
-          <option value={86400}>24 hours</option>
-        </select>
-      </div>
-      <div>
-        <label class="kt-label">Ban Time</label>
-        <select bind:value={jailForm.banTime} class="kt-input w-full">
-          <option value={3600}>1 hour</option>
-          <option value={86400}>1 day</option>
-          <option value={604800}>7 days</option>
-          <option value={2592000}>30 days</option>
-          <option value={31536000}>1 year</option>
-          <option value={-1}>Permanent</option>
-        </select>
-      </div>
+      <Select label="Find Time" bind:value={jailForm.findTime}>
+        <option value={300}>5 minutes</option>
+        <option value={600}>10 minutes</option>
+        <option value={1800}>30 minutes</option>
+        <option value={3600}>1 hour</option>
+        <option value={7200}>2 hours</option>
+        <option value={86400}>24 hours</option>
+      </Select>
+      <Select label="Ban Time" bind:value={jailForm.banTime}>
+        <option value={3600}>1 hour</option>
+        <option value={86400}>1 day</option>
+        <option value={604800}>7 days</option>
+        <option value={2592000}>30 days</option>
+        <option value={31536000}>1 year</option>
+        <option value={-1}>Permanent</option>
+      </Select>
     </div>
 
     <div class="grid grid-cols-2 gap-4">
@@ -1621,13 +1675,10 @@
         bind:value={jailForm.port}
         placeholder="all or specific port"
       />
-      <div>
-        <label class="kt-label">Action</label>
-        <select bind:value={jailForm.action} class="kt-input w-full">
-          <option value="drop">Drop</option>
-          <option value="reject">Reject</option>
-        </select>
-      </div>
+      <Select label="Action" bind:value={jailForm.action}>
+        <option value="drop">Drop</option>
+        <option value="reject">Reject</option>
+      </Select>
     </div>
 
     <!-- Auto-Escalation Settings -->
@@ -1653,16 +1704,13 @@
             max="20"
             helperText="Block /24 when this many IPs blocked"
           />
-          <div>
-            <label class="kt-label">Time Window</label>
-            <select bind:value={jailForm.escalateWindow} class="kt-input w-full">
-              <option value={1800}>30 minutes</option>
-              <option value={3600}>1 hour</option>
-              <option value={7200}>2 hours</option>
-              <option value={14400}>4 hours</option>
-              <option value={86400}>24 hours</option>
-            </select>
-          </div>
+          <Select label="Time Window" bind:value={jailForm.escalateWindow}>
+            <option value={1800}>30 minutes</option>
+            <option value={3600}>1 hour</option>
+            <option value={7200}>2 hours</option>
+            <option value={14400}>4 hours</option>
+            <option value={86400}>24 hours</option>
+          </Select>
         </div>
       {/if}
     </div>
@@ -1789,6 +1837,121 @@
   {/snippet}
 </Modal>
 
+<!-- Block Countries Modal -->
+<Modal bind:open={showBlockCountriesModal} title="Block Countries" size="lg">
+  <div class="space-y-4">
+    <!-- Search and actions -->
+    <div class="flex flex-wrap items-center gap-3">
+      <Input
+        type="search"
+        bind:value={countrySearch}
+        placeholder="Search countries..."
+        prefixIcon="search"
+        class="w-48"
+      />
+      <div class="flex items-center gap-2">
+        <button
+          onclick={selectAllFilteredCountries}
+          class="text-xs text-primary hover:text-primary/80 font-medium"
+        >
+          Select all{countrySearch ? ' filtered' : ''}
+        </button>
+        {#if selectedCountries.length > 0}
+          <span class="text-slate-300 dark:text-zinc-600">|</span>
+          <button
+            onclick={clearCountrySelection}
+            class="text-xs text-muted-foreground hover:text-foreground"
+          >
+            Clear selection
+          </button>
+        {/if}
+      </div>
+      <div class="ml-auto text-sm text-muted-foreground">
+        {unblockedCountries.length} available
+      </div>
+    </div>
+
+    <!-- Selected countries chips -->
+    {#if selectedCountries.length > 0}
+      <div class="flex flex-wrap gap-1.5 p-3 bg-primary/5 dark:bg-primary/10 rounded-lg">
+        {#each selectedCountries as code}
+          <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-primary/10 text-primary dark:bg-primary/20">
+            <img
+              src="https://flagcdn.com/{code.toLowerCase()}.svg"
+              width="14"
+              alt={code}
+              class="rounded-sm"
+              loading="lazy"
+            />
+            {getCountryName(code)}
+            <button
+              onclick={() => toggleCountrySelection(code)}
+              class="ml-0.5 hover:text-primary/70"
+            >
+              <Icon name="x" size={12} />
+            </button>
+          </span>
+        {/each}
+      </div>
+    {/if}
+
+    <!-- Country grid with checkboxes -->
+    <div class="max-h-80 overflow-y-auto border border-slate-200 dark:border-zinc-700 rounded-lg">
+      {#if filteredUnblockedCountries.length > 0}
+        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-1 p-3">
+          {#each filteredUnblockedCountries as country}
+            <label
+              class="flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer hover:bg-slate-50 dark:hover:bg-zinc-800 transition-colors {selectedCountries.includes(country.code) ? 'bg-primary/5 dark:bg-primary/10' : ''}"
+            >
+              <input
+                type="checkbox"
+                checked={selectedCountries.includes(country.code)}
+                onchange={() => toggleCountrySelection(country.code)}
+                class="w-3.5 h-3.5 rounded border-slate-300 text-primary focus:ring-primary/20 dark:border-zinc-600 dark:bg-zinc-700"
+              />
+              <img
+                src="https://flagcdn.com/{country.code.toLowerCase()}.svg"
+                width="18"
+                alt={country.code}
+                class="rounded-sm"
+                loading="lazy"
+              />
+              <span class="text-sm text-slate-700 dark:text-zinc-300 truncate">{country.name}</span>
+            </label>
+          {/each}
+        </div>
+      {:else if countrySearch}
+        <div class="text-center py-8 text-sm text-muted-foreground">
+          No countries match "{countrySearch}"
+        </div>
+      {:else}
+        <div class="text-center py-8 text-sm text-muted-foreground">
+          <Icon name="check-circle" size={24} class="mx-auto text-success mb-2" />
+          All available countries are blocked
+        </div>
+      {/if}
+    </div>
+  </div>
+
+  {#snippet footer()}
+    <Button onclick={() => { showBlockCountriesModal = false; selectedCountries = []; countrySearch = '' }} variant="secondary">
+      Cancel
+    </Button>
+    <Button
+      onclick={blockSelectedCountries}
+      icon="ban"
+      disabled={selectedCountries.length === 0 || blockingCountries}
+    >
+      {#if blockingCountries}
+        <div class="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin mr-1"></div>
+        Blocking...
+      {:else}
+        Block {selectedCountries.length > 0 ? `${selectedCountries.length} Countries` : 'Countries'}
+      {/if}
+    </Button>
+  {/snippet}
+</Modal>
+
 <!-- Country Scheduler Modal -->
 <Modal bind:open={showSchedulerModal} title="Zone Update Scheduler" size="sm">
   <div class="space-y-4">
@@ -1808,15 +1971,15 @@
     </div>
 
     {#if schedulerForm.enabled}
-      <div>
-        <label class="kt-label">Update Time (Hour)</label>
-        <select bind:value={schedulerForm.hour} class="kt-input w-full">
-          {#each Array(24) as _, i}
-            <option value={i}>{i.toString().padStart(2, '0')}:00</option>
-          {/each}
-        </select>
-        <p class="text-xs text-muted-foreground mt-1">Server time. Current: {new Date().toLocaleTimeString()}</p>
-      </div>
+      <Select
+        label="Update Time (Hour)"
+        bind:value={schedulerForm.hour}
+        helperText="Server time. Current: {new Date().toLocaleTimeString()}"
+      >
+        {#each Array(24) as _, i}
+          <option value={i}>{i.toString().padStart(2, '0')}:00</option>
+        {/each}
+      </Select>
     {/if}
 
     {#if countryStatus?.lastUpdate}

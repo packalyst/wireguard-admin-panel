@@ -22,6 +22,8 @@
 @import "@keenthemes/ktui/src/components/skeleton/skeleton.css";
 @import "@keenthemes/ktui/src/components/toggle-group/toggle-group.css";
 @import "@keenthemes/ktui/src/components/select/select.css";
+@import "@keenthemes/ktui/src/components/tooltip/tooltip.css";
+
 /* ============================================================================
    KTUI THEME - Dark theme for Headscale Admin
    @import "@keenthemes/ktui/dist/styles.css";
@@ -29,13 +31,14 @@
    ============================================================================ */
 
 :root {
+  /* Neutrals - cool blue-gray (hue 250) */
   --background: oklch(98% 0.01 250);
   --foreground: oklch(15% 0.02 250);
   --card: oklch(100% 0 0);
   --card-foreground: oklch(15% 0.02 250);
   --popover: oklch(100% 0 0);
   --popover-foreground: oklch(15% 0.02 250);
-  --primary: oklch(55% 0.25 270);
+  --primary: oklch(50% 0.08 250);
   --primary-foreground: oklch(100% 0 0);
   --secondary: oklch(95% 0.01 250);
   --secondary-foreground: oklch(25% 0.02 250);
@@ -43,50 +46,55 @@
   --muted-foreground: oklch(50% 0.02 250);
   --accent: oklch(95% 0.01 250);
   --accent-foreground: oklch(25% 0.02 250);
-  --destructive: oklch(55% 0.25 25);
-  --destructive-foreground: oklch(100% 0 0);
   --mono: oklch(14.1% 0.005 285.823);
-	--mono-foreground: oklch(1 0 0);
-  --success: oklch(65% 0.2 160);
-  --success-foreground: oklch(100% 0 0);
-  --warning: oklch(75% 0.15 85);
-  --warning-foreground: oklch(20% 0.02 85);
-  --info: oklch(60% 0.2 250);
-  --info-foreground: oklch(100% 0 0);
+  --mono-foreground: oklch(1 0 0);
   --border: oklch(90% 0.01 250);
   --input: oklch(92% 0.01 250);
-  --ring: oklch(55% 0.25 270);
+  --ring: oklch(50% 0.08 250);
   --radius: 0.5rem;
+
+  /* Semantic colors - unified palette */
+  --success: oklch(52% 0.14 160);
+  --success-foreground: oklch(98% 0 0);
+  --warning: oklch(58% 0.14 70);
+  --warning-foreground: oklch(20% 0.02 70);
+  --destructive: oklch(55% 0.20 25);
+  --destructive-foreground: oklch(98% 0 0);
+  --info: oklch(52% 0.08 250);
+  --info-foreground: oklch(98% 0 0);
 }
 
 .dark {
-  --background: oklch(10% 0.02 270);
-  --foreground: oklch(95% 0.01 270);
-  --card: oklch(14% 0.02 270);
-  --card-foreground: oklch(95% 0.01 270);
-  --popover: oklch(14% 0.02 270);
-  --popover-foreground: oklch(95% 0.01 270);
-  --primary: oklch(62% 0.22 270);
+  /* Neutrals - dark mode */
+  --background: oklch(12% 0.01 250);
+  --foreground: oklch(92% 0.01 250);
+  --card: oklch(16% 0.01 250);
+  --card-foreground: oklch(92% 0.01 250);
+  --popover: oklch(16% 0.01 250);
+  --popover-foreground: oklch(92% 0.01 250);
+  --primary: oklch(60% 0.10 250);
   --primary-foreground: oklch(100% 0 0);
-  --secondary: oklch(22% 0.02 270);
-  --secondary-foreground: oklch(95% 0.01 270);
-  --muted: oklch(22% 0.02 270);
-  --muted-foreground: oklch(55% 0.02 270);
-  --accent: oklch(22% 0.02 270);
-  --accent-foreground: oklch(95% 0.01 270);
-  --destructive: oklch(60% 0.22 25);
-  --destructive-foreground: oklch(100% 0 0);
-  --mono: oklch(87.1% 0.006 286.286);
-	--mono-foreground: oklch(0 0 0);
-  --success: oklch(70% 0.18 160);
-  --success-foreground: oklch(100% 0 0);
-  --warning: oklch(78% 0.15 85);
-  --warning-foreground: oklch(20% 0.02 85);
-  --info: oklch(65% 0.18 250);
-  --info-foreground: oklch(100% 0 0);
-  --border: oklch(25% 0.02 270);
-  --input: oklch(22% 0.02 270);
-  --ring: oklch(62% 0.22 270);
+  --secondary: oklch(22% 0.01 250);
+  --secondary-foreground: oklch(90% 0.01 250);
+  --muted: oklch(20% 0.01 250);
+  --muted-foreground: oklch(60% 0.02 250);
+  --accent: oklch(22% 0.01 250);
+  --accent-foreground: oklch(90% 0.01 250);
+  --mono: oklch(85% 0.005 250);
+  --mono-foreground: oklch(15% 0 0);
+  --border: oklch(24% 0.01 250);
+  --input: oklch(20% 0.01 250);
+  --ring: oklch(60% 0.10 250);
+
+  /* Semantic colors - dark mode (lighter for visibility) */
+  --success: oklch(62% 0.14 160);
+  --success-foreground: oklch(98% 0 0);
+  --warning: oklch(68% 0.14 70);
+  --warning-foreground: oklch(20% 0.02 70);
+  --destructive: oklch(62% 0.18 25);
+  --destructive-foreground: oklch(98% 0 0);
+  --info: oklch(62% 0.08 250);
+  --info-foreground: oklch(98% 0 0);
 }
 
 @theme inline {
@@ -188,10 +196,6 @@ button.kt-badge {
 input.kt-input:focus-visible {
   @apply ring-0 outline-none;
 }
-.kt-select:focus-visible {
-  @apply ring-1 ring-ring/5 border-ring/50;
-}
-
 /* Fix browser autofill background color */
 input:-webkit-autofill,
 input:-webkit-autofill:hover,
@@ -200,4 +204,109 @@ input:-webkit-autofill:active {
   -webkit-box-shadow: 0 0 0 30px var(--background) inset !important;
   -webkit-text-fill-color: var(--foreground) !important;
   caret-color: var(--foreground);
+}
+
+@layer components {
+  .custom_btns {
+    @apply flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-300 cursor-pointer;
+  }
+
+  /* Icon button - small clickable icon */
+  .icon-btn {
+    @apply p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors cursor-pointer;
+  }
+  .icon-btn-destructive {
+    @apply p-1.5 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors cursor-pointer;
+  }
+
+  /* Status indicator dots */
+  .status-dot {
+    @apply h-1.5 w-1.5 rounded-full;
+  }
+  .status-dot-success { @apply bg-success; }
+  .status-dot-warning { @apply bg-warning; }
+  .status-dot-error { @apply bg-destructive; }
+  .status-dot-muted { @apply bg-muted-foreground; }
+
+  /* Status icon containers (circular) */
+  .status-icon {
+    @apply w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0;
+  }
+  .status-icon-success { @apply bg-success/10 text-success; }
+  .status-icon-warning { @apply bg-warning/10 text-warning; }
+  .status-icon-error { @apply bg-destructive/10 text-destructive; }
+  .status-icon-muted { @apply bg-muted text-muted-foreground; }
+
+  /* Status text colors */
+  .status-text-success { @apply text-success; }
+  .status-text-warning { @apply text-warning; }
+  .status-text-error { @apply text-destructive; }
+
+  /* Card left border indicators */
+  .card-border-success { @apply border-l-2 border-l-success; }
+  .card-border-warning { @apply border-l-2 border-l-warning; }
+  .card-border-error { @apply border-l-2 border-l-destructive; }
+  .card-border-muted { @apply border-l-2 border-l-muted-foreground; }
+
+  /* Responsive grid layouts */
+  .grid-cards {
+    @apply grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4;
+  }
+
+  /* Add item card - dashed border for "add new" actions */
+  .add-item-card {
+    @apply flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-center text-xs text-slate-500 transition hover:border-slate-400 hover:bg-slate-100 dark:border-zinc-700 dark:bg-zinc-900/70 dark:text-zinc-300 dark:hover:border-zinc-600 dark:hover:bg-zinc-800/70;
+  }
+
+  /* Header icon box */
+  .header-icon {
+    @apply w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0;
+  }
+
+  /* Button group - joins buttons together */
+  .kt-btn-group {
+    @apply flex;
+  }
+  .kt-btn-group > :where(.kt-btn, button) {
+    @apply rounded-none border-r-0;
+  }
+  .kt-btn-group > :where(.kt-btn, button):first-child {
+    @apply rounded-l-md;
+  }
+  .kt-btn-group > :where(.kt-btn, button):last-child {
+    @apply rounded-r-md border-r;
+  }
+
+  /* Dropdown menu */
+  .kt-dropdown {
+    @apply absolute right-0 top-full mt-1 min-w-[12rem] bg-card border border-border rounded-lg shadow-lg py-1 z-50;
+  }
+  .kt-dropdown-item {
+    @apply w-full flex items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed transition-colors;
+  }
+  .kt-dropdown-item-icon {
+    @apply text-muted-foreground;
+  }
+  .kt-dropdown-divider {
+    @apply border-t border-dashed border-border my-1;
+  }
+
+  /* Dropdown backdrop (invisible click target to close) */
+  .kt-dropdown-backdrop {
+    @apply fixed inset-0 z-40;
+  }
+}
+
+/* Pagination mobile: hide info, center pagination */
+@media (max-width: 639px) {
+  .kt-datatable-toolbar {
+    flex-direction: column !important;
+    align-items: center !important;
+  }
+  .kt-datatable-toolbar .kt-datatable-info {
+    display: none !important;
+  }
+  .kt-datatable-toolbar .kt-datatable-pagination {
+    margin: 0 auto !important;
+  }
 }

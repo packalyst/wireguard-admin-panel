@@ -2,10 +2,14 @@
   import { onMount } from 'svelte'
   import { toast, apiGet, apiPost, apiDelete } from '../stores/app.js'
   import { copyToClipboard as copyText } from '$lib/utils/clipboard.js'
+  import { parseDate, formatDateShort, formatExpiryDate, isExpired, getDaysUntilExpiry } from '$lib/utils/format.js'
   import Icon from '../components/Icon.svelte'
   import Button from '../components/Button.svelte'
   import Modal from '../components/Modal.svelte'
   import Toolbar from '../components/Toolbar.svelte'
+  import Select from '../components/Select.svelte'
+  import LoadingSpinner from '../components/LoadingSpinner.svelte'
+  import EmptyState from '../components/EmptyState.svelte'
 
   let { loading = $bindable(true) } = $props()
 
@@ -29,60 +33,6 @@
     } finally {
       loading = false
     }
-  }
-
-  function parseDate(dateVal) {
-    if (!dateVal) return null
-    if (dateVal.seconds) return new Date(dateVal.seconds * 1000)
-    if (typeof dateVal === 'string') {
-      const truncated = dateVal.replace(/\.(\d{3})\d+/, '.$1')
-      return new Date(truncated)
-    }
-    return new Date(dateVal)
-  }
-
-  function formatDate(dateVal) {
-    const date = parseDate(dateVal)
-    if (!date) return 'Never'
-    return date.toLocaleDateString()
-  }
-
-  function formatRelativeDate(exp) {
-    const date = parseDate(exp)
-    if (!date) return 'Never'
-    const now = new Date()
-    const diffMs = date - now
-    const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24))
-
-    if (diffDays < 0) {
-      const absDays = Math.abs(diffDays)
-      if (absDays === 1) return 'Expired yesterday'
-      if (absDays < 7) return `Expired ${absDays} days ago`
-      if (absDays < 30) return `Expired ${Math.floor(absDays / 7)} weeks ago`
-      return `Expired ${Math.floor(absDays / 30)} months ago`
-    }
-    if (diffDays === 0) return 'Expires today'
-    if (diffDays === 1) return 'Expires tomorrow'
-    if (diffDays < 7) return `Expires in ${diffDays} days`
-    if (diffDays < 30) return `Expires in ${Math.floor(diffDays / 7)} weeks`
-    if (diffDays < 365) return `Expires in ${Math.floor(diffDays / 30)} months`
-    return `Expires in ${Math.floor(diffDays / 365)} years`
-  }
-
-  function isExpired(exp) {
-    const date = parseDate(exp)
-    if (!date) return false
-    const now = new Date()
-    const expMinute = new Date(date.getFullYear(), date.getMonth(), date.getDate(), date.getHours(), date.getMinutes())
-    const nowMinute = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), now.getMinutes())
-    return expMinute <= nowMinute
-  }
-
-  function getDaysUntilExpiry(exp) {
-    const date = parseDate(exp)
-    if (!date) return null
-    const now = new Date()
-    return Math.ceil((date - now) / (1000 * 60 * 60 * 24))
   }
 
   // Filtered and sorted keys - active first, then by expiration date
@@ -172,27 +122,25 @@
   </Toolbar>
 
   {#if loading}
-    <div class="flex justify-center py-12">
-      <div class="w-8 h-8 border-2 border-muted border-t-primary rounded-full animate-spin"></div>
-    </div>
+    <LoadingSpinner centered size="lg" />
   {:else if filteredKeys.length > 0}
-    <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+    <div class="grid-cards">
       {#each filteredKeys as key (key.id + '-' + (key.expiration?.seconds || key.expiration))}
         {@const daysLeft = getDaysUntilExpiry(key.expiration)}
         {@const isExpiringSoon = daysLeft !== null && daysLeft > 0 && daysLeft <= 7}
-        {@const borderColor = key._expired ? 'border-l-red-500' : isExpiringSoon ? 'border-l-amber-500' : 'border-l-emerald-500'}
+        {@const statusClass = key._expired ? 'error' : isExpiringSoon ? 'warning' : 'success'}
 
-        <div class="bg-card border border-border rounded-lg overflow-hidden hover:border-primary/50 transition-colors shadow-sm border-l-2 {borderColor}">
+        <div class="bg-card border border-border rounded-lg overflow-hidden hover:border-primary/50 transition-colors shadow-sm card-border-{statusClass}">
           <!-- Header -->
           <div class="flex items-center gap-3 p-3">
-            <div class="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 {key._expired ? 'bg-red-500/10 text-red-500' : isExpiringSoon ? 'bg-amber-500/10 text-amber-500' : 'bg-emerald-500/10 text-emerald-500'}">
+            <div class="status-icon status-icon-{statusClass}">
               <Icon name="key" size={18} />
             </div>
             <div class="flex-1 min-w-0">
               <code class="text-sm font-mono text-foreground truncate block">{key.prefix}...</code>
               <div class="text-[11px] text-muted-foreground flex items-center gap-1 mt-0.5">
                 <Icon name="clock" size={11} />
-                {formatRelativeDate(key.expiration)}
+                {formatExpiryDate(key.expiration)}
               </div>
             </div>
           </div>
@@ -201,26 +149,26 @@
           <div class="grid grid-cols-2 gap-x-3 border-t border-border px-3 py-2.5 text-[11px]">
             <div class="flex items-center gap-1.5">
               <Icon name="plus" size={12} class="text-slate-400 dark:text-zinc-600" />
-              <span class="text-slate-600 dark:text-zinc-400">{formatDate(key.createdAt)}</span>
+              <span class="text-slate-600 dark:text-zinc-400">{formatDateShort(key.createdAt)}</span>
             </div>
             <div class="flex items-center gap-1.5">
               <Icon name="clock" size={12} class="text-slate-400 dark:text-zinc-600" />
-              <span class="text-slate-600 dark:text-zinc-400">{formatDate(key.expiration)}</span>
+              <span class="text-slate-600 dark:text-zinc-400">{formatDateShort(key.expiration)}</span>
             </div>
           </div>
 
           <!-- Actions -->
           <div class="flex items-center justify-between px-2 py-1.5 border-t border-border bg-muted/30">
             <div class="flex items-center gap-1 text-[10px]">
-              <span class="h-1.5 w-1.5 rounded-full {key._expired ? 'bg-red-500' : isExpiringSoon ? 'bg-amber-500' : 'bg-emerald-500'}"></span>
-              <span class="{key._expired ? 'text-red-600 dark:text-red-400' : isExpiringSoon ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'} font-medium">
+              <span class="status-dot status-dot-{statusClass}"></span>
+              <span class="status-text-{statusClass} font-medium">
                 {key._expired ? 'Expired' : isExpiringSoon ? 'Expiring soon' : 'Active'}
               </span>
             </div>
             {#if !key._expired}
               <button
                 onclick={() => confirmExpireKey(key)}
-                class="p-1.5 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors cursor-pointer"
+                class="icon-btn-destructive"
                 title="Expire key"
               >
                 <Icon name="ban" size={14} />
@@ -233,7 +181,7 @@
       <!-- Add key card -->
       <article
         onclick={() => { showCreateModal = true; newKey = null }}
-        class="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-center text-xs text-slate-500 transition hover:border-slate-400 hover:bg-slate-100 dark:border-zinc-700 dark:bg-zinc-900/70 dark:text-zinc-300 dark:hover:border-zinc-600 dark:hover:bg-zinc-800/70"
+        class="add-item-card"
       >
         <div class="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200/80 text-slate-600 dark:bg-zinc-700 dark:text-zinc-100">
           <Icon name="plus" size={16} />
@@ -291,16 +239,17 @@
       </div>
     </div>
   {:else}
-    <div>
-      <label class="kt-label">Expiration</label>
-      <select bind:value={newExpiration} class="kt-input w-full">
-        <option value="7">7 days</option>
-        <option value="30">30 days</option>
-        <option value="90">90 days</option>
-        <option value="365">1 year</option>
-      </select>
-      <p class="text-xs text-muted-foreground mt-1.5">Key will expire on {new Date(Date.now() + parseInt(newExpiration) * 24 * 60 * 60 * 1000).toLocaleDateString()}</p>
-    </div>
+    <Select
+      label="Expiration"
+      bind:value={newExpiration}
+      options={[
+        { value: '7', label: '7 days' },
+        { value: '30', label: '30 days' },
+        { value: '90', label: '90 days' },
+        { value: '365', label: '1 year' }
+      ]}
+      helperText="Key will expire on {new Date(Date.now() + parseInt(newExpiration) * 24 * 60 * 60 * 1000).toLocaleDateString()}"
+    />
   {/if}
 
   {#snippet footer()}

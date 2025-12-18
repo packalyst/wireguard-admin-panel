@@ -241,14 +241,14 @@
                   <div class="flex items-center justify-end gap-1">
                     <button
                       onclick={() => toggleRoute(route)}
-                      class="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                      class="icon-btn"
                       title={route.enabled ? 'Disable route' : 'Enable route'}
                     >
                       <Icon name={route.enabled ? 'x' : 'check'} size={14} />
                     </button>
                     <button
                       onclick={() => confirmDelete(route)}
-                      class="p-1.5 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                      class="icon-btn-destructive"
                       title="Delete route"
                     >
                       <Icon name="trash" size={14} />

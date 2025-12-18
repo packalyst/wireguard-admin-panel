@@ -213,7 +213,7 @@
 
   <!-- Users grid -->
   {#if filteredUsers.length > 0}
-    <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+    <div class="grid-cards">
       {#each filteredUsers as user (user.id)}
         {@const nodeCount = getNodeCount(user.name)}
         {@const onlineCount = getOnlineCount(user.name)}
@@ -245,8 +245,8 @@
               <span class="text-slate-600 dark:text-zinc-400">{nodeCount} nodes</span>
             </div>
             <div class="flex items-center gap-1.5">
-              <span class="h-1.5 w-1.5 rounded-full {onlineCount > 0 ? 'bg-emerald-500' : 'bg-slate-400 dark:bg-zinc-600'}"></span>
-              <span class="{onlineCount > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500 dark:text-zinc-500'}">{onlineCount} online</span>
+              <span class="status-dot {onlineCount > 0 ? 'status-dot-success' : 'status-dot-muted'}"></span>
+              <span class="{onlineCount > 0 ? 'text-success' : 'text-muted-foreground'}">{onlineCount} online</span>
             </div>
           </div>
 
@@ -254,21 +254,21 @@
           <div class="flex items-center justify-end gap-0.5 px-2 py-1.5 border-t border-border bg-muted/30">
             <button
               onclick={() => openEditModal(user)}
-              class="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors cursor-pointer"
+              class="icon-btn"
               title="Customize"
             >
               <Icon name="settings" size={14} />
             </button>
             <button
               onclick={() => renameUser(user)}
-              class="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors cursor-pointer"
+              class="icon-btn"
               title="Rename"
             >
               <Icon name="edit" size={14} />
             </button>
             <button
               onclick={() => confirmDeleteUser(user)}
-              class="p-1.5 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors cursor-pointer"
+              class="icon-btn-destructive"
               title="Delete"
             >
               <Icon name="trash" size={14} />
@@ -280,7 +280,7 @@
       <!-- Add user card -->
       <article
         onclick={() => showCreateModal = true}
-        class="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-center text-xs text-slate-500 transition hover:border-slate-400 hover:bg-slate-100 dark:border-zinc-700 dark:bg-zinc-900/70 dark:text-zinc-300 dark:hover:border-zinc-600 dark:hover:bg-zinc-800/70"
+        class="add-item-card"
       >
         <div class="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200/80 text-slate-600 dark:bg-zinc-700 dark:text-zinc-100">
           <Icon name="plus" size={16} />
