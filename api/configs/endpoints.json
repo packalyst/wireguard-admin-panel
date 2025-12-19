@@ -75,13 +75,6 @@
         {"path": "/blocklists", "methods": ["GET"], "handler": "GetBlocklists", "description": "Get available blocklist sources"},
         {"path": "/blocklists/import", "methods": ["POST"], "handler": "ImportBlocklist", "description": "Import blocklist from source"},
         {"path": "/blocked/source/{source}", "methods": ["DELETE"], "handler": "DeleteBlockedSource", "description": "Delete all IPs from source"},
-        {"path": "/countries", "methods": ["GET"], "handler": "GetCountries", "description": "Get available countries"},
-        {"path": "/countries/blocked", "methods": ["GET"], "handler": "GetBlockedCountries", "description": "Get blocked countries"},
-        {"path": "/countries/blocked", "methods": ["POST"], "handler": "BlockCountry", "description": "Block a country"},
-        {"path": "/countries/{code}", "methods": ["DELETE"], "handler": "UnblockCountry", "description": "Unblock a country"},
-        {"path": "/countries/status", "methods": ["GET"], "handler": "GetCountryStatus", "description": "Get country blocking status"},
-        {"path": "/countries/scheduler", "methods": ["PUT"], "handler": "UpdateCountryScheduler", "description": "Update zone scheduler settings"},
-        {"path": "/countries/refresh", "methods": ["POST"], "handler": "RefreshCountryZones", "description": "Refresh all country zones"},
         {"path": "/health", "methods": ["GET"], "handler": "Health", "description": "Health check"}
       ]
     },
@@ -106,10 +99,7 @@
       "prefix": "/api/traefik",
       "enabled": true,
       "endpoints": [
-        {"path": "/overview", "methods": ["GET"], "handler": "GetOverview", "description": "Get Traefik overview"},
-        {"path": "/http/routers", "methods": ["GET"], "handler": "GetRouters", "description": "List HTTP routers"},
-        {"path": "/http/services", "methods": ["GET"], "handler": "GetServices", "description": "List services"},
-        {"path": "/http/middlewares", "methods": ["GET"], "handler": "GetMiddlewares", "description": "List middlewares"},
+        {"path": "/overview", "methods": ["GET"], "handler": "GetOverview", "description": "Get Traefik overview with routers, services, middlewares"},
         {"path": "/config", "methods": ["GET"], "handler": "GetConfig", "description": "Get dynamic config"},
         {"path": "/config", "methods": ["PUT"], "handler": "UpdateConfig", "description": "Update dynamic config"},
         {"path": "/logs", "methods": ["GET"], "handler": "GetLogs", "description": "Get access logs"},
@@ -149,30 +139,13 @@
       "prefix": "/api/adguard",
       "enabled": true,
       "endpoints": [
-        {"path": "/status", "methods": ["GET"], "handler": "GetStatus", "description": "Get AdGuard status"},
-        {"path": "/stats", "methods": ["GET"], "handler": "GetStats", "description": "Get statistics"},
-        {"path": "/querylog", "methods": ["GET"], "handler": "GetQueryLog", "description": "Get query log"},
-        {"path": "/filtering", "methods": ["GET"], "handler": "GetFiltering", "description": "Get filtering status"},
-        {"path": "/filtering", "methods": ["POST"], "handler": "SetFiltering", "description": "Toggle filtering"},
-        {"path": "/filtering/add", "methods": ["POST"], "handler": "AddFilter", "description": "Add blocklist filter"},
-        {"path": "/filtering/remove", "methods": ["POST"], "handler": "RemoveFilter", "description": "Remove blocklist filter"},
-        {"path": "/filtering/toggle", "methods": ["POST"], "handler": "ToggleFilter", "description": "Enable/disable a filter"},
-        {"path": "/filtering/refresh", "methods": ["POST"], "handler": "RefreshFilters", "description": "Refresh all filters"},
-        {"path": "/filtering/rules", "methods": ["POST"], "handler": "SetFilteringRules", "description": "Update custom filtering rules"},
-        {"path": "/protection", "methods": ["POST"], "handler": "SetProtection", "description": "Toggle DNS protection"},
-        {"path": "/blocked", "methods": ["GET"], "handler": "GetBlockedServices", "description": "Get blocked services"},
-        {"path": "/blocked", "methods": ["PUT"], "handler": "SetBlockedServices", "description": "Set blocked services"},
-        {"path": "/blocked/all", "methods": ["GET"], "handler": "GetAllBlockedServices", "description": "Get all available services to block"},
-        {"path": "/safebrowsing", "methods": ["GET"], "handler": "GetSafeBrowsing", "description": "Get safe browsing status"},
-        {"path": "/safebrowsing", "methods": ["POST"], "handler": "SetSafeBrowsing", "description": "Toggle safe browsing"},
-        {"path": "/parental", "methods": ["GET"], "handler": "GetParental", "description": "Get parental control status"},
-        {"path": "/parental", "methods": ["POST"], "handler": "SetParental", "description": "Toggle parental control"},
-        {"path": "/safesearch", "methods": ["GET"], "handler": "GetSafeSearch", "description": "Get safe search status"},
-        {"path": "/safesearch", "methods": ["POST"], "handler": "SetSafeSearch", "description": "Toggle safe search"},
-        {"path": "/clients", "methods": ["GET"], "handler": "GetClients", "description": "Get clients list"},
+        {"path": "/overview", "methods": ["GET"], "handler": "GetOverview", "description": "Get status, stats, protection settings, and blocked services"},
+        {"path": "/config", "methods": ["PUT"], "handler": "UpdateConfig", "description": "Update protection settings (type: protection|safeBrowsing|parental|safeSearch|blockedServices)"},
+        {"path": "/filtering", "methods": ["GET"], "handler": "GetFiltering", "description": "Get filtering status and rules"},
+        {"path": "/filtering", "methods": ["PUT"], "handler": "UpdateFiltering", "description": "Filtering actions (action: add|remove|toggle|refresh|setRules)"},
         {"path": "/rewrites", "methods": ["GET"], "handler": "GetRewrites", "description": "Get DNS rewrites"},
-        {"path": "/rewrites", "methods": ["POST"], "handler": "AddRewrite", "description": "Add DNS rewrite"},
-        {"path": "/rewrites", "methods": ["DELETE"], "handler": "DeleteRewrite", "description": "Delete DNS rewrite"},
+        {"path": "/rewrites", "methods": ["PUT"], "handler": "UpdateRewrites", "description": "Rewrite actions (action: add|delete)"},
+        {"path": "/querylog", "methods": ["GET"], "handler": "GetQueryLog", "description": "Get query log"},
         {"path": "/health", "methods": ["GET"], "handler": "Health", "description": "Health check"}
       ]
     },
@@ -204,6 +177,24 @@
         {"path": "/router/restart", "methods": ["POST"], "handler": "RestartRouter", "description": "Restart router"},
         {"path": "/router", "methods": ["DELETE"], "handler": "RemoveRouter", "description": "Remove router"},
         {"path": "/health", "methods": ["GET"], "handler": "Health", "description": "Health check"}
+      ]
+    },
+    "geolocation": {
+      "prefix": "/api/geo",
+      "enabled": true,
+      "endpoints": [
+        {"path": "/settings", "methods": ["GET"], "handler": "GetSettings", "description": "Get geolocation settings"},
+        {"path": "/settings", "methods": ["PUT"], "handler": "UpdateSettings", "description": "Update geolocation settings"},
+        {"path": "/lookup", "methods": ["GET"], "handler": "LookupIP", "description": "Lookup single IP"},
+        {"path": "/lookup", "methods": ["POST"], "handler": "LookupBulk", "description": "Lookup multiple IPs"},
+        {"path": "/status", "methods": ["GET"], "handler": "GetStatus", "description": "Get service status"},
+        {"path": "/update", "methods": ["POST"], "handler": "TriggerUpdate", "description": "Trigger database update"},
+        {"path": "/countries", "methods": ["GET"], "handler": "GetCountries", "description": "Get available countries"},
+        {"path": "/blocked", "methods": ["GET"], "handler": "GetBlockedCountries", "description": "Get blocked countries"},
+        {"path": "/blocked", "methods": ["POST"], "handler": "BlockCountry", "description": "Block a country"},
+        {"path": "/blocked/{code}", "methods": ["DELETE"], "handler": "UnblockCountry", "description": "Unblock a country"},
+        {"path": "/blocked/status", "methods": ["GET"], "handler": "GetBlockingStatus", "description": "Get blocking status"},
+        {"path": "/zones/refresh", "methods": ["POST"], "handler": "RefreshZones", "description": "Refresh all country zones"}
       ]
     }
   },

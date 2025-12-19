@@ -1,27 +1,15 @@
 <script>
   import Icon from './Icon.svelte'
-  import { onMount } from 'svelte'
 
   let {
     tabs = [],
     activeTab = $bindable(''),
     urlKey = '',  // If set, persists tab to URL hash (e.g., urlKey="tab" -> #tab=routers)
+    onchange = null,  // Callback when tab changes
     class: className = ''
   } = $props()
 
-  // Read initial tab from URL hash if urlKey is set
-  onMount(() => {
-    if (urlKey && typeof window !== 'undefined') {
-      const hash = window.location.hash.slice(1) // Remove #
-      const params = new URLSearchParams(hash)
-      const tabFromUrl = params.get(urlKey)
-      if (tabFromUrl && tabs.some(t => t.id === tabFromUrl)) {
-        activeTab = tabFromUrl
-      }
-    }
-  })
-
-  // Set initial active tab if not set
+  // Set initial active tab if not set (parent should use getInitialTab() from app.js)
   $effect(() => {
     if (!activeTab && tabs.length > 0) {
       activeTab = tabs[0].id
@@ -29,6 +17,7 @@
   })
 
   function selectTab(tabId) {
+    if (activeTab === tabId) return  // Already on this tab
     activeTab = tabId
 
     // Update URL hash if urlKey is set
@@ -38,10 +27,13 @@
       params.set(urlKey, tabId)
       window.history.replaceState(null, '', '#' + params.toString())
     }
+
+    // Call onchange callback
+    if (onchange) onchange(tabId)
   }
 </script>
 
-<div class="flex border-b border-border overflow-x-auto {className}">
+<div class="flex border-b border-border overflow-x-auto scrollbar-hide-mobile {className}">
   {#each tabs as tab}
     <button
       onclick={() => selectTab(tab.id)}

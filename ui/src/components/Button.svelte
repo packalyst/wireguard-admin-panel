@@ -29,13 +29,13 @@
     xs: 'kt-btn-xs'
   };
 
-  const classes = [
+  const classes = $derived([
     'kt-btn',
     variantClasses[variant],
     sizeClasses[size],
     iconOnly && 'kt-btn-icon',
     className
-  ].filter(Boolean).join(' ');
+  ].filter(Boolean).join(' '));
 </script>
 
 <button

@@ -113,6 +113,7 @@ func createSchema(db *sql.DB) error {
 		name TEXT,
 		direction TEXT DEFAULT 'inbound' CHECK(direction IN ('inbound', 'both')),
 		enabled BOOLEAN DEFAULT 1,
+		status TEXT DEFAULT 'active' CHECK(status IN ('active', 'adding', 'removing')),
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
@@ -346,6 +347,32 @@ func runMigrations(db *sql.DB) error {
 	_, err = db.Exec(`UPDATE vpn_clients SET acl_policy = 'allow_all' WHERE acl_policy = 'allow_all_future'`)
 	if err != nil {
 		log.Printf("Migration warning: could not update allow_all_future policies: %v", err)
+	}
+
+	// Add country column to traffic_logs for geolocation
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('traffic_logs') WHERE name='country'`).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE traffic_logs ADD COLUMN country TEXT DEFAULT ''`)
+		if err != nil {
+			return fmt.Errorf("failed to add country column: %v", err)
+		}
+		log.Printf("Migration: added 'country' column to traffic_logs")
+	}
+
+	// Add status column to blocked_countries if it doesn't exist
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('blocked_countries') WHERE name='status'`).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE blocked_countries ADD COLUMN status TEXT DEFAULT 'active'`)
+		if err != nil {
+			return fmt.Errorf("failed to add status column: %v", err)
+		}
+		log.Printf("Migration: added 'status' column to blocked_countries")
 	}
 
 	return nil

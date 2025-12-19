@@ -1,8 +1,8 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
   import { toast, apiGet, apiPost, apiPut, apiDelete, apiGetText, apiGetBlob } from '../stores/app.js'
+  import { loadState, saveState, copyWithToast } from '../stores/helpers.js'
   import { formatDate, timeAgo } from '$lib/utils/format.js'
-  import { copyToClipboard as copyText } from '$lib/utils/clipboard.js'
   import Icon from '../components/Icon.svelte'
   import Badge from '../components/Badge.svelte'
   import Modal from '../components/Modal.svelte'
@@ -155,7 +155,7 @@
   })
 
   // Load saved filters from localStorage
-  const savedFilters = typeof localStorage !== 'undefined' ? JSON.parse(localStorage.getItem('nodes') || '{}') : {}
+  const savedFilters = loadState('nodes')
 
   let search = $state('')
   let statusFilter = $state(savedFilters.status || 'all') // 'all' | 'online' | 'offline'
@@ -165,9 +165,7 @@
 
   // Save filters to localStorage when they change
   $effect(() => {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('nodes', JSON.stringify({ status: statusFilter, type: typeFilter }))
-    }
+    saveState('nodes', { status: statusFilter, type: typeFilter })
   })
   let activeTab = $state('overview')
   let showCreateModal = $state(false)
@@ -451,10 +449,7 @@
     }
   }
 
-  async function copyToClipboard(text) {
-    const success = await copyText(text)
-    toast(success ? 'Copied!' : 'Failed to copy', success ? 'success' : 'error')
-  }
+  const copyToClipboard = (text) => copyWithToast(text, toast)
 </script>
 
 <div class="space-y-4">

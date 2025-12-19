@@ -267,22 +267,14 @@
         <div class="flex-1 min-w-0">
           <div class="truncate text-xs font-medium text-slate-700 dark:text-zinc-200">admin</div>
         </div>
-        <button
-          onclick={toggleTheme}
-          class="flex h-7 w-7 items-center justify-center rounded-md text-slate-400 hover:bg-slate-200 hover:text-slate-600 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
-          title="Toggle theme"
-        >
+        <button onclick={toggleTheme} class="custom_btns" title="Toggle theme">
           {#if $theme === 'dark'}
             <Icon name="sun" size={14} />
           {:else}
             <Icon name="moon" size={14} />
           {/if}
         </button>
-        <button
-          onclick={onLogout}
-          class="flex h-7 w-7 items-center justify-center rounded-md text-slate-400 hover:bg-slate-200 hover:text-slate-600 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
-          title="Logout"
-        >
+        <button onclick={onLogout} class="custom_btns" title="Logout">
           <Icon name="logout" size={14} />
         </button>
       </div>

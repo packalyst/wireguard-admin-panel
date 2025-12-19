@@ -13,7 +13,6 @@ import (
 
 func init() {
 	LoadBlocklistSources()
-	LoadCountryConfigs()
 }
 
 // New creates a new firewall service
@@ -52,8 +51,6 @@ func New(dataDir string) (*Service, error) {
 		log.Printf("Warning: Failed to ensure default jails: %v", err)
 	}
 
-	svc.loadZoneSchedulerSettings()
-
 	if err := svc.ApplyRules(); err != nil {
 		log.Printf("Warning: Failed to apply initial firewall rules: %v", err)
 	}
@@ -62,7 +59,6 @@ func New(dataDir string) (*Service, error) {
 	go svc.runJailMonitors()
 	go svc.runVPNTrafficMonitor()
 	go svc.runExpirationCleanup()
-	go svc.runZoneUpdateScheduler()
 
 	log.Printf("Firewall service initialized")
 	return svc, nil
@@ -96,13 +92,5 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"GetBlocklists":       s.handleGetBlocklists,
 		"ImportBlocklist":     s.handleImportBlocklist,
 		"DeleteBlockedSource": s.handleDeleteBlockedSource,
-		// Country blocking
-		"GetCountries":           s.handleGetCountries,
-		"GetBlockedCountries":    s.handleGetBlockedCountries,
-		"BlockCountry":           s.handleBlockCountry,
-		"UnblockCountry":         s.handleUnblockCountry,
-		"GetCountryStatus":       s.handleGetCountryStatus,
-		"UpdateCountryScheduler": s.handleUpdateCountryScheduler,
-		"RefreshCountryZones":    s.handleRefreshCountryZones,
 	}
 }

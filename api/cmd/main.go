@@ -10,6 +10,7 @@ import (
 	"api/internal/database"
 	"api/internal/docker"
 	"api/internal/firewall"
+	"api/internal/geolocation"
 	"api/internal/headscale"
 	"api/internal/helper"
 	"api/internal/router"
@@ -89,6 +90,18 @@ func main() {
 				APIKey: apiKey,
 			}, nil
 		})
+	}
+
+	// Geolocation service (must be before firewall, as firewall depends on it)
+	if config.IsServiceEnabled("geolocation") {
+		geoSvc, err := geolocation.New(dataDir + "/geolocation")
+		if err != nil {
+			log.Printf("Warning: Failed to initialize geolocation service: %v", err)
+		} else {
+			geolocation.SetService(geoSvc)
+			r.RegisterService("geolocation", geoSvc.Handlers())
+			log.Println("Geolocation service registered")
+		}
 	}
 
 	if config.IsServiceEnabled("firewall") {

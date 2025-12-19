@@ -42,10 +42,13 @@
 
   // Size classes mapping (sm is default)
   const sizeClasses = {
-    sm: 'kt-input-sm',
-    lg: ''
+    sm: { input: 'kt-input-sm', addon: 'kt-input-addon-sm' },
+    lg: { input: 'kt-input-lg', addon: 'kt-input-addon-lg' },
+    default: { input: '', addon: '' }
   };
-  const sizeClass = sizeClasses[size] || sizeClasses.sm;
+  const sizeConfig = sizeClasses[size] || sizeClasses.sm;
+  const sizeClass = sizeConfig.input;
+  const addonSizeClass = sizeConfig.addon;
 
   // Determine wrapper type
   const hasInputGroup = prefixAddon || suffixAddon || prefixAddonIcon || suffixAddonIcon;
@@ -61,10 +64,10 @@
     {#if hasInputGroup}
       <div class="kt-input-group {className}">
         {#if prefixAddon}
-          <span class="kt-input-addon">{prefixAddon}</span>
+          <span class="kt-input-addon {addonSizeClass}">{prefixAddon}</span>
         {/if}
         {#if prefixAddonIcon}
-          <span class="kt-input-addon kt-input-addon-icon">
+          <span class="kt-input-addon kt-input-addon-icon {addonSizeClass}">
             <Icon name={prefixAddonIcon} size={14} />
           </span>
         {/if}
@@ -84,12 +87,12 @@
           {...restProps}
         />
         {#if suffixAddonIcon}
-          <span class="kt-input-addon kt-input-addon-icon">
+          <span class="kt-input-addon kt-input-addon-icon {addonSizeClass}">
             <Icon name={suffixAddonIcon} size={14} />
           </span>
         {/if}
         {#if suffixAddon}
-          <span class="kt-input-addon">{suffixAddon}</span>
+          <span class="kt-input-addon {addonSizeClass}">{suffixAddon}</span>
         {/if}
       </div>
     {:else if hasWrapper}
@@ -149,10 +152,10 @@
   {#if hasInputGroup}
     <div class="kt-input-group {className}">
       {#if prefixAddon}
-        <span class="kt-input-addon">{prefixAddon}</span>
+        <span class="kt-input-addon {addonSizeClass}">{prefixAddon}</span>
       {/if}
       {#if prefixAddonIcon}
-        <span class="kt-input-addon kt-input-addon-icon">
+        <span class="kt-input-addon kt-input-addon-icon {addonSizeClass}">
           <Icon name={prefixAddonIcon} size={14} />
         </span>
       {/if}
@@ -172,12 +175,12 @@
         {...restProps}
       />
       {#if suffixAddonIcon}
-        <span class="kt-input-addon kt-input-addon-icon">
+        <span class="kt-input-addon kt-input-addon-icon {addonSizeClass}">
           <Icon name={suffixAddonIcon} size={14} />
         </span>
       {/if}
       {#if suffixAddon}
-        <span class="kt-input-addon">{suffixAddon}</span>
+        <span class="kt-input-addon {addonSizeClass}">{suffixAddon}</span>
       {/if}
     </div>
   {:else if hasWrapper}

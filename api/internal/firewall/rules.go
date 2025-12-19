@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"api/internal/geolocation"
 )
 
 // ApplyRules applies nftables firewall rules
@@ -90,40 +92,13 @@ func (s *Service) getAllowedPorts() ([]int, error) {
 	return allowedPorts, nil
 }
 
-// getCountryRanges retrieves country IP ranges from cache
+// getCountryRanges retrieves country IP ranges from geolocation service
 func (s *Service) getCountryRanges(outboundOnly bool) []string {
-	var query string
-	if outboundOnly {
-		query = `SELECT c.zones FROM country_zones_cache c
-			INNER JOIN blocked_countries b ON c.country_code = b.country_code
-			WHERE b.enabled = 1 AND b.direction = 'both'`
-	} else {
-		query = `SELECT c.zones FROM country_zones_cache c
-			INNER JOIN blocked_countries b ON c.country_code = b.country_code
-			WHERE b.enabled = 1`
-	}
-
-	rows, err := s.db.Query(query)
-	if err != nil {
+	geoSvc := geolocation.GetService()
+	if geoSvc == nil {
 		return nil
 	}
-	defer rows.Close()
-
-	var ranges []string
-	for rows.Next() {
-		var zones string
-		if err := rows.Scan(&zones); err != nil {
-			continue
-		}
-		for _, zone := range strings.Split(zones, "\n") {
-			zone = strings.TrimSpace(zone)
-			if zone != "" && !strings.HasPrefix(zone, "#") {
-				ranges = append(ranges, zone)
-			}
-		}
-	}
-
-	return ranges
+	return geoSvc.GetBlockedCountryCIDRs(outboundOnly)
 }
 
 // buildNftablesScript generates the nftables script

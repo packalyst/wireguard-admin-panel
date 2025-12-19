@@ -1,6 +1,8 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { toast, apiGet } from '../stores/app.js'
+  import { toast, apiGet, getInitialTab } from '../stores/app.js'
+  import { lookupIPs, getGeoCache } from '../stores/geo.js'
+  import { loadState, saveState, createDebouncedSearch, getDefaultPerPage } from '../stores/helpers.js'
   import { formatTime, formatRelativeDate, formatDuration } from '../lib/utils/format.js'
   import Icon from '../components/Icon.svelte'
   import Badge from '../components/Badge.svelte'
@@ -16,7 +18,7 @@
 
   let { loading = $bindable(true) } = $props()
 
-  let activeTab = $state('traffic')
+  let activeTab = $state(getInitialTab('traffic', ['traffic', 'traefik', 'adguard']))
 
   const tabs = [
     { id: 'traffic', label: 'Traffic', icon: 'activity' },
@@ -29,42 +31,40 @@
   let trafficTotal = $state(0)
   let trafficClients = $state([])
   let trafficLoading = $state(false)
+  let geoData = $state({})  // IP -> geo result map (from geo.js cache)
 
-  const savedTrafficState = typeof localStorage !== 'undefined'
-    ? JSON.parse(localStorage.getItem('traffic') || '{}')
-    : {}
+  const savedTrafficState = loadState('traffic')
 
   let trafficPage = $state(savedTrafficState.page || 1)
-  let trafficPerPage = $state(savedTrafficState.perPage || parseInt(localStorage.getItem('settings_items_per_page') || '25'))
+  let trafficPerPage = $state(savedTrafficState.perPage || getDefaultPerPage())
   let trafficSearch = $state(savedTrafficState.search || '')
   let trafficClientFilter = $state(savedTrafficState.client || '')
   let trafficAutoRefresh = $state(false)
   let trafficRefreshInterval = null
+  let trafficSearchQuery = $state(savedTrafficState.search || '')
 
   const trafficOffset = $derived((trafficPage - 1) * trafficPerPage)
 
+  // Save state to localStorage
   $effect(() => {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('traffic', JSON.stringify({
-        page: trafficPage,
-        perPage: trafficPerPage,
-        search: trafficSearch,
-        client: trafficClientFilter
-      }))
-    }
+    saveState('traffic', {
+      page: trafficPage,
+      perPage: trafficPerPage,
+      search: trafficSearch,
+      client: trafficClientFilter
+    })
   })
 
-  let trafficSearchTimeout = null
-  let trafficSearchQuery = $state(trafficSearch)
+  // Debounced search
+  const debouncedTrafficSearch = createDebouncedSearch((value) => {
+    trafficSearch = value
+    trafficPage = 1
+    loadTrafficData()
+  })
 
   function handleTrafficSearchInput(e) {
     trafficSearchQuery = e.target.value
-    clearTimeout(trafficSearchTimeout)
-    trafficSearchTimeout = setTimeout(() => {
-      trafficSearch = trafficSearchQuery
-      trafficPage = 1
-      loadTrafficData()
-    }, 400)
+    debouncedTrafficSearch(trafficSearchQuery)
   }
 
   async function loadTrafficData() {
@@ -81,6 +81,12 @@
       trafficLogs = res.logs || []
       trafficTotal = res.total || 0
       trafficClients = res.clients || []
+
+      // Enrich with geo data (helper handles caching and availability check)
+      if (trafficLogs.length > 0) {
+        const ips = trafficLogs.map(l => l.dest_ip).filter(Boolean)
+        geoData = await lookupIPs(ips)
+      }
     } catch (e) {
       toast('Failed to load traffic: ' + e.message, 'error')
     } finally {
@@ -207,7 +213,7 @@
   })
 
   onMount(() => {
-    // Initial load handled by $effect
+    // Initial data load handled by $effect
   })
 
   onDestroy(() => {
@@ -229,36 +235,33 @@
     <div class="p-5">
       <!-- Traffic Tab -->
       {#if activeTab === 'traffic'}
-        <div class="space-y-4">
-          <!-- Toolbar -->
-          <div class="rounded-xl border border-slate-200 bg-slate-50/90 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/80">
-            <div class="flex flex-col sm:flex-row sm:items-center gap-3">
-              <!-- Search & Filter -->
-              <div class="flex flex-col sm:flex-row gap-3 flex-1">
-                <Input
-                  type="search"
-                  value={trafficSearchQuery}
-                  oninput={handleTrafficSearchInput}
-                  placeholder="Search IP, hostname..."
-                  prefixIcon="search"
-                  class="sm:w-64"
-                />
-                {#if trafficClients.length > 0}
-                  <Select
-                    value={trafficClientFilter}
-                    onchange={(e) => { trafficClientFilter = e.target.value; trafficPage = 1; loadTrafficData() }}
-                    class="sm:w-40"
-                  >
-                    <option value="">All clients</option>
-                    {#each trafficClients as client}
-                      <option value={client}>{client}</option>
-                    {/each}
-                  </Select>
-                {/if}
-              </div>
-
-              <!-- Action buttons -->
-              <div class="kt-btn-group self-end sm:self-auto">
+        <div class="data-table">
+          <!-- Header -->
+          <div class="data-table-header">
+            <div class="data-table-header-start">
+              <Input
+                type="search"
+                value={trafficSearchQuery}
+                oninput={handleTrafficSearchInput}
+                placeholder="Search IP, hostname..."
+                prefixIcon="search"
+                class="sm:w-64"
+              />
+              {#if trafficClients.length > 0}
+                <Select
+                  value={trafficClientFilter}
+                  onchange={(e) => { trafficClientFilter = e.target.value; trafficPage = 1; loadTrafficData() }}
+                  class="sm:w-40"
+                >
+                  <option value="">All clients</option>
+                  {#each trafficClients as client}
+                    <option value={client}>{client}</option>
+                  {/each}
+                </Select>
+              {/if}
+            </div>
+            <div class="data-table-header-end">
+              <div class="kt-btn-group">
                 <Button
                   variant={trafficAutoRefresh ? 'mono' : 'outline'}
                   size="sm"
@@ -274,113 +277,168 @@
             </div>
           </div>
 
+          <!-- Content -->
           {#if trafficLoading && trafficLogs.length === 0}
-            <LoadingSpinner size="lg" centered />
+            <div class="data-table-loading">
+              <LoadingSpinner size="lg" />
+            </div>
           {:else if trafficLogs.length === 0}
-            <EmptyState
-              icon="activity"
-              title="No traffic logs"
-              description={trafficSearch ? 'No results match your search' : 'Traffic will appear when VPN clients connect'}
-            />
+            <div class="data-table-empty">
+              <EmptyState
+                icon="activity"
+                title="No traffic logs"
+                description={trafficSearch ? 'No results match your search' : 'Traffic will appear when VPN clients connect'}
+              />
+            </div>
           {:else}
-            <div class="kt-table-wrapper rounded-lg border border-border bg-card overflow-hidden">
-              <table class="kt-table">
+            <div class="data-table-content">
+              <table>
                 <thead>
                   <tr>
                     <th>Time</th>
+                    <th>Proto</th>
                     <th>Source</th>
                     <th>Destination</th>
-                    <th>Port</th>
-                    <th>Protocol</th>
+                    <th>Country</th>
                   </tr>
                 </thead>
                 <tbody>
                   {#each trafficLogs as log}
+                    {@const geo = geoData[log.dest_ip]}
+                    {@const country = geo?.country_code || log.country}
                     <tr>
-                      <td class="whitespace-nowrap text-muted-foreground">{formatRelativeDate(log.timestamp)}</td>
-                      <td><code class="text-xs font-mono">{log.src_ip}</code></td>
-                      <td><code class="text-xs font-mono">{log.dest_ip}</code></td>
-                      <td><Badge variant="info" size="sm">{log.dest_port}</Badge></td>
-                      <td><Badge variant="muted" size="sm">{log.protocol?.toUpperCase()}</Badge></td>
+                      <td class="data-table-cell-nowrap">
+                        <div class="flex items-center gap-1.5">
+                          <Icon name="clock" size={14} class="text-muted-foreground" />
+                          <div>
+                            <div class="text-xs font-medium">{formatRelativeDate(log.timestamp)}</div>
+                            <div class="text-[10px] text-muted-foreground">{formatTime(log.timestamp)}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td>
+                        <Badge variant={log.protocol === 'tcp' ? 'info' : 'warning'} size="sm">
+                          {log.protocol?.toUpperCase()}
+                        </Badge>
+                      </td>
+                      <td class="data-table-cell-mono">
+                        <div class="flex items-center gap-2">
+                          <Icon name="device-laptop" size={14} class="text-primary" />
+                          {log.src_ip}
+                        </div>
+                      </td>
+                      <td class="data-table-cell-mono">
+                        <div class="flex items-center gap-2">
+                          <Icon name="server" size={14} class="text-muted-foreground" />
+                          {log.dest_ip}<span class="text-muted-foreground">:{log.dest_port}</span>
+                        </div>
+                      </td>
+                      <td class="text-right">
+                        {#if country}
+                          <div class="flex items-center justify-end gap-2">
+                            <img src="https://flagcdn.com/20x15/{country.toLowerCase()}.png" alt={country} class="w-5 h-4 rounded-sm shadow-sm" />
+                            <div class="hidden sm:flex items-center gap-2">
+                              <div class="border-l border-dashed border-border h-6"></div>
+                              <div class="text-right">
+                                <div class="text-[11px] text-foreground">{geo?.country_name || country}</div>
+                                {#if geo?.extra?.city || geo?.extra?.region}
+                                  <div class="text-[10px] text-muted-foreground">{geo?.extra?.city}{geo?.extra?.city && geo?.extra?.region ? ', ' : ''}{geo?.extra?.region}</div>
+                                {/if}
+                              </div>
+                            </div>
+                          </div>
+                        {:else}
+                          <span class="text-muted-foreground">—</span>
+                        {/if}
+                      </td>
                     </tr>
                   {/each}
                 </tbody>
               </table>
             </div>
 
-            <Pagination
-              bind:page={trafficPage}
-              bind:perPage={trafficPerPage}
-              total={trafficTotal}
-              onPageChange={loadTrafficData}
-            />
+            <!-- Footer -->
+            <div class="data-table-footer">
+              <Pagination
+                bind:page={trafficPage}
+                bind:perPage={trafficPerPage}
+                total={trafficTotal}
+                onPageChange={loadTrafficData}
+              />
+            </div>
           {/if}
         </div>
 
       <!-- Traefik Tab -->
       {:else if activeTab === 'traefik'}
-        <div class="space-y-4">
-          <!-- Toolbar -->
-          <div class="rounded-xl border border-slate-200 bg-slate-50/90 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/80">
-            <div class="flex flex-col sm:flex-row sm:items-center gap-3">
-              <!-- Search -->
-              <div class="flex-1">
-                <Input
-                  type="search"
-                  bind:value={traefikSearch}
-                  placeholder="Search path, client IP, method..."
-                  prefixIcon="search"
-                  class="sm:w-64"
-                />
-              </div>
-
-              <!-- Action buttons -->
-              <div class="kt-btn-group self-end sm:self-auto">
-                <Button variant="outline" size="sm" icon="refresh" onclick={loadTraefikLogs}>
-                  Refresh
-                </Button>
-              </div>
+        <div class="data-table">
+          <!-- Header -->
+          <div class="data-table-header">
+            <div class="data-table-header-start">
+              <Input
+                type="search"
+                bind:value={traefikSearch}
+                placeholder="Search path, IP, method..."
+                prefixIcon="search"
+                class="sm:w-64"
+              />
+            </div>
+            <div class="data-table-header-end">
+              <Button variant="outline" size="sm" icon="refresh" onclick={loadTraefikLogs}>
+                Refresh
+              </Button>
             </div>
           </div>
 
+          <!-- Content -->
           {#if traefikLoading && traefikLogs.length === 0}
-            <LoadingSpinner size="lg" centered />
+            <div class="data-table-loading">
+              <LoadingSpinner size="lg" />
+            </div>
           {:else if filteredTraefikLogs.length === 0}
-            <EmptyState
-              icon="file-text"
-              title="No Logs Yet"
-              description={traefikSearch ? 'No results match your search' : 'Access logs will appear when requests are made'}
-            />
+            <div class="data-table-empty">
+              <EmptyState
+                icon="file-text"
+                title="No Logs Yet"
+                description={traefikSearch ? 'No results match your search' : 'Access logs will appear when requests are made'}
+              />
+            </div>
           {:else}
-            <div class="kt-table-wrapper rounded-lg border border-border bg-card overflow-hidden">
-              <table class="kt-table">
+            <div class="data-table-content">
+              <table>
                 <thead>
                   <tr>
-                    <th>Time</th>
-                    <th>Method</th>
+                    <th>Time / Client</th>
+                    <th>Request</th>
                     <th>Path</th>
-                    <th>Status</th>
                     <th>Duration</th>
-                    <th>Client</th>
                   </tr>
                 </thead>
                 <tbody>
                   {#each filteredTraefikLogs as log}
                     <tr>
-                      <td class="whitespace-nowrap">{formatTime(log.time)}</td>
-                      <td>
-                        <Badge variant={log.method === 'GET' ? 'info' : log.method === 'POST' ? 'success' : 'muted'} size="sm">
-                          {log.method}
-                        </Badge>
+                      <td class="data-table-cell-nowrap">
+                        <div class="flex items-center gap-1.5">
+                          <Icon name="clock" size={14} class="text-muted-foreground" />
+                          <div>
+                            <div class="text-xs font-medium">{formatRelativeDate(log.time)}, {formatTime(log.time)}</div>
+                            <div class="text-[10px] text-muted-foreground font-mono">{log.clientIP}</div>
+                          </div>
+                        </div>
                       </td>
-                      <td><code class="text-xs font-mono">{log.path}</code></td>
                       <td>
-                        <Badge variant={log.status < 300 ? 'success' : log.status < 400 ? 'info' : 'danger'} size="sm">
-                          {log.status}
-                        </Badge>
+                        <div class="flex items-center gap-1">
+                          <Badge variant={log.method === 'GET' ? 'info' : log.method === 'POST' ? 'success' : 'muted'} size="sm">
+                            {log.method}
+                          </Badge>
+                          <Icon name="arrow-right" size={12} class="text-muted-foreground" />
+                          <Badge variant={log.status < 300 ? 'success' : log.status < 400 ? 'info' : 'danger'} size="sm">
+                            {log.status}
+                          </Badge>
+                        </div>
                       </td>
-                      <td>{formatDuration(log.duration)}</td>
-                      <td><code class="text-xs font-mono text-muted-foreground">{log.clientIP}</code></td>
+                      <td class="data-table-cell-mono">{log.path}</td>
+                      <td class="text-muted-foreground">{formatDuration(log.duration)}</td>
                     </tr>
                   {/each}
                 </tbody>
@@ -391,41 +449,41 @@
 
       <!-- AdGuard Tab -->
       {:else if activeTab === 'adguard'}
-        <div class="space-y-4">
-          <!-- Toolbar -->
-          <div class="rounded-xl border border-slate-200 bg-slate-50/90 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/80">
-            <div class="flex flex-col sm:flex-row sm:items-center gap-3">
-              <!-- Search -->
-              <div class="flex-1">
-                <Input
-                  type="search"
-                  bind:value={adguardSearch}
-                  placeholder="Search domains, clients..."
-                  prefixIcon="search"
-                  class="sm:w-64"
-                />
-              </div>
-
-              <!-- Action buttons -->
-              <div class="kt-btn-group self-end sm:self-auto">
-                <Button variant="outline" size="sm" icon="refresh" onclick={loadAdGuardLogs}>
-                  Refresh
-                </Button>
-              </div>
+        <div class="data-table">
+          <!-- Header -->
+          <div class="data-table-header">
+            <div class="data-table-header-start">
+              <Input
+                type="search"
+                bind:value={adguardSearch}
+                placeholder="Search domains, clients..."
+                prefixIcon="search"
+                class="sm:w-64"
+              />
+            </div>
+            <div class="data-table-header-end">
+              <Button variant="outline" size="sm" icon="refresh" onclick={loadAdGuardLogs}>
+                Refresh
+              </Button>
             </div>
           </div>
 
+          <!-- Content -->
           {#if adguardLoading && adguardLogs.length === 0}
-            <LoadingSpinner size="lg" centered />
+            <div class="data-table-loading">
+              <LoadingSpinner size="lg" />
+            </div>
           {:else if filteredAdGuardLogs.length === 0}
-            <EmptyState
-              icon="list"
-              title="No DNS Queries"
-              description={adguardSearch ? 'No results match your search' : 'Waiting for VPN clients to make DNS requests...'}
-            />
+            <div class="data-table-empty">
+              <EmptyState
+                icon="list"
+                title="No DNS Queries"
+                description={adguardSearch ? 'No results match your search' : 'Waiting for VPN clients to make DNS requests...'}
+              />
+            </div>
           {:else}
-            <div class="kt-table-wrapper rounded-lg border border-border bg-card overflow-hidden">
-              <table class="kt-table">
+            <div class="data-table-content">
+              <table>
                 <thead>
                   <tr>
                     <th>Time</th>
@@ -439,9 +497,17 @@
                   {#each filteredAdGuardLogs as log}
                     {@const status = getAdGuardStatusInfo(log)}
                     <tr>
-                      <td class="whitespace-nowrap">{formatTime(log.time)}</td>
-                      <td><code class="text-xs font-mono text-muted-foreground">{log.client || '-'}</code></td>
-                      <td><code class="text-xs font-mono {status.variant === 'danger' ? 'text-destructive' : ''}">{log.question?.name || '-'}</code></td>
+                      <td class="data-table-cell-nowrap">
+                        <div class="flex items-center gap-1.5">
+                          <Icon name="clock" size={14} class="text-muted-foreground" />
+                          <div>
+                            <div class="text-xs font-medium">{formatRelativeDate(log.time)}</div>
+                            <div class="text-[10px] text-muted-foreground">{formatTime(log.time)}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td class="data-table-cell-mono data-table-cell-muted">{log.client || '-'}</td>
+                      <td class="data-table-cell-mono {status.variant === 'danger' ? 'text-destructive' : ''}">{log.question?.name || '-'}</td>
                       <td><Badge variant="info" size="sm">{log.question?.type || 'A'}</Badge></td>
                       <td><Badge variant={status.variant} size="sm">{status.label}</Badge></td>
                     </tr>

@@ -7,8 +7,11 @@ A unified web dashboard for managing WireGuard, Headscale (Tailscale-compatible)
 - 🔒 **Dual VPN Management**: WireGuard manual peers + Headscale (Tailscale-compatible) nodes
 - 🔐 **VPN Access Control**: ACL rules to control traffic between VPN clients
 - 🛡️ **Integrated Firewall**: nftables-based firewall with port management and port scan detection
+- 🌍 **Country Blocking**: Block inbound/outbound traffic by country using IPdeny CIDR ranges
+- 🚨 **Intrusion Detection**: Fail2ban-style jails with log monitoring, auto-blocking, and CIDR escalation
+- 🗺️ **IP Geolocation**: MaxMind/IP2Location database support for traffic origin lookup
 - 🌐 **DNS Filtering**: AdGuard Home integration with query logging and filtering
-- 🚦 **Traffic Monitoring**: Real-time VPN traffic logs with connection tracking
+- 🚦 **Traffic Monitoring**: Real-time VPN traffic logs with connection tracking and geo-enrichment
 - 📊 **Unified Logs**: Combined view of traffic, HTTP (Traefik), and DNS (AdGuard) logs
 - 🐳 **Docker Management**: View and control all stack containers
 - 🎨 **Modern UI**: Svelte 5 + KTUI CSS framework with dark mode
@@ -26,6 +29,7 @@ A unified web dashboard for managing WireGuard, Headscale (Tailscale-compatible)
 │   ├── /api/hs     - Headscale management
 │   ├── /api/vpn    - Unified VPN clients + ACL rules
 │   ├── /api/fw     - Firewall + traffic logging
+│   ├── /api/geo    - Geolocation + country blocking
 │   ├── /api/traefik- Traefik configuration
 │   ├── /api/adguard- AdGuard settings
 │   ├── /api/docker - Container management
@@ -124,6 +128,7 @@ Configuration files are generated from templates in:
 │   │   ├── auth/         # Authentication + API keys
 │   │   ├── database/     # SQLite database
 │   │   ├── firewall/     # nftables + traffic logging
+│   │   ├── geolocation/  # IP lookup + country blocking
 │   │   ├── vpn/          # Unified VPN clients + ACL
 │   │   ├── wireguard/    # WireGuard config
 │   │   ├── headscale/    # Headscale API proxy
@@ -153,6 +158,8 @@ Configuration files are generated from templates in:
 - Private keys never exposed in API responses (stripped before storage)
 - Headscale API is restricted to VPN networks only
 - Firewall with port scan detection and auto-blocking
+- Country-level blocking via nftables sets (IPdeny CIDR ranges)
+- Intrusion detection with configurable jails and CIDR escalation
 - Rate limiting on all API routes
 - Security headers (XSS protection, frame deny, etc.)
 

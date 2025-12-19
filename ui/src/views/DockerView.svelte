@@ -192,96 +192,133 @@
       </div>
     </div>
 
-    <!-- Containers Grid -->
+    <!-- Containers List -->
     {#if containers.length > 0}
-      <div class="grid gap-3 md:grid-cols-2">
+      <div class="space-y-2">
         {#each containers as container}
-          <div class="bg-card border border-border rounded-lg p-4 hover:border-primary/30 transition-colors">
-            <div class="flex items-start justify-between mb-3">
-              <div class="flex items-center gap-3">
-                <div class="w-10 h-10 rounded-lg flex items-center justify-center {container.state === 'running' ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}">
-                  <Icon name={getContainerIcon(container.name)} size={20} />
+          <div class="bg-card border border-border rounded-lg px-4 py-3 hover:border-primary/30 transition-colors">
+            <div class="flex flex-wrap sm:flex-nowrap items-center gap-3 sm:gap-4">
+              <!-- Icon + Name -->
+              <div class="flex items-center gap-3 min-w-0 flex-1 sm:flex-none sm:min-w-[200px]">
+                <div class="w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0 {container.state === 'running' ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}">
+                  <Icon name={getContainerIcon(container.name)} size={16} />
                 </div>
-                <div>
-                  <h3 class="font-medium text-foreground">{container.name}</h3>
-                  <p class="text-xs text-muted-foreground truncate max-w-[180px]">{container.image}</p>
+                <div class="min-w-0">
+                  <h3 class="font-medium text-sm text-foreground">{container.name}</h3>
+                  <p class="text-[11px] text-muted-foreground truncate">{container.image.split(':')[0].split('/').pop()}</p>
                 </div>
               </div>
-              <Badge variant={getStateVariant(container.state)} size="sm">
-                {container.state}
-              </Badge>
-            </div>
 
-            <div class="text-xs text-muted-foreground mb-3">
-              {formatUptime(container.status)}
-            </div>
-
-            {#if container.ports?.length > 0}
-              <div class="flex flex-wrap gap-1 mb-3">
-                {#each container.ports.filter(p => p.publicPort) as port}
-                  <span class="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">
-                    {port.publicPort}:{port.privatePort}/{port.type}
-                  </span>
-                {/each}
+              <!-- Mobile: Status + Actions aligned right -->
+              <div class="flex flex-col items-end gap-1.5 sm:hidden">
+                <Badge variant={getStateVariant(container.state)} size="sm">
+                  {container.state}
+                </Badge>
+                <div class="btn-group">
+                  <button onclick={() => viewLogs(container)} class="custom_btns" data-kt-tooltip>
+                    <Icon name="file-text" size={14} />
+                    <span data-kt-tooltip-content class="kt-tooltip hidden">Logs</span>
+                  </button>
+                  {#if container.state === 'running'}
+                    <button onclick={() => restartContainer(container.name)} disabled={actionInProgress === container.name + '-restart'} class="custom_btns" data-kt-tooltip>
+                      {#if actionInProgress === container.name + '-restart'}
+                        <div class="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+                      {:else}
+                        <Icon name="refresh" size={14} />
+                      {/if}
+                      <span data-kt-tooltip-content class="kt-tooltip hidden">Restart</span>
+                    </button>
+                    <button onclick={() => stopContainer(container.name)} disabled={actionInProgress === container.name + '-stop'} class="custom_btns" data-kt-tooltip>
+                      {#if actionInProgress === container.name + '-stop'}
+                        <div class="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+                      {:else}
+                        <Icon name="player-stop" size={14} />
+                      {/if}
+                      <span data-kt-tooltip-content class="kt-tooltip hidden">Stop</span>
+                    </button>
+                  {:else}
+                    <button onclick={() => startContainer(container.name)} disabled={actionInProgress === container.name + '-start'} class="custom_btns" data-kt-tooltip>
+                      {#if actionInProgress === container.name + '-start'}
+                        <div class="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+                      {:else}
+                        <Icon name="player-play" size={14} />
+                      {/if}
+                      <span data-kt-tooltip-content class="kt-tooltip hidden">Start</span>
+                    </button>
+                  {/if}
+                </div>
               </div>
-            {/if}
 
-            <div class="flex items-center gap-2 pt-3 border-t border-border">
-              <Button
-                onclick={() => viewLogs(container)}
-                variant="secondary"
-                size="sm"
-              >
-                <Icon name="file-text" size={14} />
-                Logs
-              </Button>
+              <!-- Desktop: Inline layout -->
+              <div class="hidden sm:contents">
+                <!-- Status -->
+                <Badge variant={getStateVariant(container.state)} size="sm">
+                  {container.state}
+                </Badge>
 
-              <div class="flex-1"></div>
+                <!-- Uptime -->
+                <span class="text-xs text-muted-foreground">
+                  {formatUptime(container.status)}
+                </span>
 
-              {#if container.state === 'running'}
-                <Button
-                  onclick={() => restartContainer(container.name)}
-                  disabled={actionInProgress === container.name + '-restart'}
-                  variant="secondary"
-                  size="sm"
-                  class="kt-btn-info"
-                >
-                  {#if actionInProgress === container.name + '-restart'}
-                    <div class="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+                <!-- Ports -->
+                {#if container.ports?.length > 0}
+                  {@const visiblePorts = container.ports.filter(p => p.publicPort)}
+                  <div class="hidden md:flex items-center gap-1">
+                    {#each visiblePorts.slice(0, 2) as port}
+                      <span class="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">
+                        :{port.publicPort}
+                      </span>
+                    {/each}
+                    {#if visiblePorts.length > 2}
+                      <span class="text-[10px] text-muted-foreground cursor-help" data-kt-tooltip>
+                        +{visiblePorts.length - 2}
+                        <span data-kt-tooltip-content class="kt-tooltip hidden">
+                          {visiblePorts.slice(2).map(p => `:${p.publicPort}`).join(', ')}
+                        </span>
+                      </span>
+                    {/if}
+                  </div>
+                {/if}
+
+                <!-- Spacer -->
+                <div class="flex-1"></div>
+
+                <!-- Actions -->
+                <div class="btn-group">
+                  <button onclick={() => viewLogs(container)} class="custom_btns" data-kt-tooltip>
+                    <Icon name="file-text" size={14} />
+                    <span data-kt-tooltip-content class="kt-tooltip hidden">Logs</span>
+                  </button>
+                  {#if container.state === 'running'}
+                    <button onclick={() => restartContainer(container.name)} disabled={actionInProgress === container.name + '-restart'} class="custom_btns" data-kt-tooltip>
+                      {#if actionInProgress === container.name + '-restart'}
+                        <div class="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+                      {:else}
+                        <Icon name="refresh" size={14} />
+                      {/if}
+                      <span data-kt-tooltip-content class="kt-tooltip hidden">Restart</span>
+                    </button>
+                    <button onclick={() => stopContainer(container.name)} disabled={actionInProgress === container.name + '-stop'} class="custom_btns" data-kt-tooltip>
+                      {#if actionInProgress === container.name + '-stop'}
+                        <div class="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+                      {:else}
+                        <Icon name="player-stop" size={14} />
+                      {/if}
+                      <span data-kt-tooltip-content class="kt-tooltip hidden">Stop</span>
+                    </button>
                   {:else}
-                    <Icon name="refresh" size={14} />
+                    <button onclick={() => startContainer(container.name)} disabled={actionInProgress === container.name + '-start'} class="custom_btns" data-kt-tooltip>
+                      {#if actionInProgress === container.name + '-start'}
+                        <div class="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+                      {:else}
+                        <Icon name="player-play" size={14} />
+                      {/if}
+                      <span data-kt-tooltip-content class="kt-tooltip hidden">Start</span>
+                    </button>
                   {/if}
-                  Restart
-                </Button>
-                <Button
-                  onclick={() => stopContainer(container.name)}
-                  disabled={actionInProgress === container.name + '-stop'}
-                  variant="destructive"
-                  size="sm"
-                >
-                  {#if actionInProgress === container.name + '-stop'}
-                    <div class="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
-                  {:else}
-                    <Icon name="player-stop" size={14} />
-                  {/if}
-                  Stop
-                </Button>
-              {:else}
-                <Button
-                  onclick={() => startContainer(container.name)}
-                  disabled={actionInProgress === container.name + '-start'}
-                  variant="secondary"
-                  size="sm"
-                  class="kt-btn-success"
-                >
-                  {#if actionInProgress === container.name + '-start'}
-                    <div class="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
-                  {:else}
-                    <Icon name="player-play" size={14} />
-                  {/if}
-                  Start
-                </Button>
-              {/if}
+                </div>
+              </div>
             </div>
           </div>
         {/each}

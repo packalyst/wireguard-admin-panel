@@ -89,7 +89,7 @@ export function formatDate(date) {
 }
 
 /**
- * Format date as relative time (e.g., "Today", "Yesterday", "3 days ago")
+ * Format date as relative time (e.g., "Today" or "Dec 21")
  * @param {string|Date|object} date - Date to format
  * @returns {string} Relative date string
  */
@@ -104,11 +104,13 @@ export function formatRelativeDate(date) {
   const diffDays = Math.floor((today - dateDay) / (1000 * 60 * 60 * 24))
 
   if (diffDays === 0) return 'Today'
-  if (diffDays === 1) return 'Yesterday'
-  if (diffDays < 7) return `${diffDays} days ago`
-  if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`
-  if (diffDays < 365) return `${Math.floor(diffDays / 30)} months ago`
-  return `${Math.floor(diffDays / 365)} years ago`
+
+  // Show short date (e.g., "Dec 21" or "Dec 21, 2024" if different year)
+  const options = { month: 'short', day: 'numeric' }
+  if (d.getFullYear() !== now.getFullYear()) {
+    options.year = 'numeric'
+  }
+  return d.toLocaleDateString('en-US', options)
 }
 
 /**

@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { theme, apiGet, apiPost } from './stores/app.js'
+  import { theme, apiGet, apiPost, currentView, validViews } from './stores/app.js'
   import Dashboard from './views/Dashboard.svelte'
   import Login from './views/Login.svelte'
   import SetupWizard from './views/SetupWizard.svelte'
@@ -9,6 +9,18 @@
   let checking = $state(true)
   let needsSetup = $state(false)
   let showAdguardBanner = $state(false)
+
+  // Global click handler to intercept internal links
+  function handleLinkClick(e) {
+    const link = e.target.closest('a[href^="/"]')
+    if (link && !link.target && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+      const path = link.getAttribute('href').slice(1) // Remove leading /
+      if (validViews.includes(path)) {
+        e.preventDefault()
+        currentView.set(path)
+      }
+    }
+  }
 
   onMount(async () => {
     // First check if setup is complete
@@ -58,6 +70,8 @@
     user = null
   }
 </script>
+
+<svelte:window onclick={handleLinkClick} />
 
 {#if checking}
   <div class="flex items-center justify-center h-full">

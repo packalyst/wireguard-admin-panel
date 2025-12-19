@@ -25,7 +25,7 @@
     sm: 'kt-select-sm',
     lg: ''
   };
-  const sizeClass = sizeClasses[size] || sizeClasses.sm;
+  const sizeClass = $derived(sizeClasses[size] || sizeClasses.sm);
 </script>
 
 {#if label || helperText}

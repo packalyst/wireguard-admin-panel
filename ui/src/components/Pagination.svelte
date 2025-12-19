@@ -30,9 +30,11 @@
     perPage = newPerPage
     page = 1
     onPerPageChange(newPerPage)
+    onPageChange(1)
   }
 
-  function getPageNumbers() {
+  // Memoized page numbers
+  const pageNumbers = $derived.by(() => {
     const pages = []
     const maxVisible = 5
 
@@ -58,70 +60,87 @@
     }
 
     return pages
-  }
+  })
 </script>
 
-<div class="kt-datatable-toolbar">
-  <div class="kt-datatable-info text-[11px]">
-    <div class="kt-datatable-length">
-      <span>Show</span>
-      <Select
-        bind:value={perPage}
-        options={perPageOptions}
-        onchange={(e) => changePerPage(parseInt(e.target.value))}
-        class="w-14 text-[11px]"
-      />
-      <span>entries</span>
-    </div>
-    <span>
-      Showing {offset + 1} to {Math.min(offset + perPage, total)} of {total.toLocaleString()} entries
+<div class="pagination">
+  <!-- Info: per page + showing text -->
+  <div class="pagination-info">
+    <span class="pagination-select">Show</span>
+    <Select
+      bind:value={perPage}
+      options={perPageOptions}
+      onchange={(e) => changePerPage(parseInt(e.target.value))}
+      class="w-14 pagination-select"
+    />
+    <span class="pagination-info-text">
+      {offset + 1}–{Math.min(offset + perPage, total)} of {total.toLocaleString()}
     </span>
   </div>
 
-  <div class="kt-datatable-pagination">
+  <!-- Navigation -->
+  <div class="pagination-nav">
+    <!-- First -->
     <button
       onclick={() => goToPage(1)}
       disabled={page === 1}
-      class="kt-datatable-pagination-button"
+      class="pagination-btn"
+      title="First page"
     >
-      <Icon name="chevrons-left" size={16} />
+      <Icon name="chevrons-left" size={14} />
     </button>
+
+    <!-- Prev -->
     <button
       onclick={() => goToPage(page - 1)}
       disabled={page === 1}
-      class="kt-datatable-pagination-button kt-datatable-pagination-prev"
+      class="pagination-btn"
+      title="Previous page"
     >
-      <Icon name="chevron-left" size={16} />
+      <Icon name="chevron-left" size={14} />
     </button>
 
-    {#each getPageNumbers() as p}
-      {#if p === '...'}
-        <span class="kt-datatable-pagination-button kt-datatable-pagination-more">
-          <Icon name="dots" size={16} />
-        </span>
-      {:else}
-        <button
-          onclick={() => goToPage(p)}
-          class="kt-datatable-pagination-button {p === page ? 'active' : ''}"
-        >
-          {p}
-        </button>
-      {/if}
-    {/each}
+    <!-- Mobile: current page indicator -->
+    <span class="pagination-mobile-info">
+      {page} / {totalPages}
+    </span>
 
+    <!-- Desktop: page numbers -->
+    <div class="pagination-pages">
+      {#each pageNumbers as p}
+        {#if p === '...'}
+          <span class="pagination-btn pagination-btn-ellipsis">
+            <Icon name="dots" size={14} />
+          </span>
+        {:else}
+          <button
+            onclick={() => goToPage(p)}
+            class="pagination-btn {p === page ? 'pagination-btn-active' : ''}"
+          >
+            {p}
+          </button>
+        {/if}
+      {/each}
+    </div>
+
+    <!-- Next -->
     <button
       onclick={() => goToPage(page + 1)}
       disabled={page === totalPages}
-      class="kt-datatable-pagination-button kt-datatable-pagination-next"
+      class="pagination-btn"
+      title="Next page"
     >
-      <Icon name="chevron-right" size={16} />
+      <Icon name="chevron-right" size={14} />
     </button>
+
+    <!-- Last -->
     <button
       onclick={() => goToPage(totalPages)}
       disabled={page === totalPages}
-      class="kt-datatable-pagination-button"
+      class="pagination-btn"
+      title="Last page"
     >
-      <Icon name="chevrons-right" size={16} />
+      <Icon name="chevrons-right" size={14} />
     </button>
   </div>
 </div>
