@@ -245,8 +245,8 @@
               <span class="text-slate-600 dark:text-zinc-400">{nodeCount} nodes</span>
             </div>
             <div class="flex items-center gap-1.5">
-              <span class="h-1.5 w-1.5 rounded-full {onlineCount > 0 ? 'bg-emerald-500' : 'bg-slate-400 dark:bg-zinc-600'}"></span>
-              <span class="{onlineCount > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500 dark:text-zinc-500'}">{onlineCount} online</span>
+              <span class="status-dot {onlineCount > 0 ? 'status-dot-success' : 'status-dot-muted'}"></span>
+              <span class="{onlineCount > 0 ? 'text-success' : 'text-muted-foreground'}">{onlineCount} online</span>
             </div>
           </div>
 

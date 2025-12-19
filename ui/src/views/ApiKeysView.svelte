@@ -128,12 +128,12 @@
       {#each filteredKeys as key (key.id + '-' + (key.expiration?.seconds || key.expiration))}
         {@const daysLeft = getDaysUntilExpiry(key.expiration)}
         {@const isExpiringSoon = daysLeft !== null && daysLeft > 0 && daysLeft <= 7}
-        {@const borderColor = key._expired ? 'border-l-red-500' : isExpiringSoon ? 'border-l-amber-500' : 'border-l-emerald-500'}
+        {@const statusClass = key._expired ? 'error' : isExpiringSoon ? 'warning' : 'success'}
 
-        <div class="bg-card border border-border rounded-lg overflow-hidden hover:border-primary/50 transition-colors shadow-sm border-l-2 {borderColor}">
+        <div class="bg-card border border-border rounded-lg overflow-hidden hover:border-primary/50 transition-colors shadow-sm card-border-{statusClass}">
           <!-- Header -->
           <div class="flex items-center gap-3 p-3">
-            <div class="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 {key._expired ? 'bg-red-500/10 text-red-500' : isExpiringSoon ? 'bg-amber-500/10 text-amber-500' : 'bg-emerald-500/10 text-emerald-500'}">
+            <div class="status-icon status-icon-{statusClass}">
               <Icon name="key" size={18} />
             </div>
             <div class="flex-1 min-w-0">
@@ -160,8 +160,8 @@
           <!-- Actions -->
           <div class="flex items-center justify-between px-2 py-1.5 border-t border-border bg-muted/30">
             <div class="flex items-center gap-1 text-[10px]">
-              <span class="h-1.5 w-1.5 rounded-full {key._expired ? 'bg-red-500' : isExpiringSoon ? 'bg-amber-500' : 'bg-emerald-500'}"></span>
-              <span class="{key._expired ? 'text-red-600 dark:text-red-400' : isExpiringSoon ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'} font-medium">
+              <span class="status-dot status-dot-{statusClass}"></span>
+              <span class="status-text-{statusClass} font-medium">
                 {key._expired ? 'Expired' : isExpiringSoon ? 'Expiring soon' : 'Active'}
               </span>
             </div>

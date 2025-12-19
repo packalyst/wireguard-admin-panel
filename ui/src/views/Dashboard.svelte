@@ -155,7 +155,7 @@
   >
     <!-- Sidebar header (logo) -->
     <div class="flex h-14 items-center gap-3 border-b border-slate-200 bg-slate-100/90 px-4 dark:border-zinc-800 dark:bg-zinc-900/90">
-      <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-sky-500/10 text-sky-500 dark:bg-sky-500/15 dark:text-sky-300">
+      <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
         <Icon name="network" size={16} />
       </div>
       <div>
@@ -181,7 +181,7 @@
             >
               <span class="flex h-6 w-6 items-center justify-center rounded-md
                 {isChildActive(item)
-                  ? 'bg-sky-500/10 text-sky-500 dark:bg-sky-500/15 dark:text-sky-400'
+                  ? 'bg-primary/10 text-primary'
                   : 'bg-slate-200/70 text-slate-500 dark:bg-zinc-800 dark:text-zinc-400'}">
                 <Icon name={item.icon} size={14} />
               </span>
@@ -240,21 +240,21 @@
       <!-- Stats row -->
       <div class="mb-2.5 grid grid-cols-2 gap-2 text-[11px]">
         <div class="flex items-center gap-2 rounded-md bg-white px-2.5 py-2 dark:bg-zinc-800/80">
-          <span class="h-2 w-2 rounded-full bg-emerald-500"></span>
+          <span class="h-2 w-2 rounded-full bg-success"></span>
           <span class="text-slate-600 dark:text-zinc-300">{stats.online} online</span>
         </div>
         <div class="flex items-center gap-2 rounded-md bg-white px-2.5 py-2 dark:bg-zinc-800/80">
-          <span class="h-2 w-2 rounded-full bg-slate-400 dark:bg-zinc-500"></span>
+          <span class="h-2 w-2 rounded-full bg-muted-foreground"></span>
           <span class="text-slate-500 dark:text-zinc-400">{stats.offline} offline</span>
         </div>
       </div>
       <div class="mb-2.5 grid grid-cols-2 gap-2 text-[11px]">
         <div class="flex items-center gap-2 rounded-md bg-white px-2.5 py-2 dark:bg-zinc-800/80">
-          <Icon name="cloud" size={12} class="text-sky-500" />
+          <Icon name="cloud" size={12} class="text-primary" />
           <span class="text-slate-600 dark:text-zinc-300">{stats.hsNodes} Tailscale</span>
         </div>
         <div class="flex items-center gap-2 rounded-md bg-white px-2.5 py-2 dark:bg-zinc-800/80">
-          <Icon name="shield" size={12} class="text-emerald-500" />
+          <Icon name="shield" size={12} class="text-success" />
           <span class="text-slate-600 dark:text-zinc-300">{stats.wgPeers} WireGuard</span>
         </div>
       </div>

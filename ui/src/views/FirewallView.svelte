@@ -885,7 +885,7 @@
                         </td>
                         <td class="px-4 py-3 align-middle">
                           {#if p.essential}
-                            <span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-md bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400">
+                            <span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-md bg-warning/10 text-warning">
                               <Icon name="shield-check" size={12} />
                               Essential
                             </span>
@@ -912,7 +912,7 @@
                           {#if !p.essential}
                             <button
                               onclick={() => removePort(p.port, p.protocol)}
-                              class="p-1.5 rounded text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                              class="icon-btn-destructive"
                               title="Remove port"
                             >
                               <Icon name="trash" size={14} />
@@ -1261,7 +1261,7 @@
                 <div class="rounded-lg border border-slate-200 bg-white dark:border-zinc-800 dark:bg-zinc-900 {!jail.enabled && 'opacity-50'}">
                   <!-- Header row -->
                   <div class="flex items-center gap-3 px-3 py-2.5 border-b border-slate-100 dark:border-zinc-800">
-                    <div class="flex h-7 w-7 items-center justify-center rounded-md {jail.enabled ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-100 text-slate-400 dark:bg-zinc-800 dark:text-zinc-500'}">
+                    <div class="flex h-7 w-7 items-center justify-center rounded-md {jail.enabled ? 'bg-success/10 text-success' : 'bg-slate-100 text-slate-400 dark:bg-zinc-800 dark:text-zinc-500'}">
                       <Icon name={jail.name === 'sshd' ? 'key' : 'shield'} size={14} />
                     </div>
                     <div class="flex-1 min-w-0">
