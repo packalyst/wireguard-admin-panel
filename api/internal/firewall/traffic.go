@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"api/internal/geolocation"
 )
 
 // runVPNTrafficMonitor monitors VPN client outbound traffic
@@ -90,10 +92,18 @@ func (s *Service) processVPNTrafficLog(logFile string, trafficRegex *regexp.Rege
 
 		domain := s.reverseDNS(dstIP)
 
+		// Lookup country code for destination IP
+		country := ""
+		if geoSvc := geolocation.GetService(); geoSvc != nil && geoSvc.IsLookupAvailable() {
+			if result, err := geoSvc.LookupIP(dstIP); err == nil && result != nil {
+				country = result.CountryCode
+			}
+		}
+
 		s.db.Exec(`
-			INSERT INTO traffic_logs (client_ip, dest_ip, dest_port, protocol, domain)
-			VALUES (?, ?, ?, ?, ?)
-		`, srcIP, dstIP, dstPort, proto, domain)
+			INSERT INTO traffic_logs (client_ip, dest_ip, dest_port, protocol, domain, country)
+			VALUES (?, ?, ?, ?, ?, ?)
+		`, srcIP, dstIP, dstPort, proto, domain, country)
 	}
 
 	// Cleanup old traffic logs

@@ -24,10 +24,6 @@ type Service struct {
 	cancel       context.CancelFunc
 	jailMonitors map[int64]*jailMonitor
 	jailMutex    sync.RWMutex
-	// Country zone scheduler
-	zoneUpdateEnabled bool
-	zoneUpdateHour    int
-	zoneUpdateMutex   sync.RWMutex
 }
 
 // Config holds firewall configuration
@@ -100,6 +96,7 @@ type TrafficLog struct {
 	DestPort  int    `json:"dest_port"`
 	Protocol  string `json:"protocol"`
 	Domain    string `json:"domain"`
+	Country   string `json:"country"`
 }
 
 // AllowedPort represents an allowed port
@@ -119,31 +116,4 @@ type BlocklistSource struct {
 	Ranges   []string `json:"ranges,omitempty"`
 	MinScore int      `json:"minScore,omitempty"`
 	Count    int      `json:"count,omitempty"`
-}
-
-// CountryConfig represents a country from the config file
-type CountryConfig struct {
-	Code string `json:"code"`
-	Name string `json:"name"`
-	Flag string `json:"flag"`
-}
-
-// BlockedCountry represents an active country block
-type BlockedCountry struct {
-	CountryCode string `json:"countryCode"`
-	Name        string `json:"name"`
-	Direction   string `json:"direction"`
-	Enabled     bool   `json:"enabled"`
-	RangeCount  int    `json:"rangeCount"`
-	CreatedAt   string `json:"createdAt"`
-}
-
-// CountryBlockingStatus represents the status of country blocking
-type CountryBlockingStatus struct {
-	Enabled           bool   `json:"enabled"`
-	AutoUpdateEnabled bool   `json:"autoUpdateEnabled"`
-	AutoUpdateHour    int    `json:"autoUpdateHour"`
-	BlockedCount      int    `json:"blockedCount"`
-	TotalRanges       int    `json:"totalRanges"`
-	LastUpdate        string `json:"lastUpdate"`
 }

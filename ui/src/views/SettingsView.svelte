@@ -56,6 +56,23 @@
   // UI settings (stored in localStorage)
   let itemsPerPage = $state('25')
 
+  // Geolocation settings
+  let geoSettings = $state({
+    lookup_provider: 'none',
+    blocking_enabled: false,
+    auto_update: false,
+    update_hour: 3,
+    update_services: 'all',
+    maxmind_license_key: '',
+    ip2location_token: '',
+    ip2location_variant: 'DB1'
+  })
+  let geoStatus = $state(null)
+  let loadingGeo = $state(false)
+  let savingGeo = $state(false)
+  let originalGeoSettings = $state(null)
+  let triggeringGeoUpdate = $state(false)
+
   // Original values for change detection
   let originalAdguard = { username: '', password: '', dashboardEnabled: true }
   let originalSession = { timeout: '24' }
@@ -286,6 +303,72 @@
     theme.update(t => t === 'dark' ? 'light' : 'dark')
   }
 
+  // Geolocation settings functions
+  async function loadGeoSettings() {
+    loadingGeo = true
+    try {
+      const [settings, status] = await Promise.all([
+        apiGet('/api/geo/settings'),
+        apiGet('/api/geo/status')
+      ])
+      geoSettings = {
+        lookup_provider: settings.lookup_provider || 'none',
+        blocking_enabled: settings.blocking_enabled || false,
+        auto_update: settings.auto_update || false,
+        update_hour: settings.update_hour ?? 3,
+        update_services: settings.update_services || 'all',
+        maxmind_license_key: settings.maxmind_license_key || '',
+        ip2location_token: settings.ip2location_token || '',
+        ip2location_variant: settings.ip2location_variant || 'DB1'
+      }
+      originalGeoSettings = { ...geoSettings }
+      geoStatus = status
+    } catch (e) {
+      console.error('Failed to load geolocation settings:', e)
+    } finally {
+      loadingGeo = false
+    }
+  }
+
+  async function saveGeoSettings() {
+    savingGeo = true
+    try {
+      await apiPut('/api/geo/settings', geoSettings)
+      originalGeoSettings = { ...geoSettings }
+      // Reload status to see updated provider info
+      geoStatus = await apiGet('/api/geo/status')
+      toast('Geolocation settings saved', 'success')
+    } catch (e) {
+      toast('Failed to save: ' + e.message, 'error')
+    } finally {
+      savingGeo = false
+    }
+  }
+
+  async function triggerGeoUpdate() {
+    triggeringGeoUpdate = true
+    try {
+      const res = await apiPost('/api/geo/update')
+      if (res.errors > 0) {
+        toast(`Update completed with ${res.errors} errors`, 'warning')
+      } else {
+        toast('Geolocation data updated successfully', 'success')
+      }
+      // Reload status
+      geoStatus = await apiGet('/api/geo/status')
+    } catch (e) {
+      toast('Failed to update: ' + e.message, 'error')
+    } finally {
+      triggeringGeoUpdate = false
+    }
+  }
+
+  // Check if geo settings have changed
+  const geoHasChanges = $derived.by(() => {
+    if (!originalGeoSettings) return false
+    return JSON.stringify(geoSettings) !== JSON.stringify(originalGeoSettings)
+  })
+
   // VPN Router functions
   async function loadRouterStatus() {
     try {
@@ -364,6 +447,7 @@
   onMount(() => {
     loadSettings()
     loadRouterStatus()
+    loadGeoSettings()
   })
 </script>
 
@@ -762,6 +846,176 @@
             {/if}
           </Button>
         </div>
+      </div>
+    </div>
+
+    <!-- Geolocation Settings - Full width -->
+    <div class="bg-card border border-border rounded-lg overflow-hidden">
+      <div class="px-4 py-3 border-b border-border bg-muted/30">
+        <div class="flex items-center gap-2">
+          <Icon name="world" size={16} class="text-primary" />
+          <h3 class="text-sm font-semibold text-foreground">Geolocation</h3>
+        </div>
+      </div>
+      <div class="p-4 space-y-4">
+        {#if loadingGeo}
+          <div class="flex items-center justify-center py-4">
+            <div class="w-5 h-5 border-2 border-muted border-t-primary rounded-full animate-spin"></div>
+          </div>
+        {:else}
+          <!-- IP Lookup Provider -->
+          <div>
+            <h4 class="text-xs font-medium text-foreground mb-2">IP Lookup Provider</h4>
+            <p class="text-[10px] text-muted-foreground mb-3">Select a provider for IP geolocation lookups (country detection in traffic logs)</p>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <Select
+                label="Provider"
+                bind:value={geoSettings.lookup_provider}
+                options={[
+                  { value: 'none', label: 'None (disabled)' },
+                  { value: 'maxmind', label: 'MaxMind GeoLite2' },
+                  { value: 'ip2location', label: 'IP2Location Lite' }
+                ]}
+              />
+              {#if geoSettings.lookup_provider === 'ip2location'}
+                <Select
+                  label="Database Variant"
+                  bind:value={geoSettings.ip2location_variant}
+                  options={[
+                    { value: 'DB1', label: 'DB1 - Country only (~3MB)' },
+                    { value: 'DB3', label: 'DB3 - Country + City (~100MB)' }
+                  ]}
+                />
+              {/if}
+            </div>
+            {#if geoSettings.lookup_provider === 'maxmind'}
+              <div class="mt-3">
+                <Input
+                  label="MaxMind License Key"
+                  type="password"
+                  bind:value={geoSettings.maxmind_license_key}
+                  placeholder="Your MaxMind license key"
+                  helperText="Get a free key at maxmind.com/en/geolite2/signup"
+                  class="text-xs"
+                />
+              </div>
+            {/if}
+            {#if geoSettings.lookup_provider === 'ip2location'}
+              <div class="mt-3">
+                <Input
+                  label="IP2Location Download Token"
+                  type="password"
+                  bind:value={geoSettings.ip2location_token}
+                  placeholder="Your IP2Location download token (optional)"
+                  helperText="Optional: for faster downloads. Get token at ip2location.com"
+                  class="text-xs"
+                />
+              </div>
+            {/if}
+            {#if geoStatus?.providers}
+              <div class="mt-3 p-2 bg-muted/50 rounded text-[10px]">
+                {#if geoStatus.providers[geoSettings.lookup_provider]?.available}
+                  <div class="flex items-center gap-1 text-success">
+                    <Icon name="check" size={12} />
+                    <span>Database available ({(geoStatus.providers[geoSettings.lookup_provider].file_size / 1024 / 1024).toFixed(1)}MB)</span>
+                  </div>
+                  {#if geoStatus.providers[geoSettings.lookup_provider].last_update}
+                    <div class="text-muted-foreground mt-1">Last updated: {geoStatus.providers[geoSettings.lookup_provider].last_update}</div>
+                  {/if}
+                {:else if geoSettings.lookup_provider !== 'none'}
+                  <div class="flex items-center gap-1 text-warning">
+                    <Icon name="alert-circle" size={12} />
+                    <span>Database not downloaded yet. Save settings and click "Update Now".</span>
+                  </div>
+                {/if}
+              </div>
+            {/if}
+          </div>
+
+          <!-- Country Blocking -->
+          <div class="border-t border-border pt-4">
+            <div class="flex items-center justify-between">
+              <div>
+                <h4 class="text-xs font-medium text-foreground">Country Blocking</h4>
+                <p class="text-[10px] text-muted-foreground">Enable blocking traffic from specific countries in Firewall</p>
+              </div>
+              <input type="checkbox" class="kt-switch" bind:checked={geoSettings.blocking_enabled} />
+            </div>
+            {#if !geoSettings.blocking_enabled}
+              <div class="mt-2 p-2 bg-info/10 border border-info/20 rounded text-[10px] text-muted-foreground">
+                <Icon name="info-circle" size={12} class="inline mr-1" />
+                When disabled, country blocking controls in Firewall are hidden and any existing country blocks are cleared.
+              </div>
+            {/if}
+          </div>
+
+          <!-- Auto-Update Schedule -->
+          <div class="border-t border-border pt-4">
+            <div class="flex items-center justify-between mb-3">
+              <div>
+                <h4 class="text-xs font-medium text-foreground">Auto-Update Schedule</h4>
+                <p class="text-[10px] text-muted-foreground">Automatically update geolocation databases daily</p>
+              </div>
+              <input type="checkbox" class="kt-switch" bind:checked={geoSettings.auto_update} />
+            </div>
+            {#if geoSettings.auto_update}
+              <div class="grid grid-cols-2 gap-3">
+                <Select
+                  label="Update Time"
+                  bind:value={geoSettings.update_hour}
+                  options={Array.from({length: 24}, (_, i) => ({ value: i, label: `${i.toString().padStart(2, '0')}:00` }))}
+                />
+                <Select
+                  label="Services to Update"
+                  bind:value={geoSettings.update_services}
+                  options={[
+                    { value: 'all', label: 'All (lookup + blocking)' },
+                    { value: 'lookup', label: 'Lookup only' },
+                    { value: 'blocking', label: 'Blocking zones only' }
+                  ]}
+                />
+              </div>
+            {/if}
+            {#if geoStatus?.last_update_lookup || geoStatus?.last_update_blocking}
+              <div class="mt-3 text-[10px] text-muted-foreground">
+                {#if geoStatus.last_update_lookup}
+                  <div>Last lookup update: {geoStatus.last_update_lookup}</div>
+                {/if}
+                {#if geoStatus.last_update_blocking}
+                  <div>Last blocking zones update: {geoStatus.last_update_blocking}</div>
+                {/if}
+              </div>
+            {/if}
+          </div>
+
+          <!-- Save Button -->
+          <div class="flex justify-between items-center pt-2 border-t border-border">
+            <Button
+              onclick={triggerGeoUpdate}
+              disabled={triggeringGeoUpdate}
+              variant="secondary"
+              size="sm"
+              icon={triggeringGeoUpdate ? undefined : "refresh"}
+            >
+              {#if triggeringGeoUpdate}
+                <span class="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
+              {/if}
+              Update Now
+            </Button>
+            <Button
+              onclick={saveGeoSettings}
+              disabled={savingGeo || !geoHasChanges}
+              size="sm"
+              icon={savingGeo ? undefined : "device-floppy"}
+            >
+              {#if savingGeo}
+                <span class="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
+              {:else}
+                Save
+              {/if}
+            </Button>
+          </div>
+        {/if}
       </div>
     </div>
 

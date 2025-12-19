@@ -348,6 +348,19 @@ func runMigrations(db *sql.DB) error {
 		log.Printf("Migration warning: could not update allow_all_future policies: %v", err)
 	}
 
+	// Add country column to traffic_logs for geolocation
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('traffic_logs') WHERE name='country'`).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE traffic_logs ADD COLUMN country TEXT DEFAULT ''`)
+		if err != nil {
+			return fmt.Errorf("failed to add country column: %v", err)
+		}
+		log.Printf("Migration: added 'country' column to traffic_logs")
+	}
+
 	return nil
 }
 

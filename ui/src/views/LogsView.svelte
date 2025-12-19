@@ -290,6 +290,7 @@
                     <th>Time</th>
                     <th>Source</th>
                     <th>Destination</th>
+                    <th>Country</th>
                     <th>Port</th>
                     <th>Protocol</th>
                   </tr>
@@ -300,6 +301,16 @@
                       <td class="whitespace-nowrap text-muted-foreground">{formatRelativeDate(log.timestamp)}</td>
                       <td><code class="text-xs font-mono">{log.src_ip}</code></td>
                       <td><code class="text-xs font-mono">{log.dest_ip}</code></td>
+                      <td class="whitespace-nowrap">
+                        {#if log.country}
+                          <span class="inline-flex items-center gap-1">
+                            <img src="https://flagcdn.com/16x12/{log.country.toLowerCase()}.png" alt={log.country} class="w-4 h-3 rounded-sm" />
+                            <span class="text-xs text-muted-foreground">{log.country}</span>
+                          </span>
+                        {:else}
+                          <span class="text-xs text-muted-foreground">—</span>
+                        {/if}
+                      </td>
                       <td><Badge variant="info" size="sm">{log.dest_port}</Badge></td>
                       <td><Badge variant="muted" size="sm">{log.protocol?.toUpperCase()}</Badge></td>
                     </tr>

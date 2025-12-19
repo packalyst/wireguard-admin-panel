@@ -146,10 +146,7 @@
   let selectedCountries = $state([])
   let countrySearch = $state('')
   let showBlockCountriesModal = $state(false)
-  let showSchedulerModal = $state(false)
   let showCountryActionsMenu = $state(false)
-  let schedulerForm = $state({ enabled: false, hour: 3 })
-  let savingScheduler = $state(false)
   let refreshingZones = $state(false)
 
   // Load status on mount
@@ -328,17 +325,13 @@
     if (showLoading) loadingCountries = true
     try {
       const [avail, blocked, status] = await Promise.all([
-        apiGet('/api/fw/countries'),
-        apiGet('/api/fw/countries/blocked'),
-        apiGet('/api/fw/countries/status')
+        apiGet('/api/geo/countries'),
+        apiGet('/api/geo/blocked'),
+        apiGet('/api/geo/blocked/status')
       ])
       availableCountries = avail || []
       blockedCountries = blocked || []
       countryStatus = status || {}
-      schedulerForm = {
-        enabled: status?.autoUpdateEnabled || false,
-        hour: status?.autoUpdateHour ?? 3
-      }
     } catch (e) {
       toast('Failed to load countries: ' + e.message, 'error')
     } finally {
@@ -620,7 +613,7 @@
 
     blockingCountries = true
     try {
-      const res = await apiPost('/api/fw/countries/blocked', {
+      const res = await apiPost('/api/geo/blocked', {
         countryCodes: selectedCountries,
         direction: 'inbound'
       })
@@ -668,7 +661,7 @@
 
   async function unblockCountry(code) {
     try {
-      await apiDelete(`/api/fw/countries/${code}`)
+      await apiDelete(`/api/geo/blocked/${code}`)
       toast(`Country ${code} unblocked`, 'success')
       await loadCountries(false)
     } catch (e) {
@@ -679,7 +672,7 @@
   async function toggleCountryDirection(code, currentDirection) {
     const newDirection = currentDirection === 'inbound' ? 'both' : 'inbound'
     try {
-      await apiPost('/api/fw/countries/blocked', { countryCode: code, direction: newDirection })
+      await apiPost('/api/geo/blocked', { countryCode: code, direction: newDirection })
       toast(`${code} direction changed to ${newDirection}`, 'success')
       await loadCountries(false)
     } catch (e) {
@@ -687,24 +680,10 @@
     }
   }
 
-  async function saveScheduler() {
-    savingScheduler = true
-    try {
-      await apiPut('/api/fw/countries/scheduler', schedulerForm)
-      toast(`Scheduler ${schedulerForm.enabled ? 'enabled' : 'disabled'}${schedulerForm.enabled ? ` (${schedulerForm.hour}:00)` : ''}`, 'success')
-      showSchedulerModal = false
-      await loadCountries()
-    } catch (e) {
-      toast('Failed: ' + e.message, 'error')
-    } finally {
-      savingScheduler = false
-    }
-  }
-
   async function refreshZones() {
     refreshingZones = true
     try {
-      const res = await apiPost('/api/fw/countries/refresh')
+      const res = await apiPost('/api/geo/zones/refresh')
       toast(`Refreshed ${res.updated} countries${res.errors > 0 ? ` (${res.errors} errors)` : ''}`, res.errors > 0 ? 'warning' : 'success')
       await loadCountries()
     } catch (e) {
@@ -723,7 +702,7 @@
 
   // Get country name from config or blocked list
   function getCountryName(code) {
-    const blocked = blockedCountries.find(c => c.countryCode === code)
+    const blocked = blockedCountries.find(c => c.country_code === code)
     if (blocked) return blocked.name
     const avail = availableCountries.find(c => c.code === code)
     if (avail) return avail.name
@@ -732,7 +711,7 @@
 
   // Countries not yet blocked
   const unblockedCountries = $derived(
-    availableCountries.filter(c => !blockedCountries.some(b => b.countryCode === c.code))
+    availableCountries.filter(c => !blockedCountries.some(b => b.country_code === c.code))
   )
 
   // Filtered unblocked countries (for search)
@@ -1326,6 +1305,23 @@
               <div class="w-6 h-6 border-2 border-muted border-t-primary rounded-full animate-spin"></div>
               <p class="mt-2 text-sm text-muted-foreground">Loading countries...</p>
             </div>
+          {:else if countryStatus?.enabled === false}
+            <!-- Country blocking disabled -->
+            <div class="rounded-xl border border-info/30 bg-info/5 p-6 text-center">
+              <div class="flex justify-center mb-4">
+                <div class="w-12 h-12 rounded-full bg-info/10 flex items-center justify-center">
+                  <Icon name="world-off" size={24} class="text-info" />
+                </div>
+              </div>
+              <h3 class="text-lg font-semibold text-foreground mb-2">Country Blocking Disabled</h3>
+              <p class="text-sm text-muted-foreground mb-4">
+                Country blocking is currently disabled. Enable it in Settings to block traffic from specific countries.
+              </p>
+              <a href="/settings" class="kt-btn kt-btn-primary kt-btn-sm">
+                <Icon name="settings" size={14} class="mr-1" />
+                Go to Settings
+              </a>
+            </div>
           {:else}
             <div class="space-y-6">
               <!-- Currently Blocked Countries -->
@@ -1340,7 +1336,7 @@
                       <div>
                         <h4 class="text-sm font-semibold text-foreground">Blocked Countries</h4>
                         <p class="text-xs text-muted-foreground">
-                          {blockedCountries.length} {blockedCountries.length === 1 ? 'country' : 'countries'} · {countryStatus?.totalRanges?.toLocaleString() || 0} IP ranges
+                          {blockedCountries.length} {blockedCountries.length === 1 ? 'country' : 'countries'} · {countryStatus?.total_ranges?.toLocaleString() || 0} IP ranges
                         </p>
                       </div>
                     </div>
@@ -1366,14 +1362,6 @@
                             <Icon name="refresh" size={14} class="animate-spin" />
                           {/if}
                           {refreshingZones ? 'Refreshing...' : 'Refresh'}
-                        </Button>
-                        <Button
-                          onclick={() => showSchedulerModal = true}
-                          variant="outline"
-                          size="sm"
-                          icon="clock"
-                        >
-                          Scheduler
                         </Button>
                       </div>
 
@@ -1404,14 +1392,6 @@
                               <Icon name="refresh" size={14} class="kt-dropdown-item-icon {refreshingZones ? 'animate-spin' : ''}" />
                               {refreshingZones ? 'Refreshing...' : 'Refresh Zones'}
                             </button>
-                            <div class="kt-dropdown-divider"></div>
-                            <button
-                              onclick={() => { showSchedulerModal = true; showCountryActionsMenu = false }}
-                              class="kt-dropdown-item"
-                            >
-                              <Icon name="clock" size={14} class="kt-dropdown-item-icon" />
-                              Scheduler
-                            </button>
                           </div>
                           <button class="kt-dropdown-backdrop" onclick={() => showCountryActionsMenu = false} aria-label="Close menu"></button>
                         {/if}
@@ -1438,20 +1418,20 @@
                             <td class="px-3 py-2">
                               <div class="flex items-center gap-3">
                                 <img
-                                  src="https://flagcdn.com/{country.countryCode.toLowerCase()}.svg"
+                                  src="https://flagcdn.com/{country.country_code.toLowerCase()}.svg"
                                   width="24"
-                                  alt={country.countryCode}
+                                  alt={country.country_code}
                                   class="rounded-sm shadow-sm"
                                   loading="lazy"
                                 />
                                 <div class="font-medium text-slate-900 dark:text-zinc-100">
-                                  {country.name}<sup class="ml-1 text-[10px] text-slate-400 dark:text-zinc-500 font-mono">{country.countryCode}</sup>
+                                  {country.name}<sup class="ml-1 text-[10px] text-slate-400 dark:text-zinc-500 font-mono">{country.country_code}</sup>
                                 </div>
                               </div>
                             </td>
                             <td class="px-3 py-2">
                               <button
-                                onclick={() => toggleCountryDirection(country.countryCode, country.direction || 'inbound')}
+                                onclick={() => toggleCountryDirection(country.country_code, country.direction || 'inbound')}
                                 class="cursor-pointer hover:opacity-80 transition-opacity"
                                 data-kt-tooltip
                               >
@@ -1471,18 +1451,18 @@
                             <td class="px-3 py-2 text-right">
                               <Badge variant="secondary" size="sm">
                                 <Icon name="network" size={12} class="mr-1" />
-                                {country.rangeCount?.toLocaleString() || '0'}
+                                {country.range_count?.toLocaleString() || '0'}
                               </Badge>
                             </td>
                             <td class="px-3 py-2">
                               <Badge variant="secondary" size="sm">
                                 <Icon name="clock" size={12} class="mr-1" />
-                                {timeAgo(country.createdAt)}
+                                {timeAgo(country.created_at)}
                               </Badge>
                             </td>
                             <td class="px-3 py-2">
                               <button
-                                onclick={() => unblockCountry(country.countryCode)}
+                                onclick={() => unblockCountry(country.country_code)}
                                 class="custom_btns "
                                 data-kt-tooltip
                               >
@@ -1952,49 +1932,3 @@
   {/snippet}
 </Modal>
 
-<!-- Country Scheduler Modal -->
-<Modal bind:open={showSchedulerModal} title="Zone Update Scheduler" size="sm">
-  <div class="space-y-4">
-    <p class="text-sm text-muted-foreground">
-      Configure automatic daily updates of country IP zones from ipdeny.com
-    </p>
-
-    <div class="flex items-center justify-between p-3 bg-slate-50 dark:bg-zinc-800/50 rounded-lg">
-      <div>
-        <div class="font-medium text-foreground">Auto-Update</div>
-        <div class="text-xs text-muted-foreground">Update zones daily at scheduled time</div>
-      </div>
-      <label class="relative inline-flex items-center cursor-pointer">
-        <input type="checkbox" bind:checked={schedulerForm.enabled} class="sr-only peer">
-        <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-zinc-600 peer-checked:bg-primary"></div>
-      </label>
-    </div>
-
-    {#if schedulerForm.enabled}
-      <Select
-        label="Update Time (Hour)"
-        bind:value={schedulerForm.hour}
-        helperText="Server time. Current: {new Date().toLocaleTimeString()}"
-      >
-        {#each Array(24) as _, i}
-          <option value={i}>{i.toString().padStart(2, '0')}:00</option>
-        {/each}
-      </Select>
-    {/if}
-
-    {#if countryStatus?.lastUpdate}
-      <div class="text-xs text-muted-foreground">
-        Last update: {countryStatus.lastUpdate}
-      </div>
-    {/if}
-  </div>
-
-  {#snippet footer()}
-    <Button onclick={() => showSchedulerModal = false} variant="secondary" disabled={savingScheduler}>
-      Cancel
-    </Button>
-    <Button onclick={saveScheduler} icon="check" disabled={savingScheduler}>
-      {savingScheduler ? 'Saving...' : 'Save'}
-    </Button>
-  {/snippet}
-</Modal>
