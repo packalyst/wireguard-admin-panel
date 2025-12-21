@@ -226,6 +226,20 @@ input:-webkit-autofill:active {
     @apply flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-300 cursor-pointer;
   }
 
+  /* Grouped buttons - joined together with dividers */
+  .btn-group {
+    @apply flex items-center rounded-lg border border-border overflow-hidden;
+  }
+  .btn-group .custom_btns {
+    @apply rounded-none border-0 h-6 w-8;
+  }
+  .btn-group .custom_btns:not(:last-child) {
+    @apply border-r border-border;
+  }
+  .btn-group .custom_btns:hover {
+    @apply bg-muted;
+  }
+
   /* Icon button - small clickable icon */
   .icon-btn {
     @apply p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors cursor-pointer;
