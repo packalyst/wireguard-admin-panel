@@ -413,12 +413,29 @@ func updateMiddlewareValue(content, section, key string, value int) string {
 }
 
 func updateIPAllowlist(content string, ips []string) string {
-	idx := strings.Index(content, "vpn-only:")
+	// Update both vpn-only and vpn-only-silent middlewares
+	middlewares := []string{"vpn-only:", "vpn-only-silent:"}
+
+	for _, middleware := range middlewares {
+		content = updateMiddlewareSourceRange(content, middleware, ips)
+	}
+
+	return content
+}
+
+func updateMiddlewareSourceRange(content, middlewareName string, ips []string) string {
+	idx := strings.Index(content, middlewareName)
 	if idx == -1 {
 		return content
 	}
 
-	rangeIdx := strings.Index(content[idx:], "sourceRange:")
+	// Find sourceRange within this middleware section (limit search to avoid crossing into other sections)
+	searchArea := content[idx:]
+	if len(searchArea) > 500 {
+		searchArea = searchArea[:500]
+	}
+
+	rangeIdx := strings.Index(searchArea, "sourceRange:")
 	if rangeIdx == -1 {
 		return content
 	}
@@ -689,22 +706,29 @@ func (s *Service) handleSetVPNOnly(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Remove both middlewares first
-	s.removeMiddlewareFromRouter("ui", "vpn-only")
-	s.removeMiddlewareFromRouter("ui", "vpn-only-silent")
+	// Routers to update (HTTP and HTTPS)
+	routers := []string{"ui", "ui-secure"}
 
-	// Add the appropriate middleware
-	var err error
-	switch req.Mode {
-	case "403":
-		err = s.addMiddlewareToRouter("ui", "vpn-only")
-	case "silent":
-		err = s.addMiddlewareToRouter("ui", "vpn-only-silent")
+	// Remove both middlewares from all routers first
+	for _, router := range routers {
+		s.removeMiddlewareFromRouter(router, "vpn-only")
+		s.removeMiddlewareFromRouter(router, "vpn-only-silent")
 	}
 
-	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
-		return
+	// Add the appropriate middleware to all routers
+	var err error
+	for _, routerName := range routers {
+		switch req.Mode {
+		case "403":
+			err = s.addMiddlewareToRouter(routerName, "vpn-only")
+		case "silent":
+			err = s.addMiddlewareToRouter(routerName, "vpn-only-silent")
+		}
+		if err != nil {
+			// Log but continue - router may not exist (e.g., SSL not enabled)
+			log.Printf("Warning: could not update router %s: %v", routerName, err)
+			err = nil // Reset error so we continue
+		}
 	}
 
 	router.JSON(w, map[string]string{"mode": req.Mode})

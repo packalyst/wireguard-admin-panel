@@ -50,9 +50,12 @@ services:
       - "${HTTP_PORT}:80"
       - "${HTTPS_PORT}:443"
       - "${TRAEFIK_PORT}:8080"
+    environment:
+      - SILENTDROP_DEBUG=${SILENTDROP_DEBUG:-false}
     volumes:
       - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
       - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - ./traefik/acme.json:/etc/traefik/acme.json
       - ./traefik/logs:/var/log/traefik
       - ./traefik/plugins-local/src:/plugins-local/src:ro
     extra_hosts:
@@ -161,7 +164,9 @@ services:
   # UI - Unified Web Dashboard
   # ============================================
   ui:
-    build: ./ui
+    build:
+      context: ./ui
+      target: production  # Change to 'production' for smaller image (~80MB vs ~480MB)
     container_name: ui
     restart: unless-stopped
     networks:

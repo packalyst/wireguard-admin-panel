@@ -1,7 +1,7 @@
 # Traefik Dynamic Configuration
 http:
   routers:
-    # UI - catch all (lowest priority)
+    # UI - catch all (lowest priority) - HTTP
     ui:
       rule: "PathPrefix(`/`)"
       service: ui
@@ -9,7 +9,7 @@ http:
       entryPoints:
         - web
 
-    # Unified API - all /api/* routes (except /api/v1 for headscale direct)
+    # Unified API - all /api/* routes (except /api/v1 for headscale direct) - HTTP
     unified-api:
       rule: "PathPrefix(`/api/wg`) || PathPrefix(`/api/fw`) || PathPrefix(`/api/traefik`) || PathPrefix(`/api/adguard`) || PathPrefix(`/api/hs`) || PathPrefix(`/api/auth`) || PathPrefix(`/api/setup`) || PathPrefix(`/api/settings`) || PathPrefix(`/api/docker`) || PathPrefix(`/api/vpn`) || PathPrefix(`/api/geo`)"
       service: unified-api
@@ -29,16 +29,6 @@ http:
       entryPoints:
         - web
 
-    # Headscale control plane - HTTPS (for Tailscale clients)
-    # Includes /derp for DERP relay connections
-    headscale-control-secure:
-      rule: "PathPrefix(`/ts2021`) || PathPrefix(`/machine`) || PathPrefix(`/key`) || PathPrefix(`/noise`) || PathPrefix(`/derp`)"
-      service: headscale
-      priority: 100
-      entryPoints:
-        - websecure
-      tls: {}
-
     # Headscale API - BLOCKED for external access (UI uses /api/hs via unified API)
     # This prevents direct API access - all admin goes through unified API with server-side auth
     headscale-api-blocked:
@@ -52,7 +42,7 @@ http:
       entryPoints:
         - web
 
-    # API info endpoint
+    # API info endpoint - HTTP
     api-info:
       rule: "Path(`/api`) || Path(`/api/`)"
       service: unified-api

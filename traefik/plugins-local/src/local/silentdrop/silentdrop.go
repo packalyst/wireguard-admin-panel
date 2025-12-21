@@ -4,8 +4,10 @@ package silentdrop
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 )
 
@@ -45,6 +47,14 @@ type SilentDrop struct {
 	name     string
 	networks []*net.IPNet
 	mode     string
+	debug    bool
+}
+
+// log prints debug messages if debug mode is enabled
+func (s *SilentDrop) log(format string, args ...interface{}) {
+	if s.debug {
+		fmt.Fprintf(os.Stderr, "[silentdrop] "+format+"\n", args...)
+	}
 }
 
 // New creates a new SilentDrop middleware.
@@ -78,18 +88,38 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		mode = "silent"
 	}
 
-	return &SilentDrop{
+	// Enable debug via environment variable
+	debug := os.Getenv("SILENTDROP_DEBUG") == "true"
+
+	sd := &SilentDrop{
 		next:     next,
 		name:     name,
 		networks: networks,
 		mode:     mode,
-	}, nil
+		debug:    debug,
+	}
+
+	if debug {
+		sd.log("initialized with %d networks, mode=%s", len(networks), mode)
+		for _, n := range networks {
+			sd.log("  allowed network: %s", n.String())
+		}
+	}
+
+	return sd, nil
 }
 
 // ServeHTTP implements the http.Handler interface.
 func (s *SilentDrop) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+	s.log("request: %s %s from RemoteAddr=%s", req.Method, req.URL.Path, req.RemoteAddr)
+	s.log("  CF-Connecting-IP: %s", req.Header.Get("CF-Connecting-IP"))
+	s.log("  X-Forwarded-For: %s", req.Header.Get("X-Forwarded-For"))
+	s.log("  X-Real-IP: %s", req.Header.Get("X-Real-IP"))
+	s.log("  TLS: %v", req.TLS != nil)
+
 	// If no networks configured, allow all
 	if len(s.networks) == 0 {
+		s.log("  no networks configured, allowing")
 		s.next.ServeHTTP(rw, req)
 		return
 	}
@@ -97,24 +127,37 @@ func (s *SilentDrop) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	// Get client IP
 	clientIP := s.getClientIP(req)
 	if clientIP == nil {
-		// Can't determine IP, block
+		s.log("  could not determine client IP, blocking")
 		s.blockRequest(rw, req)
 		return
 	}
 
+	s.log("  detected client IP: %s", clientIP.String())
+
 	// Check if IP is allowed
 	if s.isAllowed(clientIP) {
+		s.log("  IP is in allowed range, allowing")
 		s.next.ServeHTTP(rw, req)
 		return
 	}
 
 	// Not allowed - block based on mode
+	s.log("  IP is NOT in allowed range, blocking with mode=%s", s.mode)
 	s.blockRequest(rw, req)
 }
 
 // getClientIP extracts the client IP from the request.
 func (s *SilentDrop) getClientIP(req *http.Request) net.IP {
-	// Check X-Forwarded-For header first
+	// Check CF-Connecting-IP header first (Cloudflare's real client IP)
+	if cfIP := req.Header.Get("CF-Connecting-IP"); cfIP != "" {
+		ip := net.ParseIP(strings.TrimSpace(cfIP))
+		if ip != nil {
+			s.log("  using CF-Connecting-IP: %s", cfIP)
+			return ip
+		}
+	}
+
+	// Check X-Forwarded-For header
 	if xff := req.Header.Get("X-Forwarded-For"); xff != "" {
 		// Take the first IP (original client)
 		parts := strings.Split(xff, ",")
@@ -155,26 +198,50 @@ func (s *SilentDrop) isAllowed(ip net.IP) bool {
 // blockRequest handles blocking based on the configured mode.
 func (s *SilentDrop) blockRequest(rw http.ResponseWriter, req *http.Request) {
 	if s.mode == "silent" {
-		s.dropConnection(rw)
+		s.log("  executing silent drop")
+		s.dropConnection(rw, req)
 		return
 	}
 
 	// Error mode - serve 403 page directly
+	s.log("  returning 403 Forbidden")
 	rw.Header().Set("Content-Type", "text/html; charset=utf-8")
+	rw.Header().Set("Connection", "close")
+	rw.Header().Set("Cache-Control", "no-store")
 	rw.WriteHeader(http.StatusForbidden)
-	rw.Write([]byte(errorPageHTML))
+	_, err := rw.Write([]byte(errorPageHTML))
+	if err != nil {
+		s.log("  error writing 403 response: %v", err)
+	}
 }
 
 // dropConnection silently closes the connection without sending a response.
-func (s *SilentDrop) dropConnection(rw http.ResponseWriter) {
+func (s *SilentDrop) dropConnection(rw http.ResponseWriter, req *http.Request) {
 	// Try to hijack the connection and close it
 	hj, ok := rw.(http.Hijacker)
 	if ok {
 		conn, _, err := hj.Hijack()
 		if err == nil && conn != nil {
+			s.log("  hijacked connection, closing")
+			// For TCP connections, set linger to 0 to send RST instead of FIN
+			// This makes the close appear as a network error (connection reset)
+			if tcpConn, ok := conn.(*net.TCPConn); ok {
+				tcpConn.SetLinger(0)
+			}
 			conn.Close()
 			return
 		}
+		s.log("  hijack failed: %v", err)
+	} else {
+		s.log("  ResponseWriter does not support Hijacker")
 	}
-	// Fallback: just don't respond (connection will timeout)
+
+	// Fallback: Return empty response with connection close
+	// This is the best we can do when hijack fails (e.g., with TLS)
+	s.log("  using fallback: empty 444 response")
+	rw.Header().Set("Connection", "close")
+	rw.Header().Set("Content-Length", "0")
+	// 444 is nginx's "No Response" - many clients treat it as connection closed
+	// If this causes issues, we could also try just not writing anything
+	rw.WriteHeader(444)
 }

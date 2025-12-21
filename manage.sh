@@ -34,6 +34,48 @@ detect_public_ip() {
     echo "$ip"
 }
 
+validate_domain_dns() {
+    local domain="$1"
+    local expected_ip="$2"
+
+    # Check if dig is available, otherwise use host or nslookup
+    local resolved_ip=""
+
+    if command -v dig &> /dev/null; then
+        resolved_ip=$(dig +short "$domain" A 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+    elif command -v host &> /dev/null; then
+        resolved_ip=$(host "$domain" 2>/dev/null | grep "has address" | head -1 | awk '{print $NF}')
+    elif command -v nslookup &> /dev/null; then
+        resolved_ip=$(nslookup "$domain" 2>/dev/null | grep -A1 "Name:" | grep "Address:" | awk '{print $2}' | head -1)
+    else
+        echo "no-dns-tool"
+        return 2
+    fi
+
+    if [ -z "$resolved_ip" ]; then
+        echo "unresolved"
+        return 1
+    fi
+
+    if [ "$resolved_ip" = "$expected_ip" ]; then
+        echo "$resolved_ip"
+        return 0
+    else
+        echo "$resolved_ip"
+        return 1
+    fi
+}
+
+validate_email() {
+    local email="$1"
+    # Basic email validation regex
+    if [[ "$email" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
 prompt_yes_no() {
     local prompt="$1"
     local default="${2:-n}"
@@ -222,6 +264,7 @@ if [ "$DOCKER_RUNNING" = true ]; then
                 rm -f headscale/config/config.yaml
                 rm -f traefik/traefik.yml
                 rm -f traefik/dynamic.yml
+                rm -f traefik/acme.json
                 rm -f adguard/conf/AdGuardHome.yaml
 
                 # Clean data directories
@@ -545,7 +588,7 @@ echo -e "${BLUE}Configuration:${NC}"
 echo ""
 
 # 1. Detect and configure SERVER_IP
-echo -e "${YELLOW}[1/3] Detecting public IP address...${NC}"
+echo -e "${YELLOW}[1/5] Detecting public IP address...${NC}"
 DETECTED_IP=$(detect_public_ip)
 
 if [ -n "$DETECTED_IP" ]; then
@@ -582,7 +625,7 @@ set +a
 echo ""
 
 # 2. Development Mode
-echo -e "${YELLOW}[2/3] Development Mode:${NC}"
+echo -e "${YELLOW}[2/5] Development Mode:${NC}"
 echo "  - Production: Optimized build, nginx server"
 echo "  - Development: Hot reload, instant code changes"
 echo ""
@@ -597,8 +640,8 @@ fi
 
 echo ""
 
-# 3. Admin Panel Domain
-echo -e "${YELLOW}[3/4] Admin Panel Domain:${NC}"
+# 3. Admin Panel Domain (VPN-only)
+echo -e "${YELLOW}[3/5] Admin Panel Domain (VPN-only):${NC}"
 echo "  Configure a custom domain for the admin panel (requires VPN connection)"
 echo ""
 
@@ -608,8 +651,114 @@ update_env_value "ADMIN_DOMAIN" "$ADMIN_DOMAIN"
 echo -e "${GREEN}✓ Admin domain set to: ${ADMIN_DOMAIN}${NC}"
 echo ""
 
-# 4. Check AdGuard credentials
-echo -e "${YELLOW}[4/4] Checking AdGuard credentials...${NC}"
+# 4. SSL/HTTPS Configuration
+echo -e "${YELLOW}[4/5] SSL/HTTPS Configuration:${NC}"
+echo "  Enable automatic HTTPS with Let's Encrypt certificates"
+echo ""
+
+# Load existing values
+CURRENT_SSL_DOMAIN="${SSL_DOMAIN:-}"
+CURRENT_SSL_EMAIL="${LETSENCRYPT_EMAIL:-}"
+
+if prompt_yes_no "Enable HTTPS with Let's Encrypt?" "y"; then
+    SSL_ENABLED="true"
+    echo ""
+
+    # Get domain
+    if [ -n "$CURRENT_SSL_DOMAIN" ]; then
+        echo -e "Current SSL domain: ${CYAN}${CURRENT_SSL_DOMAIN}${NC}"
+        read -p "Enter domain for SSL certificate (or press Enter to keep current): " SSL_DOMAIN_INPUT
+        SSL_DOMAIN="${SSL_DOMAIN_INPUT:-$CURRENT_SSL_DOMAIN}"
+    else
+        read -p "Enter domain for SSL certificate (e.g., vpn.example.com): " SSL_DOMAIN
+        if [ -z "$SSL_DOMAIN" ]; then
+            echo -e "${RED}✗ Domain is required for SSL${NC}"
+            SSL_ENABLED="false"
+        fi
+    fi
+
+    if [ "$SSL_ENABLED" = "true" ] && [ -n "$SSL_DOMAIN" ]; then
+        # Validate domain DNS
+        echo ""
+        echo -e "${YELLOW}Validating domain DNS...${NC}"
+
+        DNS_RESULT=$(validate_domain_dns "$SSL_DOMAIN" "$SERVER_IP")
+        DNS_STATUS=$?
+
+        if [ $DNS_STATUS -eq 2 ]; then
+            echo -e "${YELLOW}⚠ No DNS lookup tool available (dig/host/nslookup)${NC}"
+            echo -e "  Cannot verify domain points to this server."
+            if prompt_yes_no "Continue anyway? (Make sure $SSL_DOMAIN points to $SERVER_IP)" "n"; then
+                echo -e "${YELLOW}⚠ Proceeding without DNS validation${NC}"
+            else
+                SSL_ENABLED="false"
+                echo -e "${YELLOW}SSL disabled - please configure DNS and try again${NC}"
+            fi
+        elif [ $DNS_STATUS -eq 0 ]; then
+            echo -e "${GREEN}✓ Domain $SSL_DOMAIN resolves to $SERVER_IP${NC}"
+        else
+            if [ "$DNS_RESULT" = "unresolved" ]; then
+                echo -e "${RED}✗ Domain $SSL_DOMAIN does not resolve to any IP${NC}"
+                echo -e "  Please add an A record pointing to: ${CYAN}${SERVER_IP}${NC}"
+            else
+                echo -e "${RED}✗ Domain $SSL_DOMAIN resolves to ${DNS_RESULT}, not ${SERVER_IP}${NC}"
+                echo -e "  Please update the A record to point to: ${CYAN}${SERVER_IP}${NC}"
+            fi
+            echo ""
+            if prompt_yes_no "Continue anyway? (SSL will fail if DNS is incorrect)" "n"; then
+                echo -e "${YELLOW}⚠ Proceeding with mismatched DNS${NC}"
+            else
+                SSL_ENABLED="false"
+                echo -e "${YELLOW}SSL disabled - please fix DNS and run ./manage.sh again${NC}"
+            fi
+        fi
+    fi
+
+    # Get email for Let's Encrypt
+    if [ "$SSL_ENABLED" = "true" ]; then
+        echo ""
+        if [ -n "$CURRENT_SSL_EMAIL" ]; then
+            echo -e "Current email: ${CYAN}${CURRENT_SSL_EMAIL}${NC}"
+            read -p "Enter email for Let's Encrypt (or press Enter to keep current): " SSL_EMAIL_INPUT
+            LETSENCRYPT_EMAIL="${SSL_EMAIL_INPUT:-$CURRENT_SSL_EMAIL}"
+        else
+            read -p "Enter email for Let's Encrypt notifications: " LETSENCRYPT_EMAIL
+        fi
+
+        if [ -n "$LETSENCRYPT_EMAIL" ]; then
+            if validate_email "$LETSENCRYPT_EMAIL"; then
+                echo -e "${GREEN}✓ Email validated${NC}"
+            else
+                echo -e "${YELLOW}⚠ Email format looks invalid, but continuing...${NC}"
+            fi
+        else
+            echo -e "${RED}✗ Email is required for Let's Encrypt${NC}"
+            SSL_ENABLED="false"
+        fi
+    fi
+
+    # Save SSL configuration
+    if [ "$SSL_ENABLED" = "true" ]; then
+        update_env_value "SSL_ENABLED" "true"
+        update_env_value "SSL_DOMAIN" "$SSL_DOMAIN"
+        update_env_value "LETSENCRYPT_EMAIL" "$LETSENCRYPT_EMAIL"
+        echo ""
+        echo -e "${GREEN}✓ SSL enabled for: ${SSL_DOMAIN}${NC}"
+        echo -e "${GREEN}✓ Certificates will be auto-renewed${NC}"
+    else
+        update_env_value "SSL_ENABLED" "false"
+    fi
+else
+    SSL_ENABLED="false"
+    update_env_value "SSL_ENABLED" "false"
+    echo -e "${YELLOW}✓ SSL disabled - using HTTP only${NC}"
+    echo -e "  ${CYAN}Tip: Use Cloudflare Flexible SSL if you want HTTPS without local certs${NC}"
+fi
+
+echo ""
+
+# 5. Check AdGuard credentials
+echo -e "${YELLOW}[5/5] Checking AdGuard credentials...${NC}"
 
 GENERATED_PASSWORD=""
 
@@ -719,14 +868,85 @@ echo ""
 
 echo -e "${YELLOW}Generating config files from templates...${NC}"
 
+# Create acme.json for SSL certificates (if SSL enabled)
+if [ "$SSL_ENABLED" = "true" ]; then
+    if [ ! -f "traefik/acme.json" ]; then
+        touch traefik/acme.json
+        chmod 600 traefik/acme.json
+        echo "  ✓ traefik/acme.json (created with 600 permissions)"
+    else
+        # Ensure permissions are correct
+        chmod 600 traefik/acme.json
+        echo "  ✓ traefik/acme.json (permissions verified)"
+    fi
+fi
+
 # Headscale config
 if [ -f "headscale/config/config.yaml.template" ]; then
     envsubst < headscale/config/config.yaml.template > headscale/config/config.yaml
     echo "  ✓ headscale/config/config.yaml"
 fi
 
-# Traefik configs
-if [ -f "traefik/traefik.yml.template" ]; then
+# Traefik configs - with SSL support
+if [ "$SSL_ENABLED" = "true" ]; then
+    echo -e "  ${GREEN}SSL enabled${NC} - configuring Let's Encrypt for ${SSL_DOMAIN}"
+
+    # Generate traefik.yml with SSL configuration
+    cat > traefik/traefik.yml << EOF
+# Traefik Static Configuration (SSL enabled)
+api:
+  dashboard: true
+  insecure: true
+
+experimental:
+  localPlugins:
+    silentdrop:
+      moduleName: local/silentdrop
+
+entryPoints:
+  web:
+    address: ":${HTTP_PORT}"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+  websecure:
+    address: ":${HTTPS_PORT}"
+  traefik:
+    address: ":${TRAEFIK_PORT}"
+
+providers:
+  file:
+    filename: /etc/traefik/dynamic.yml
+    watch: true
+
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: ${LETSENCRYPT_EMAIL}
+      storage: /etc/traefik/acme.json
+      httpChallenge:
+        entryPoint: web
+
+log:
+  level: INFO
+  filePath: /var/log/traefik/traefik.log
+
+accessLog:
+  filePath: /var/log/traefik/access.log
+  format: json
+  fields:
+    headers:
+      defaultMode: drop
+      names:
+        User-Agent: keep
+        X-Forwarded-For: keep
+        X-Real-IP: keep
+EOF
+    echo "  ✓ traefik/traefik.yml (with SSL)"
+elif [ -f "traefik/traefik.yml.template" ]; then
+    # Generate traefik.yml without SSL
     envsubst < traefik/traefik.yml.template > traefik/traefik.yml
     echo "  ✓ traefik/traefik.yml"
 fi
@@ -739,8 +959,26 @@ if [ -f "traefik/dynamic.yml.template" ]; then
         VPN_SOURCE_RANGE+="            - \"$net\""$'\n'
     done
     export VPN_SOURCE_RANGE="${VPN_SOURCE_RANGE%$'\n'}"  # Remove trailing newline
+
+    # Generate base dynamic.yml
     envsubst < traefik/dynamic.yml.template > traefik/dynamic.yml
-    echo "  ✓ traefik/dynamic.yml"
+
+    # If SSL enabled, insert SSL routers before the services section
+    if [ "$SSL_ENABLED" = "true" ] && [ -f "traefik/dynamic-ssl-routers.yml.template" ]; then
+        # Read SSL routers template and substitute variables
+        SSL_ROUTERS=$(envsubst < traefik/dynamic-ssl-routers.yml.template)
+
+        # Insert SSL routers before "  services:" line
+        # Using awk to insert content before the services section
+        awk -v ssl="$SSL_ROUTERS" '
+            /^  services:/ { print ssl }
+            { print }
+        ' traefik/dynamic.yml > traefik/dynamic.yml.tmp && mv traefik/dynamic.yml.tmp traefik/dynamic.yml
+
+        echo "  ✓ traefik/dynamic.yml (with SSL routers)"
+    else
+        echo "  ✓ traefik/dynamic.yml"
+    fi
 fi
 
 # AdGuard config
@@ -769,11 +1007,30 @@ echo ""
 echo -e "${GREEN}=== VPN Stack Started ===${NC}"
 echo ""
 echo -e "${BLUE}Access your services:${NC}"
-echo -e "  ${GREEN}Dashboard:${NC}   http://${SERVER_IP}/ (or http://${ADMIN_DOMAIN} via VPN)"
+if [ "$SSL_ENABLED" = "true" ]; then
+    echo -e "  ${GREEN}Dashboard:${NC}   https://${SSL_DOMAIN}/ ${CYAN}(SSL enabled)${NC}"
+    echo -e "                 or http://${ADMIN_DOMAIN} via VPN"
+else
+    echo -e "  ${GREEN}Dashboard:${NC}   http://${SERVER_IP}/ (or http://${ADMIN_DOMAIN} via VPN)"
+fi
 echo -e "  ${GREEN}Traefik:${NC}     http://${SERVER_IP}:${TRAEFIK_PORT}"
 echo -e "  ${GREEN}AdGuard:${NC}     http://${SERVER_IP}:${ADGUARD_PORT}"
 echo -e "  ${GREEN}API:${NC}         http://${SERVER_IP}:${API_PORT}"
 echo ""
+
+if [ "$SSL_ENABLED" = "true" ]; then
+    echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║${NC}  ${GREEN}✓ SSL/HTTPS enabled with Let's Encrypt${NC}                    ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}                                                            ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}  Domain: ${YELLOW}${SSL_DOMAIN}${NC}"
+    printf "${CYAN}║${NC}  %-56s ${CYAN}║${NC}\n" ""
+    echo -e "${CYAN}║${NC}  Certificates will be auto-renewed.                       ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}                                                            ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}  ${YELLOW}Cloudflare settings:${NC}                                      ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}    SSL/TLS → Full (strict)                                ${CYAN}║${NC}"
+    echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+fi
 
 if [ -n "$GENERATED_PASSWORD" ]; then
     echo -e "${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
