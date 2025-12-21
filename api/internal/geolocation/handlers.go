@@ -30,6 +30,7 @@ func (s *Service) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		"ip2location_variant":     s.config.IP2LocationVariant,
 		"maxmind_configured":      maxmindConfigured,
 		"ip2location_configured":  ip2locationConfigured,
+		"providers":               s.providersConfig.Providers,
 	}
 
 	router.JSON(w, response)
@@ -247,9 +248,9 @@ func (s *Service) handleGetCountries(w http.ResponseWriter, r *http.Request) {
 	countries := []map[string]interface{}{}
 	for code, cfg := range s.countryConfigs {
 		countries = append(countries, map[string]interface{}{
-			"code":   code,
-			"name":   cfg.Name,
-			"region": cfg.Region,
+			"code":      code,
+			"name":      cfg.Name,
+			"continent": cfg.Continent,
 		})
 	}
 	router.JSON(w, countries)
@@ -463,32 +464,58 @@ func (s *Service) handleUnblockCountry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get zones before deleting
-	var direction string
-	s.db.QueryRow("SELECT direction FROM blocked_countries WHERE country_code = ?", countryCode).Scan(&direction)
-
-	// Remove from nftables first
-	if err := s.RemoveCountryBlocking(countryCode, direction); err != nil {
-		log.Printf("Warning: failed to remove nftables rules for %s: %v", countryCode, err)
+	// Get current status and direction
+	var direction, currentStatus string
+	err := s.db.QueryRow("SELECT direction, COALESCE(status, 'active') FROM blocked_countries WHERE country_code = ?", countryCode).Scan(&direction, &currentStatus)
+	if err != nil {
+		router.JSONError(w, "Country not found", http.StatusNotFound)
+		return
 	}
 
-	// Delete from database
-	result, err := s.db.Exec("DELETE FROM blocked_countries WHERE country_code = ?", countryCode)
+	// If already removing, just return current status
+	if currentStatus == "removing" {
+		router.JSON(w, map[string]interface{}{
+			"status":      "removing",
+			"countryCode": countryCode,
+		})
+		return
+	}
+
+	// Set status to 'removing' immediately
+	_, err = s.db.Exec("UPDATE blocked_countries SET status = 'removing' WHERE country_code = ?", countryCode)
 	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	deleted, _ := result.RowsAffected()
-	if deleted > 0 {
-		// Also delete cached zones
-		if provider, ok := s.blockingProvider.(*IPDenyProvider); ok {
-			provider.DeleteCachedZones(countryCode)
+	// Process removal in background
+	go func() {
+		// Remove from nftables
+		if err := s.RemoveCountryBlocking(countryCode, direction); err != nil {
+			log.Printf("Warning: failed to remove nftables rules for %s: %v", countryCode, err)
 		}
-	}
+
+		// Delete from database
+		result, err := s.db.Exec("DELETE FROM blocked_countries WHERE country_code = ?", countryCode)
+		if err != nil {
+			log.Printf("Error deleting blocked country %s: %v", countryCode, err)
+			// Revert status on error
+			s.db.Exec("UPDATE blocked_countries SET status = 'active' WHERE country_code = ?", countryCode)
+			return
+		}
+
+		deleted, _ := result.RowsAffected()
+		if deleted > 0 {
+			// Also delete cached zones
+			if provider, ok := s.blockingProvider.(*IPDenyProvider); ok {
+				provider.DeleteCachedZones(countryCode)
+			}
+			log.Printf("Country %s unblocked successfully", countryCode)
+		}
+	}()
 
 	router.JSON(w, map[string]interface{}{
-		"status":      "removed",
+		"status":      "removing",
 		"countryCode": countryCode,
 	})
 }

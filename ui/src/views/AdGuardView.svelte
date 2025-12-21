@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { toast, apiGet, apiPost, apiPut, apiDelete } from '../stores/app.js'
+  import { toast, apiGet, apiPut, getInitialTab } from '../stores/app.js'
   import { formatNumber } from '../lib/utils/format.js'
   import Icon from '../components/Icon.svelte'
   import Badge from '../components/Badge.svelte'
@@ -17,7 +17,7 @@
   let { loading = $bindable(true) } = $props()
 
   // Core state
-  let activeTab = $state('overview')
+  let activeTab = $state(getInitialTab('overview', ['overview', 'filters', 'rules', 'rewrites']))
   let status = $state(null)
   let stats = $state(null)
 
@@ -33,6 +33,9 @@
 
   // Track which tabs have been loaded
   let loadedTabs = $state({})
+
+  // Loading states
+  let refreshingFilters = $state(false)
 
   // Modals
   let showAddFilterModal = $state(false)
@@ -65,26 +68,18 @@
     { id: 'other', name: 'Other', services: ['spotify', 'tinder', 'ebay'] },
   ]
 
-  // Load core data (status/stats) on mount
+  // Load core data (status/stats) on mount - single request
   async function loadCoreData() {
     try {
-      const [statusRes, statsRes, sbRes, parentalRes, ssRes, blockedRes, allRes] = await Promise.all([
-        apiGet('/api/adguard/status').catch(() => null),
-        apiGet('/api/adguard/stats').catch(() => null),
-        apiGet('/api/adguard/safebrowsing').catch(() => null),
-        apiGet('/api/adguard/parental').catch(() => null),
-        apiGet('/api/adguard/safesearch').catch(() => null),
-        apiGet('/api/adguard/blocked').catch(() => null),
-        apiGet('/api/adguard/blocked/all').catch(() => null)
-      ])
-      status = statusRes
-      stats = statsRes
-      safeBrowsing = sbRes
-      parental = parentalRes
-      safeSearch = ssRes
-      blockedServices = Array.isArray(blockedRes) ? blockedRes : (blockedRes?.ids || [])
-      if (allRes?.blocked_services) {
-        allServices = allRes.blocked_services
+      const data = await apiGet('/api/adguard/overview')
+      status = data.status || null
+      stats = data.stats || null
+      safeBrowsing = data.safeBrowsing || null
+      parental = data.parental || null
+      safeSearch = data.safeSearch || null
+      blockedServices = Array.isArray(data.blockedServices) ? data.blockedServices : (data.blockedServices?.ids || [])
+      if (data.availableServices?.blocked_services) {
+        allServices = data.availableServices.blocked_services
       }
       loadedTabs.services = true
       loadedTabs.safety = true
@@ -106,40 +101,6 @@
       loadedTabs.rules = true
     } catch (e) {
       toast('Failed to load filters: ' + e.message, 'error')
-    }
-  }
-
-  async function loadServices() {
-    if (loadedTabs.services) return
-    try {
-      const [blockedRes, allRes] = await Promise.all([
-        apiGet('/api/adguard/blocked'),
-        apiGet('/api/adguard/blocked/all').catch(() => null)
-      ])
-      blockedServices = Array.isArray(blockedRes) ? blockedRes : (blockedRes?.ids || [])
-      if (allRes?.blocked_services) {
-        allServices = allRes.blocked_services
-      }
-      loadedTabs.services = true
-    } catch (e) {
-      toast('Failed to load services: ' + e.message, 'error')
-    }
-  }
-
-  async function loadSafety() {
-    if (loadedTabs.safety) return
-    try {
-      const [sbRes, parentalRes, ssRes] = await Promise.all([
-        apiGet('/api/adguard/safebrowsing'),
-        apiGet('/api/adguard/parental'),
-        apiGet('/api/adguard/safesearch')
-      ])
-      safeBrowsing = sbRes
-      parental = parentalRes
-      safeSearch = ssRes
-      loadedTabs.safety = true
-    } catch (e) {
-      toast('Failed to load safety settings: ' + e.message, 'error')
     }
   }
 
@@ -195,7 +156,7 @@
   // Actions
   async function toggleProtection(enabled) {
     try {
-      await apiPost('/api/adguard/protection', { enabled })
+      await apiPut('/api/adguard/config', { type: 'protection', enabled })
       toast(enabled ? 'Protection enabled' : 'Protection disabled', 'success')
       status = { ...status, protection_enabled: enabled }
     } catch (e) {
@@ -207,7 +168,7 @@
     if (addFilterMode === 'manual') {
       if (!newFilterName || !newFilterUrl) return
       try {
-        await apiPost('/api/adguard/filtering/add', { name: newFilterName, url: newFilterUrl })
+        await apiPut('/api/adguard/filtering', { action: 'add', filters: [{ name: newFilterName, url: newFilterUrl }] })
         toast('Filter added', 'success')
         newFilterName = ''
         newFilterUrl = ''
@@ -218,23 +179,22 @@
         toast('Failed: ' + e.message, 'error')
       }
     } else {
-      // Add selected lists
+      // Add selected lists in batch
       if (selectedLists.length === 0) return
-      let added = 0
-      let failed = 0
-      for (const listId of selectedLists) {
-        const list = blocklists.categories.flatMap(c => c.lists).find(l => l.id === listId)
-        if (list) {
-          try {
-            await apiPost('/api/adguard/filtering/add', { name: list.name, url: list.url })
-            added++
-          } catch (e) {
-            failed++
-          }
-        }
+      const filtersToAdd = selectedLists
+        .map(listId => blocklists.categories.flatMap(c => c.lists).find(l => l.id === listId))
+        .filter(Boolean)
+        .map(list => ({ name: list.name, url: list.url }))
+
+      try {
+        const result = await apiPut('/api/adguard/filtering', { action: 'add', filters: filtersToAdd })
+        const added = result.added?.length || 0
+        const failed = result.errors?.length || 0
+        if (added > 0) toast(`Added ${added} filter${added > 1 ? 's' : ''}`, 'success')
+        if (failed > 0) toast(`Failed to add ${failed} filter${failed > 1 ? 's' : ''}`, 'error')
+      } catch (e) {
+        toast('Failed: ' + e.message, 'error')
       }
-      if (added > 0) toast(`Added ${added} filter${added > 1 ? 's' : ''}`, 'success')
-      if (failed > 0) toast(`Failed to add ${failed} filter${failed > 1 ? 's' : ''}`, 'error')
       selectedLists = []
       filterSearchQuery = ''
       showAddFilterModal = false
@@ -269,7 +229,7 @@
 
   async function removeFilter(url) {
     try {
-      await apiPost('/api/adguard/filtering/remove', { url })
+      await apiPut('/api/adguard/filtering', { action: 'remove', url })
       toast('Filter removed', 'success')
       loadedTabs.filters = false
       loadFilters()
@@ -280,7 +240,7 @@
 
   async function toggleFilter(url, name, enabled) {
     try {
-      await apiPost('/api/adguard/filtering/toggle', { url, name, enabled })
+      await apiPut('/api/adguard/filtering', { action: 'toggle', url, name, enabled })
       // Update local state optimistically
       filters = filters.map(f => f.url === url ? { ...f, enabled } : f)
       toast(enabled ? 'Filter enabled' : 'Filter disabled', 'success')
@@ -290,20 +250,23 @@
   }
 
   async function refreshFilters() {
+    refreshingFilters = true
     try {
-      await apiPost('/api/adguard/filtering/refresh')
+      await apiPut('/api/adguard/filtering', { action: 'refresh' })
       toast('Filters updated', 'success')
       loadedTabs.filters = false
-      loadFilters()
+      await loadFilters()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
+    } finally {
+      refreshingFilters = false
     }
   }
 
   async function addRule(rule) {
     try {
       const newRules = [...userRules, rule]
-      await apiPost('/api/adguard/filtering/rules', { rules: newRules })
+      await apiPut('/api/adguard/filtering', { action: 'setRules', rules: newRules })
       toast('Rule added', 'success')
       loadedTabs.filters = false
       loadFilters()
@@ -315,7 +278,7 @@
   async function removeRule(rule) {
     try {
       const newRules = userRules.filter(r => r !== rule)
-      await apiPost('/api/adguard/filtering/rules', { rules: newRules })
+      await apiPut('/api/adguard/filtering', { action: 'setRules', rules: newRules })
       toast('Rule removed', 'success')
       loadedTabs.filters = false
       loadFilters()
@@ -343,7 +306,7 @@
       const newServices = blocked
         ? [...blockedServices, serviceId]
         : blockedServices.filter(s => s !== serviceId)
-      await apiPut('/api/adguard/blocked', { ids: newServices })
+      await apiPut('/api/adguard/config', { type: 'blockedServices', services: newServices })
       blockedServices = newServices
       toast(blocked ? `${serviceId} blocked` : `${serviceId} unblocked`, 'success')
     } catch (e) {
@@ -353,7 +316,7 @@
 
   async function toggleSafeBrowsing(enabled) {
     try {
-      await apiPost('/api/adguard/safebrowsing', { enabled })
+      await apiPut('/api/adguard/config', { type: 'safeBrowsing', enabled })
       safeBrowsing = { ...safeBrowsing, enabled }
       toast(enabled ? 'Safe Browsing enabled' : 'Safe Browsing disabled', 'success')
     } catch (e) {
@@ -363,7 +326,7 @@
 
   async function toggleParental(enabled) {
     try {
-      await apiPost('/api/adguard/parental', { enabled })
+      await apiPut('/api/adguard/config', { type: 'parental', enabled })
       parental = { ...parental, enabled }
       toast(enabled ? 'Parental Control enabled' : 'Parental Control disabled', 'success')
     } catch (e) {
@@ -373,7 +336,7 @@
 
   async function toggleSafeSearch(enabled) {
     try {
-      await apiPost('/api/adguard/safesearch', { enabled })
+      await apiPut('/api/adguard/config', { type: 'safeSearch', enabled })
       safeSearch = { ...safeSearch, enabled }
       toast(enabled ? 'Safe Search enabled' : 'Safe Search disabled', 'success')
     } catch (e) {
@@ -384,7 +347,7 @@
   async function addRewrite() {
     if (!newRewriteDomain || !newRewriteAnswer) return
     try {
-      await apiPost('/api/adguard/rewrites', { domain: newRewriteDomain, answer: newRewriteAnswer })
+      await apiPut('/api/adguard/rewrites', { action: 'add', domain: newRewriteDomain, answer: newRewriteAnswer })
       // Update local state
       rewrites = [...rewrites, { domain: newRewriteDomain, answer: newRewriteAnswer }]
       toast('Rewrite added', 'success')
@@ -397,7 +360,7 @@
 
   async function deleteRewrite(domain, answer) {
     try {
-      await apiDelete('/api/adguard/rewrites', { domain, answer })
+      await apiPut('/api/adguard/rewrites', { action: 'delete', domain, answer })
       toast('Rewrite deleted', 'success')
       loadedTabs.rewrites = false
       loadRewrites()
@@ -415,8 +378,6 @@
     loadedTabs[activeTab] = false
     if (activeTab === 'filters') loadFilters()
     else if (activeTab === 'rules') loadFilters()
-    else if (activeTab === 'services') loadServices()
-    else if (activeTab === 'safety') loadSafety()
     else if (activeTab === 'rewrites') loadRewrites()
     else loadCoreData()
   }
@@ -611,8 +572,8 @@
               </div>
               <div class="flex gap-2">
                 {#if filters.length > 0}
-                  <Button onclick={refreshFilters} variant="secondary" size="sm" icon="refresh">
-                    Update
+                  <Button onclick={refreshFilters} variant="secondary" size="sm" icon="refresh" loading={refreshingFilters} disabled={refreshingFilters}>
+                    {refreshingFilters ? 'Updating...' : 'Update'}
                   </Button>
                 {/if}
                 <Button onclick={() => showAddFilterModal = true} size="sm" icon="plus">

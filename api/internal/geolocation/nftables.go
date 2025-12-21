@@ -173,6 +173,7 @@ func (s *Service) getBlockedCountries() ([]BlockedCountry, error) {
 
 	rows, err := s.db.Query(`
 		SELECT b.country_code, b.name, b.direction, b.enabled,
+			COALESCE(b.status, 'active') as status,
 			COALESCE(LENGTH(c.zones) - LENGTH(REPLACE(c.zones, char(10), '')) + 1, 0) as range_count,
 			b.created_at
 		FROM blocked_countries b
@@ -187,7 +188,7 @@ func (s *Service) getBlockedCountries() ([]BlockedCountry, error) {
 	var countries []BlockedCountry
 	for rows.Next() {
 		var c BlockedCountry
-		if err := rows.Scan(&c.CountryCode, &c.Name, &c.Direction, &c.Enabled, &c.RangeCount, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.CountryCode, &c.Name, &c.Direction, &c.Enabled, &c.Status, &c.RangeCount, &c.CreatedAt); err != nil {
 			continue
 		}
 		countries = append(countries, c)

@@ -3,9 +3,7 @@
   import { toast, apiGet } from '../stores/app.js'
   import Icon from '../components/Icon.svelte'
   import Badge from '../components/Badge.svelte'
-  import Tabs from '../components/Tabs.svelte'
   import LoadingSpinner from '../components/LoadingSpinner.svelte'
-  import EmptyState from '../components/EmptyState.svelte'
 
   let { loading = $bindable(true) } = $props()
 
@@ -13,27 +11,17 @@
   let services = $state([])
   let middlewares = $state([])
   let overview = $state(null)
-  let activeTab = $state('overview')
-
-  const tabs = [
-    { id: 'overview', label: 'Overview', icon: 'layout' },
-    { id: 'routers', label: 'Routers', icon: 'git-branch' },
-    { id: 'services', label: 'Services', icon: 'server' },
-    { id: 'middlewares', label: 'Middlewares', icon: 'shield' }
-  ]
 
   async function loadData() {
     try {
-      const [routersRes, servicesRes, middlewaresRes, overviewRes] = await Promise.all([
-        apiGet('/api/traefik/http/routers').catch(() => []),
-        apiGet('/api/traefik/http/services').catch(() => []),
-        apiGet('/api/traefik/http/middlewares').catch(() => []),
-        apiGet('/api/traefik/overview').catch(() => null)
-      ])
-      routers = Array.isArray(routersRes) ? routersRes : Object.entries(routersRes || {}).map(([name, r]) => ({ ...r, name }))
-      services = Array.isArray(servicesRes) ? servicesRes : Object.entries(servicesRes || {}).map(([name, s]) => ({ ...s, name }))
-      middlewares = Array.isArray(middlewaresRes) ? middlewaresRes : Object.entries(middlewaresRes || {}).map(([name, m]) => ({ ...m, name }))
-      overview = overviewRes
+      const data = await apiGet('/api/traefik/overview')
+      const routersRes = data.routers || []
+      const servicesRes = data.services || []
+      const middlewaresRes = data.middlewares || []
+      routers = Array.isArray(routersRes) ? routersRes : Object.entries(routersRes).map(([name, r]) => ({ ...r, name }))
+      services = Array.isArray(servicesRes) ? servicesRes : Object.entries(servicesRes).map(([name, s]) => ({ ...s, name }))
+      middlewares = Array.isArray(middlewaresRes) ? middlewaresRes : Object.entries(middlewaresRes).map(([name, m]) => ({ ...m, name }))
+      overview = data.overview
     } catch (e) {
       toast('Failed to load Traefik data: ' + e.message, 'error')
     } finally {
@@ -132,203 +120,186 @@
       </div>
     </div>
 
-    <!-- Tabs -->
+    <!-- Active Protections -->
     <div class="bg-card border border-border rounded-lg overflow-hidden">
-      <Tabs {tabs} bind:activeTab urlKey="tab" />
+      <div class="px-4 py-3 border-b border-border bg-muted/30">
+        <div class="flex items-center gap-2">
+          <Icon name="shield-check" size={16} class="text-primary" />
+          <h3 class="text-sm font-semibold text-foreground">Active Protections</h3>
+        </div>
+      </div>
+      <div class="p-4">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div class="flex items-center gap-3 p-3 bg-success/10 border border-success/20 rounded-lg">
+          <Icon name="shield-check" size={18} class="text-success" />
+          <div>
+            <div class="text-xs font-medium text-foreground">Rate Limiting</div>
+            <div class="text-[10px] text-muted-foreground">Enabled</div>
+          </div>
+        </div>
+        <div class="flex items-center gap-3 p-3 bg-success/10 border border-success/20 rounded-lg">
+          <Icon name="file-text" size={18} class="text-success" />
+          <div>
+            <div class="text-xs font-medium text-foreground">Access Logging</div>
+            <div class="text-[10px] text-muted-foreground">JSON format</div>
+          </div>
+        </div>
+        <div class="flex items-center gap-3 p-3 bg-success/10 border border-success/20 rounded-lg">
+          <Icon name="lock" size={18} class="text-success" />
+          <div>
+            <div class="text-xs font-medium text-foreground">Security Headers</div>
+            <div class="text-[10px] text-muted-foreground">XSS protection</div>
+          </div>
+        </div>
+        <div class="flex items-center gap-3 p-3 bg-success/10 border border-success/20 rounded-lg">
+          <Icon name="globe" size={18} class="text-success" />
+          <div>
+            <div class="text-xs font-medium text-foreground">IP Allowlist</div>
+            <div class="text-[10px] text-muted-foreground">VPN only</div>
+          </div>
+        </div>
+        </div>
+      </div>
+    </div>
 
-      <div class="p-5">
-        <!-- Overview Tab -->
-        {#if activeTab === 'overview'}
-          <div class="space-y-6">
-            <!-- Active Protections -->
-            <div>
-              <h4 class="text-sm font-semibold text-foreground mb-3">Active Protections</h4>
-              <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <div class="flex items-center gap-3 p-3 bg-success/10 border border-success/20 rounded-lg">
-                  <Icon name="shield-check" size={18} class="text-success" />
-                  <div>
-                    <div class="text-xs font-medium text-foreground">Rate Limiting</div>
-                    <div class="text-[10px] text-muted-foreground">Enabled</div>
+    <!-- Routers -->
+    <div class="bg-card border border-border rounded-lg overflow-hidden">
+      <div class="px-4 py-3 border-b border-border bg-muted/30">
+        <div class="flex items-center gap-2">
+          <Icon name="git-branch" size={16} class="text-primary" />
+          <h3 class="text-sm font-semibold text-foreground">Routers</h3>
+        </div>
+      </div>
+      <div class="p-4">
+      {#if routers.length === 0}
+        <div class="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-muted/30 py-8 text-center">
+          <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+            <Icon name="git-branch" size={20} />
+          </div>
+          <h4 class="mt-3 text-sm font-medium text-foreground">No Routers</h4>
+          <p class="mt-1 text-xs text-muted-foreground">Routers will appear when configured</p>
+        </div>
+      {:else}
+        <div class="grid gap-3 md:grid-cols-2">
+          {#each routers as router}
+            <div class="p-3 bg-muted/30 border border-border rounded-lg">
+              <div class="flex items-center justify-between mb-2">
+                <div class="flex items-center gap-2">
+                  <div class="w-8 h-8 rounded-lg flex items-center justify-center bg-info/10 text-info flex-shrink-0">
+                    <Icon name="git-branch" size={16} />
                   </div>
+                  <span class="text-sm font-medium text-foreground truncate">{router.name}</span>
                 </div>
-                <div class="flex items-center gap-3 p-3 bg-success/10 border border-success/20 rounded-lg">
-                  <Icon name="file-text" size={18} class="text-success" />
-                  <div>
-                    <div class="text-xs font-medium text-foreground">Access Logging</div>
-                    <div class="text-[10px] text-muted-foreground">JSON format</div>
+                <Badge variant={router.status === 'enabled' ? 'success' : 'danger'} size="sm">
+                  {router.status || 'unknown'}
+                </Badge>
+              </div>
+              <div class="space-y-1.5 text-xs pl-10">
+                {#if router.rule}
+                  <code class="block px-2 py-1 bg-muted rounded font-mono text-[11px] break-all">{router.rule}</code>
+                {/if}
+                {#if router.service}
+                  <div class="flex items-center gap-1.5 text-muted-foreground">
+                    <Icon name="arrow-right" size={12} />
+                    <span>{router.service}</span>
                   </div>
-                </div>
-                <div class="flex items-center gap-3 p-3 bg-success/10 border border-success/20 rounded-lg">
-                  <Icon name="lock" size={18} class="text-success" />
-                  <div>
-                    <div class="text-xs font-medium text-foreground">Security Headers</div>
-                    <div class="text-[10px] text-muted-foreground">XSS protection</div>
+                {/if}
+                {#if router.middlewares?.length}
+                  <div class="flex flex-wrap gap-1">
+                    {#each router.middlewares as mw}
+                      <span class="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{mw}</span>
+                    {/each}
                   </div>
-                </div>
-                <div class="flex items-center gap-3 p-3 bg-success/10 border border-success/20 rounded-lg">
-                  <Icon name="globe" size={18} class="text-success" />
-                  <div>
-                    <div class="text-xs font-medium text-foreground">IP Allowlist</div>
-                    <div class="text-[10px] text-muted-foreground">VPN only</div>
-                  </div>
-                </div>
+                {/if}
               </div>
             </div>
+          {/each}
+        </div>
+      {/if}
+      </div>
+    </div>
 
-            <!-- Routing Overview as Cards -->
-            <div>
-              <h4 class="text-sm font-semibold text-foreground mb-3">Routing Overview</h4>
-              {#if routers.filter(r => !r.name.includes('@internal')).length > 0}
-                <div class="grid gap-2">
-                  {#each routers.filter(r => !r.name.includes('@internal')) as router}
-                    {@const hasProtection = router.middlewares?.filter(m => !m.includes('rewrite')).length > 0}
-                    <div class="flex items-center gap-3 p-3 bg-muted/30 border border-border rounded-lg hover:border-primary/30 transition-colors">
-                      <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 {hasProtection ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}">
-                        <Icon name={hasProtection ? 'shield-check' : 'route'} size={16} />
-                      </div>
-                      <div class="flex-1 min-w-0">
-                        <div class="flex items-center gap-2">
-                          <code class="text-xs font-mono text-foreground bg-muted px-1.5 py-0.5 rounded">{router.rule?.replace('PathPrefix(`', '').replace('`)', '') || '-'}</code>
-                          <Icon name="arrow-right" size={12} class="text-muted-foreground" />
-                          <span class="text-xs text-muted-foreground truncate">{router.service || '-'}</span>
-                        </div>
-                        {#if router.middlewares?.filter(m => !m.includes('rewrite')).length}
-                          <div class="flex flex-wrap gap-1 mt-1">
-                            {#each router.middlewares.filter(m => !m.includes('rewrite')) as mw}
-                              <span class="text-[10px] px-1.5 py-0.5 rounded bg-success/10 text-success">{mw.split('@')[0]}</span>
-                            {/each}
-                          </div>
-                        {/if}
-                      </div>
-                    </div>
-                  {/each}
-                </div>
-              {:else}
-                <div class="flex flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 py-8 text-center dark:border-zinc-700 dark:bg-zinc-900/70">
-                  <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-200/80 text-slate-500 dark:bg-zinc-700 dark:text-zinc-400">
-                    <Icon name="route" size={20} />
+    <!-- Services -->
+    <div class="bg-card border border-border rounded-lg overflow-hidden">
+      <div class="px-4 py-3 border-b border-border bg-muted/30">
+        <div class="flex items-center gap-2">
+          <Icon name="server" size={16} class="text-primary" />
+          <h3 class="text-sm font-semibold text-foreground">Services</h3>
+        </div>
+      </div>
+      <div class="p-4">
+      {#if services.length === 0}
+        <div class="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-muted/30 py-8 text-center">
+          <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+            <Icon name="server" size={20} />
+          </div>
+          <h4 class="mt-3 text-sm font-medium text-foreground">No Services</h4>
+          <p class="mt-1 text-xs text-muted-foreground">Services will appear when configured</p>
+        </div>
+      {:else}
+        <div class="grid gap-3 md:grid-cols-3">
+          {#each services as service}
+            <div class="p-3 bg-muted/30 border border-border rounded-lg">
+              <div class="flex items-center justify-between mb-2">
+                <div class="flex items-center gap-2">
+                  <div class="w-8 h-8 rounded-lg flex items-center justify-center bg-primary/10 text-primary flex-shrink-0">
+                    <Icon name="server" size={16} />
                   </div>
-                  <h4 class="mt-3 text-sm font-medium text-slate-700 dark:text-zinc-200">No Routes</h4>
-                  <p class="mt-1 text-xs text-slate-500 dark:text-zinc-500">Routes will appear when configured</p>
+                  <span class="text-sm font-medium text-foreground truncate">{service.name}</span>
+                </div>
+                <Badge variant={service.status === 'enabled' ? 'success' : 'warning'} size="sm">
+                  {service.status || 'loadbalancer'}
+                </Badge>
+              </div>
+              {#if service.loadBalancer?.servers?.length}
+                <div class="space-y-1 pl-10">
+                  {#each service.loadBalancer.servers as server}
+                    <code class="block px-2 py-1 bg-muted rounded font-mono text-[11px]">{server.url || server.address}</code>
+                  {/each}
                 </div>
               {/if}
             </div>
+          {/each}
+        </div>
+      {/if}
+      </div>
+    </div>
+
+    <!-- Middlewares -->
+    <div class="bg-card border border-border rounded-lg overflow-hidden">
+      <div class="px-4 py-3 border-b border-border bg-muted/30">
+        <div class="flex items-center gap-2">
+          <Icon name="shield" size={16} class="text-primary" />
+          <h3 class="text-sm font-semibold text-foreground">Middlewares</h3>
+        </div>
+      </div>
+      <div class="p-4">
+      {#if middlewares.length === 0}
+        <div class="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-muted/30 py-8 text-center">
+          <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+            <Icon name="shield" size={20} />
           </div>
-
-        <!-- Routers Tab -->
-        {:else if activeTab === 'routers'}
-          {#if routers.length === 0}
-            <div class="flex flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 py-12 text-center dark:border-zinc-700 dark:bg-zinc-900/70">
-              <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-200/80 text-slate-500 dark:bg-zinc-700 dark:text-zinc-400">
-                <Icon name="git-branch" size={20} />
-              </div>
-              <h4 class="mt-3 text-sm font-medium text-slate-700 dark:text-zinc-200">No Routers</h4>
-              <p class="mt-1 text-xs text-slate-500 dark:text-zinc-500">Routers will appear when configured in Traefik</p>
-            </div>
-          {:else}
-            <div class="grid gap-3 md:grid-cols-2">
-              {#each routers as router}
-                <div class="p-3 bg-muted/30 border border-border rounded-lg">
-                  <div class="flex items-center justify-between mb-2">
-                    <div class="flex items-center gap-2">
-                      <div class="w-8 h-8 rounded-lg flex items-center justify-center bg-info/10 text-info flex-shrink-0">
-                        <Icon name="git-branch" size={16} />
-                      </div>
-                      <span class="text-sm font-medium text-foreground truncate">{router.name}</span>
-                    </div>
-                    <Badge variant={router.status === 'enabled' ? 'success' : 'danger'} size="sm">
-                      {router.status || 'unknown'}
-                    </Badge>
+          <h4 class="mt-3 text-sm font-medium text-foreground">No Middlewares</h4>
+          <p class="mt-1 text-xs text-muted-foreground">Middlewares will appear when configured</p>
+        </div>
+      {:else}
+        <div class="grid gap-3 md:grid-cols-3">
+          {#each middlewares as mw}
+            <div class="p-3 bg-muted/30 border border-border rounded-lg">
+              <div class="flex items-center justify-between mb-1">
+                <div class="flex items-center gap-2">
+                  <div class="w-8 h-8 rounded-lg flex items-center justify-center bg-warning/10 text-warning flex-shrink-0">
+                    <Icon name="shield" size={16} />
                   </div>
-                  <div class="space-y-1.5 text-xs pl-10">
-                    {#if router.rule}
-                      <code class="block px-2 py-1 bg-muted rounded font-mono text-[11px] break-all">{router.rule}</code>
-                    {/if}
-                    {#if router.service}
-                      <div class="flex items-center gap-1.5 text-muted-foreground">
-                        <Icon name="arrow-right" size={12} />
-                        <span>{router.service}</span>
-                      </div>
-                    {/if}
-                    {#if router.middlewares?.length}
-                      <div class="flex flex-wrap gap-1">
-                        {#each router.middlewares as mw}
-                          <span class="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{mw}</span>
-                        {/each}
-                      </div>
-                    {/if}
-                  </div>
+                  <span class="text-sm font-medium text-foreground truncate">{mw.name}</span>
                 </div>
-              {/each}
-            </div>
-          {/if}
-
-        <!-- Services Tab -->
-        {:else if activeTab === 'services'}
-          {#if services.length === 0}
-            <div class="flex flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 py-12 text-center dark:border-zinc-700 dark:bg-zinc-900/70">
-              <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-200/80 text-slate-500 dark:bg-zinc-700 dark:text-zinc-400">
-                <Icon name="server" size={20} />
+                <Badge variant="info" size="sm">{getMiddlewareType(mw)}</Badge>
               </div>
-              <h4 class="mt-3 text-sm font-medium text-slate-700 dark:text-zinc-200">No Services</h4>
-              <p class="mt-1 text-xs text-slate-500 dark:text-zinc-500">Services will appear when configured in Traefik</p>
+              <div class="text-xs text-muted-foreground pl-10">{getMiddlewareConfig(mw)}</div>
             </div>
-          {:else}
-            <div class="grid gap-3 md:grid-cols-2">
-              {#each services as service}
-                <div class="p-3 bg-muted/30 border border-border rounded-lg">
-                  <div class="flex items-center justify-between mb-2">
-                    <div class="flex items-center gap-2">
-                      <div class="w-8 h-8 rounded-lg flex items-center justify-center bg-primary/10 text-primary flex-shrink-0">
-                        <Icon name="server" size={16} />
-                      </div>
-                      <span class="text-sm font-medium text-foreground truncate">{service.name}</span>
-                    </div>
-                    <Badge variant={service.status === 'enabled' ? 'success' : 'warning'} size="sm">
-                      {service.status || 'loadbalancer'}
-                    </Badge>
-                  </div>
-                  {#if service.loadBalancer?.servers?.length}
-                    <div class="space-y-1 pl-10">
-                      {#each service.loadBalancer.servers as server}
-                        <code class="block px-2 py-1 bg-muted rounded font-mono text-[11px]">{server.url || server.address}</code>
-                      {/each}
-                    </div>
-                  {/if}
-                </div>
-              {/each}
-            </div>
-          {/if}
-
-        <!-- Middlewares Tab -->
-        {:else if activeTab === 'middlewares'}
-          {#if middlewares.length === 0}
-            <div class="flex flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 py-12 text-center dark:border-zinc-700 dark:bg-zinc-900/70">
-              <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-200/80 text-slate-500 dark:bg-zinc-700 dark:text-zinc-400">
-                <Icon name="shield" size={20} />
-              </div>
-              <h4 class="mt-3 text-sm font-medium text-slate-700 dark:text-zinc-200">No Middlewares</h4>
-              <p class="mt-1 text-xs text-slate-500 dark:text-zinc-500">Middlewares will appear when configured in Traefik</p>
-            </div>
-          {:else}
-            <div class="grid gap-3 md:grid-cols-2">
-              {#each middlewares as mw}
-                <div class="p-3 bg-muted/30 border border-border rounded-lg">
-                  <div class="flex items-center justify-between mb-1">
-                    <div class="flex items-center gap-2">
-                      <div class="w-8 h-8 rounded-lg flex items-center justify-center bg-warning/10 text-warning flex-shrink-0">
-                        <Icon name="shield" size={16} />
-                      </div>
-                      <span class="text-sm font-medium text-foreground truncate">{mw.name}</span>
-                    </div>
-                    <Badge variant="info" size="sm">{getMiddlewareType(mw)}</Badge>
-                  </div>
-                  <div class="text-xs text-muted-foreground pl-10">{getMiddlewareConfig(mw)}</div>
-                </div>
-              {/each}
-            </div>
-          {/if}
-        {/if}
+          {/each}
+        </div>
+      {/if}
       </div>
     </div>
   {/if}

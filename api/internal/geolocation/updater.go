@@ -70,11 +70,6 @@ func (s *Service) updateLookupProvider() {
 		return
 	}
 
-	if !provider.NeedsUpdate() {
-		log.Printf("Lookup provider %s is up to date", provider.Name())
-		return
-	}
-
 	log.Printf("Updating lookup provider: %s", provider.Name())
 	if err := provider.Update(); err != nil {
 		log.Printf("Error updating lookup provider: %v", err)

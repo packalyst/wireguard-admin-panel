@@ -4,12 +4,11 @@ import "time"
 
 // GeoResult represents the result of an IP geolocation lookup
 type GeoResult struct {
-	IP          string `json:"ip"`
-	CountryCode string `json:"country_code"`
-	CountryName string `json:"country_name"`
-	City        string `json:"city,omitempty"`
-	Region      string `json:"region,omitempty"`
-	Provider    string `json:"provider"`
+	IP          string                 `json:"ip"`
+	CountryCode string                 `json:"country_code"`
+	CountryName string                 `json:"country_name"`
+	Provider    string                 `json:"provider"`
+	Extra       map[string]interface{} `json:"extra,omitempty"`
 }
 
 // Provider interface for geolocation lookup providers
@@ -84,14 +83,15 @@ type BlockedCountry struct {
 	Name        string `json:"name"`
 	Direction   string `json:"direction"` // inbound, both
 	Enabled     bool   `json:"enabled"`
+	Status      string `json:"status"` // active, adding, removing
 	RangeCount  int    `json:"range_count"`
 	CreatedAt   string `json:"created_at"`
 }
 
 // CountryConfig holds country metadata from config file
 type CountryConfig struct {
-	Name   string `json:"name"`
-	Region string `json:"region"`
+	Name      string `json:"name"`
+	Continent string `json:"continent"`
 }
 
 // Settings request/response types
@@ -131,4 +131,31 @@ type CountryBlockingStatus struct {
 	LastUpdate    string `json:"last_update"`
 	AutoUpdate    bool   `json:"auto_update"`
 	UpdateHour    int    `json:"update_hour"`
+}
+
+// ProviderVariant represents a database variant for a provider
+type ProviderVariant struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	FileCode    string `json:"file_code"`
+}
+
+// ProviderConfig holds configuration for a geolocation provider
+type ProviderConfig struct {
+	ID               string            `json:"id"`
+	Name             string            `json:"name"`
+	Description      string            `json:"description"`
+	SignupURL        string            `json:"signup_url"`
+	UpdateFrequency  string            `json:"update_frequency"`
+	RequiresKey      bool              `json:"requires_key"`
+	Variants         []ProviderVariant `json:"variants,omitempty"`
+	BaseURL          string            `json:"base_url,omitempty"`
+	FileCodeTemplate string            `json:"file_code_template,omitempty"`
+	FileNameTemplate string            `json:"file_name_template,omitempty"`
+}
+
+// ProvidersConfig holds all provider configurations
+type ProvidersConfig struct {
+	Providers map[string]ProviderConfig `json:"providers"`
 }

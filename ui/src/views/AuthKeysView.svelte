@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
   import { toast, apiGet, apiPost } from '../stores/app.js'
-  import { copyToClipboard as copyText } from '$lib/utils/clipboard.js'
+  import { copyWithToast } from '../stores/helpers.js'
   import { parseDate, formatDateShort, formatExpiryDate, isExpired, getDaysUntilExpiry } from '$lib/utils/format.js'
   import Icon from '../components/Icon.svelte'
   import Button from '../components/Button.svelte'
@@ -129,10 +129,7 @@
     }
   }
 
-  async function copyToClipboard(text) {
-    const success = await copyText(text)
-    toast(success ? 'Copied!' : 'Failed to copy', success ? 'success' : 'error')
-  }
+  const copyToClipboard = (text) => copyWithToast(text, toast)
 
   onMount(() => {
     loadData()

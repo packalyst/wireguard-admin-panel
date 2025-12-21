@@ -28,6 +28,9 @@ type Service struct {
 	// Country configs loaded from file
 	countryConfigs map[string]CountryConfig
 
+	// Provider configs loaded from file
+	providersConfig ProvidersConfig
+
 	// Thread safety
 	mu sync.RWMutex
 
@@ -73,6 +76,9 @@ func New(dataDir string) (*Service, error) {
 
 	// Load country configs from file
 	s.loadCountryConfigs()
+
+	// Load provider configs from file
+	s.loadProvidersConfig()
 
 	// Load configuration from settings
 	s.loadConfig()
@@ -124,6 +130,28 @@ func (s *Service) loadCountryConfigs() {
 	}
 
 	log.Printf("Loaded %d country configs", len(s.countryConfigs))
+}
+
+// loadProvidersConfig loads provider configurations from JSON file
+func (s *Service) loadProvidersConfig() {
+	configPath := "/app/configs/geolocation.json"
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		log.Printf("Warning: failed to load providers config from %s: %v", configPath, err)
+		return
+	}
+
+	if err := json.Unmarshal(data, &s.providersConfig); err != nil {
+		log.Printf("Warning: failed to parse providers config: %v", err)
+		return
+	}
+
+	log.Printf("Loaded %d provider configs", len(s.providersConfig.Providers))
+}
+
+// GetProvidersConfig returns the providers configuration
+func (s *Service) GetProvidersConfig() ProvidersConfig {
+	return s.providersConfig
 }
 
 // loadConfig loads configuration from settings
@@ -204,7 +232,19 @@ func (s *Service) initProviders() error {
 			s.lookupProvider = provider
 		}
 	case "ip2location":
-		provider := NewIP2LocationProvider(filepath.Join(s.dataDir, "ip2location"), s.config.IP2LocationToken, s.config.IP2LocationVariant)
+		// Get templates from provider config
+		var fileCodeTemplate, fileNameTemplate string
+		if cfg, ok := s.providersConfig.Providers["ip2location"]; ok {
+			fileCodeTemplate = cfg.FileCodeTemplate
+			fileNameTemplate = cfg.FileNameTemplate
+		}
+		provider := NewIP2LocationProvider(
+			filepath.Join(s.dataDir, "ip2location"),
+			s.config.IP2LocationToken,
+			s.config.IP2LocationVariant,
+			fileCodeTemplate,
+			fileNameTemplate,
+		)
 		if err := provider.Init(); err != nil {
 			log.Printf("Warning: IP2Location provider init failed: %v", err)
 			lastErr = err

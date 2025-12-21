@@ -68,6 +68,7 @@
     ip2location_variant: 'DB1'
   })
   let geoStatus = $state(null)
+  let geoProviders = $state(null)  // Provider configs from API
   let loadingGeo = $state(false)
   let savingGeo = $state(false)
   let originalGeoSettings = $state(null)
@@ -317,12 +318,13 @@
         auto_update: settings.auto_update || false,
         update_hour: settings.update_hour ?? 3,
         update_services: settings.update_services || 'all',
-        maxmind_license_key: settings.maxmind_license_key || '',
-        ip2location_token: settings.ip2location_token || '',
+        maxmind_license_key: settings.maxmind_configured ? '••••••••' : '',
+        ip2location_token: settings.ip2location_configured ? '••••••••' : '',
         ip2location_variant: settings.ip2location_variant || 'DB1'
       }
       originalGeoSettings = { ...geoSettings }
       geoStatus = status
+      geoProviders = settings.providers || null
     } catch (e) {
       console.error('Failed to load geolocation settings:', e)
     } finally {
@@ -333,7 +335,13 @@
   async function saveGeoSettings() {
     savingGeo = true
     try {
-      await apiPut('/api/geo/settings', geoSettings)
+      // Don't send placeholder values for tokens/keys
+      const payload = {
+        ...geoSettings,
+        maxmind_license_key: geoSettings.maxmind_license_key === '••••••••' ? undefined : geoSettings.maxmind_license_key,
+        ip2location_token: geoSettings.ip2location_token === '••••••••' ? undefined : geoSettings.ip2location_token
+      }
+      await apiPut('/api/geo/settings', payload)
       originalGeoSettings = { ...geoSettings }
       // Reload status to see updated provider info
       geoStatus = await apiGet('/api/geo/status')
@@ -759,35 +767,38 @@
           </div>
         </div>
 
-        <!-- Dashboard Toggle -->
-        <div class="flex items-center justify-between py-2 border-t border-border">
-          <div>
-            <div class="text-xs font-medium text-foreground">Dashboard</div>
-            <div class="text-[10px] text-muted-foreground">Enable Traefik dashboard on port 8080 (requires restart)</div>
+        <!-- Dashboard & VPN-Only Mode -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 py-3 border-t border-border">
+          <!-- Dashboard Toggle -->
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="text-xs font-medium text-foreground">Dashboard</div>
+              <div class="text-[10px] text-muted-foreground">Port 8080 (restart required)</div>
+            </div>
+            <input type="checkbox" class="kt-switch" bind:checked={traefikForm.dashboardEnabled} />
           </div>
-          <input type="checkbox" class="kt-switch" bind:checked={traefikForm.dashboardEnabled} />
-        </div>
 
-        <!-- VPN-Only Mode Dropdown -->
-        <div class="flex items-center justify-between py-2 border-t border-border">
-          <div>
-            <div class="text-xs font-medium text-foreground">VPN-Only Mode</div>
-            <div class="text-[10px] text-muted-foreground">Restrict admin UI access to VPN clients only</div>
-          </div>
-          <div class="flex items-center gap-2">
-            {#if vpnOnlyLoading}
-              <span class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
-            {/if}
-            <Select
-              value={vpnOnlyMode}
-              options={[
-                { value: 'off', label: 'Disabled' },
-                { value: '403', label: '403 Forbidden' },
-                { value: 'silent', label: 'Silent Drop' }
-              ]}
-              onchange={(e) => setVPNOnlyMode(e.target.value)}
-              disabled={vpnOnlyLoading}
-            />
+          <!-- VPN-Only Mode Dropdown -->
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="text-xs font-medium text-foreground">VPN-Only Mode</div>
+              <div class="text-[10px] text-muted-foreground">Restrict access</div>
+            </div>
+            <div class="flex items-center gap-2">
+              {#if vpnOnlyLoading}
+                <span class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
+              {/if}
+              <Select
+                value={vpnOnlyMode}
+                options={[
+                  { value: 'off', label: 'Disabled' },
+                  { value: '403', label: '403 Forbidden' },
+                  { value: 'silent', label: 'Silent Drop' }
+                ]}
+                onchange={(e) => setVPNOnlyMode(e.target.value)}
+                disabled={vpnOnlyLoading}
+              />
+            </div>
           </div>
         </div>
 
@@ -865,9 +876,11 @@
         {:else}
           <!-- IP Lookup Provider -->
           <div>
-            <h4 class="text-xs font-medium text-foreground mb-2">IP Lookup Provider</h4>
-            <p class="text-[10px] text-muted-foreground mb-3">Select a provider for IP geolocation lookups (country detection in traffic logs)</p>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
+              <div>
+                <h4 class="text-xs font-medium text-foreground mb-1">IP Lookup Provider</h4>
+                <p class="text-[10px] text-muted-foreground">Select a provider for IP geolocation lookups (country detection in traffic logs)</p>
+              </div>
               <Select
                 label="Provider"
                 bind:value={geoSettings.lookup_provider}
@@ -877,42 +890,34 @@
                   { value: 'ip2location', label: 'IP2Location Lite' }
                 ]}
               />
-              {#if geoSettings.lookup_provider === 'ip2location'}
-                <Select
-                  label="Database Variant"
-                  bind:value={geoSettings.ip2location_variant}
-                  options={[
-                    { value: 'DB1', label: 'DB1 - Country only (~3MB)' },
-                    { value: 'DB3', label: 'DB3 - Country + City (~100MB)' }
-                  ]}
-                />
-              {/if}
             </div>
             {#if geoSettings.lookup_provider === 'maxmind'}
               <div class="mt-3">
                 <Input
-                  label="MaxMind License Key"
+                  label="License Key"
                   type="password"
                   bind:value={geoSettings.maxmind_license_key}
                   placeholder="Your MaxMind license key"
-                  helperText="Get a free key at maxmind.com/en/geolite2/signup"
-                  class="text-xs"
+                  helperText="Free at maxmind.com/en/geolite2/signup"
                 />
               </div>
-            {/if}
-            {#if geoSettings.lookup_provider === 'ip2location'}
-              <div class="mt-3">
+            {:else if geoSettings.lookup_provider === 'ip2location'}
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+                <Select
+                  label="Database Variant"
+                  bind:value={geoSettings.ip2location_variant}
+                  options={geoProviders?.ip2location?.variants?.map(v => ({ value: v.id, label: `${v.name}` })) || [{ value: 'DB1', label: 'DB1 - Country' }]}
+                />
                 <Input
-                  label="IP2Location Download Token"
+                  label="Download Token"
                   type="password"
                   bind:value={geoSettings.ip2location_token}
-                  placeholder="Your IP2Location download token (optional)"
-                  helperText="Optional: for faster downloads. Get token at ip2location.com"
-                  class="text-xs"
+                  placeholder="Your IP2Location download token"
+                  helperText="Required. Get at ip2location.com/register"
                 />
               </div>
             {/if}
-            {#if geoStatus?.providers}
+            {#if geoStatus?.providers && geoSettings.lookup_provider !== 'none'}
               <div class="mt-3 p-2 bg-muted/50 rounded text-[10px]">
                 {#if geoStatus.providers[geoSettings.lookup_provider]?.available}
                   <div class="flex items-center gap-1 text-success">
@@ -922,7 +927,7 @@
                   {#if geoStatus.providers[geoSettings.lookup_provider].last_update}
                     <div class="text-muted-foreground mt-1">Last updated: {geoStatus.providers[geoSettings.lookup_provider].last_update}</div>
                   {/if}
-                {:else if geoSettings.lookup_provider !== 'none'}
+                {:else}
                   <div class="flex items-center gap-1 text-warning">
                     <Icon name="alert-circle" size={12} />
                     <span>Database not downloaded yet. Save settings and click "Update Now".</span>
@@ -933,69 +938,70 @@
           </div>
 
           <!-- Country Blocking -->
-          <div class="border-t border-border pt-4">
-            <div class="flex items-center justify-between">
-              <div>
-                <h4 class="text-xs font-medium text-foreground">Country Blocking</h4>
-                <p class="text-[10px] text-muted-foreground">Enable blocking traffic from specific countries in Firewall</p>
-              </div>
-              <input type="checkbox" class="kt-switch" bind:checked={geoSettings.blocking_enabled} />
+          <div class="flex items-center justify-between border-t border-border pt-4">
+            <div>
+              <h4 class="text-xs font-medium text-foreground">Country Blocking</h4>
+              <p class="text-[10px] text-muted-foreground">Block traffic from specific countries using IPDeny zone files</p>
             </div>
-            {#if !geoSettings.blocking_enabled}
-              <div class="mt-2 p-2 bg-info/10 border border-info/20 rounded text-[10px] text-muted-foreground">
-                <Icon name="info-circle" size={12} class="inline mr-1" />
-                When disabled, country blocking controls in Firewall are hidden and any existing country blocks are cleared.
-              </div>
-            {/if}
+            <input type="checkbox" class="kt-switch" bind:checked={geoSettings.blocking_enabled} />
           </div>
+          {#if !geoSettings.blocking_enabled}
+            <div class="p-2 bg-info/10 border border-info/20 rounded text-[10px] text-muted-foreground">
+              <Icon name="info-circle" size={12} class="inline mr-1" />
+              Firewall country controls hidden when disabled.
+            </div>
+          {/if}
 
           <!-- Auto-Update Schedule -->
-          <div class="border-t border-border pt-4">
-            <div class="flex items-center justify-between mb-3">
-              <div>
-                <h4 class="text-xs font-medium text-foreground">Auto-Update Schedule</h4>
-                <p class="text-[10px] text-muted-foreground">Automatically update geolocation databases daily</p>
-              </div>
-              <input type="checkbox" class="kt-switch" bind:checked={geoSettings.auto_update} />
+          <div class="flex items-center justify-between border-t border-border pt-4">
+            <div>
+              <h4 class="text-xs font-medium text-foreground">Auto-Update Schedule</h4>
+              <p class="text-[10px] text-muted-foreground">Automatically update geolocation databases daily</p>
             </div>
-            {#if geoSettings.auto_update}
-              <div class="grid grid-cols-2 gap-3">
-                <Select
-                  label="Update Time"
-                  bind:value={geoSettings.update_hour}
-                  options={Array.from({length: 24}, (_, i) => ({ value: i, label: `${i.toString().padStart(2, '0')}:00` }))}
-                />
-                <Select
-                  label="Services to Update"
-                  bind:value={geoSettings.update_services}
-                  options={[
-                    { value: 'all', label: 'All (lookup + blocking)' },
-                    { value: 'lookup', label: 'Lookup only' },
-                    { value: 'blocking', label: 'Blocking zones only' }
-                  ]}
-                />
-              </div>
-            {/if}
-            {#if geoStatus?.last_update_lookup || geoStatus?.last_update_blocking}
-              <div class="mt-3 text-[10px] text-muted-foreground">
-                {#if geoStatus.last_update_lookup}
-                  <div>Last lookup update: {geoStatus.last_update_lookup}</div>
-                {/if}
-                {#if geoStatus.last_update_blocking}
-                  <div>Last blocking zones update: {geoStatus.last_update_blocking}</div>
-                {/if}
-              </div>
-            {/if}
+            <input type="checkbox" class="kt-switch" bind:checked={geoSettings.auto_update} />
           </div>
+          {#if geoSettings.auto_update}
+            <div class="grid grid-cols-2 gap-3">
+              <Select
+                label="Update Time"
+                bind:value={geoSettings.update_hour}
+                options={Array.from({length: 24}, (_, i) => ({ value: i, label: `${i.toString().padStart(2, '0')}:00` }))}
+              />
+              <Select
+                label="Services"
+                bind:value={geoSettings.update_services}
+                options={[
+                  { value: 'all', label: 'All services' },
+                  { value: 'lookup', label: 'IP lookup only' },
+                  { value: 'blocking', label: 'Country blocking only' }
+                ]}
+              />
+            </div>
+          {/if}
+
+          {#if geoStatus?.last_update_lookup || geoStatus?.last_update_blocking}
+            <div class="text-[10px] text-muted-foreground">
+              {#if geoStatus.last_update_lookup}
+                <span>Lookup: {geoStatus.last_update_lookup}</span>
+              {/if}
+              {#if geoStatus.last_update_lookup && geoStatus.last_update_blocking}
+                <span class="mx-2">·</span>
+              {/if}
+              {#if geoStatus.last_update_blocking}
+                <span>Blocking: {geoStatus.last_update_blocking}</span>
+              {/if}
+            </div>
+          {/if}
 
           <!-- Save Button -->
           <div class="flex justify-between items-center pt-2 border-t border-border">
             <Button
               onclick={triggerGeoUpdate}
-              disabled={triggeringGeoUpdate}
+              disabled={triggeringGeoUpdate || (geoSettings.lookup_provider === 'none' && !geoSettings.blocking_enabled)}
               variant="secondary"
               size="sm"
               icon={triggeringGeoUpdate ? undefined : "refresh"}
+              title={geoSettings.lookup_provider === 'none' && !geoSettings.blocking_enabled ? 'Select a provider or enable blocking first' : 'Update geolocation databases now'}
             >
               {#if triggeringGeoUpdate}
                 <span class="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
@@ -1102,6 +1108,20 @@
         <div class="text-[10px] text-muted-foreground text-right">
           <p>Built with Svelte 5</p>
           <p>Tailwind CSS v4 + KTUI</p>
+          <div class="flex items-center justify-end gap-3 mt-2">
+            <a href="https://www.maxmind.com" target="_blank" rel="noopener noreferrer" class="text-muted-foreground hover:text-foreground transition-colors" data-kt-tooltip>
+              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+              <span data-kt-tooltip-content class="kt-tooltip hidden">MaxMind GeoLite2</span>
+            </a>
+            <a href="https://www.ip2location.com" target="_blank" rel="noopener noreferrer" class="text-muted-foreground hover:text-foreground transition-colors" data-kt-tooltip>
+              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+              <span data-kt-tooltip-content class="kt-tooltip hidden">IP2Location Lite</span>
+            </a>
+            <a href="https://www.ipdeny.com" target="_blank" rel="noopener noreferrer" class="text-muted-foreground hover:text-foreground transition-colors" data-kt-tooltip>
+              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="8" y1="8" x2="16" y2="16"/><line x1="16" y1="8" x2="8" y2="16"/></svg>
+              <span data-kt-tooltip-content class="kt-tooltip hidden">IPDeny Zone Files</span>
+            </a>
+          </div>
         </div>
       </div>
     </div>

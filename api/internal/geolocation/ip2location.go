@@ -17,36 +17,44 @@ import (
 
 const (
 	ip2locationDownloadURL = "https://www.ip2location.com/download"
-	ip2locationDB1File     = "IP2LOCATION-LITE-DB1.BIN"
-	ip2locationDB3File     = "IP2LOCATION-LITE-DB3.BIN"
+	// Default templates if not provided
+	defaultFileCodeTemplate = "{variant}LITEBIN"
+	defaultFileNameTemplate = "IP2LOCATION-LITE-{variant}.BIN"
 )
 
 // IP2LocationProvider provides IP geolocation using IP2Location
 type IP2LocationProvider struct {
-	db         *ip2location.DB
-	dataDir    string
-	token      string
-	variant    string // DB1 or DB3
-	filePath   string
-	mu         sync.RWMutex
+	db               *ip2location.DB
+	dataDir          string
+	token            string
+	variant          string
+	filePath         string
+	fileCodeTemplate string
+	fileNameTemplate string
+	mu               sync.RWMutex
 }
 
 // NewIP2LocationProvider creates a new IP2Location provider
-func NewIP2LocationProvider(dataDir, token, variant string) *IP2LocationProvider {
+func NewIP2LocationProvider(dataDir, token, variant, fileCodeTemplate, fileNameTemplate string) *IP2LocationProvider {
 	if variant == "" {
 		variant = "DB1"
 	}
-
-	fileName := ip2locationDB1File
-	if variant == "DB3" {
-		fileName = ip2locationDB3File
+	if fileCodeTemplate == "" {
+		fileCodeTemplate = defaultFileCodeTemplate
+	}
+	if fileNameTemplate == "" {
+		fileNameTemplate = defaultFileNameTemplate
 	}
 
+	fileName := strings.ReplaceAll(fileNameTemplate, "{variant}", variant)
+
 	return &IP2LocationProvider{
-		dataDir:  dataDir,
-		token:    token,
-		variant:  variant,
-		filePath: filepath.Join(dataDir, fileName),
+		dataDir:          dataDir,
+		token:            token,
+		variant:          variant,
+		filePath:         filepath.Join(dataDir, fileName),
+		fileCodeTemplate: fileCodeTemplate,
+		fileNameTemplate: fileNameTemplate,
 	}
 }
 
@@ -82,7 +90,30 @@ func (p *IP2LocationProvider) Init() error {
 
 	p.db = db
 	log.Printf("IP2Location database loaded: %s (variant: %s)", p.filePath, p.variant)
+
+	// Clean up other variant files
+	p.cleanupOtherVariants()
+
 	return nil
+}
+
+// cleanupOtherVariants removes database files from other variants
+func (p *IP2LocationProvider) cleanupOtherVariants() {
+	variants := []string{"DB1", "DB3", "DB5", "DB11"}
+	for _, v := range variants {
+		if v == p.variant {
+			continue
+		}
+		fileName := strings.ReplaceAll(p.fileNameTemplate, "{variant}", v)
+		filePath := filepath.Join(p.dataDir, fileName)
+		if _, err := os.Stat(filePath); err == nil {
+			if err := os.Remove(filePath); err != nil {
+				log.Printf("Warning: failed to cleanup old variant file %s: %v", filePath, err)
+			} else {
+				log.Printf("IP2Location: cleaned up old variant file: %s", filePath)
+			}
+		}
+	}
 }
 
 // Lookup performs an IP geolocation lookup
@@ -104,12 +135,45 @@ func (p *IP2LocationProvider) Lookup(ipStr string) (*GeoResult, error) {
 		CountryCode: result.Country_short,
 		CountryName: result.Country_long,
 		Provider:    "ip2location",
+		Extra:       make(map[string]interface{}),
 	}
 
-	// DB3 includes city/region
-	if p.variant == "DB3" {
-		geoResult.Region = result.Region
-		geoResult.City = result.City
+	// Add all available fields to Extra (skip "-", empty, or "not available" messages)
+	isValid := func(s string) bool {
+		return s != "" && s != "-" && !strings.Contains(s, "unavailable")
+	}
+
+	if isValid(result.Region) {
+		geoResult.Extra["region"] = result.Region
+	}
+	if isValid(result.City) {
+		geoResult.Extra["city"] = result.City
+	}
+	if result.Latitude != 0 {
+		geoResult.Extra["latitude"] = result.Latitude
+	}
+	if result.Longitude != 0 {
+		geoResult.Extra["longitude"] = result.Longitude
+	}
+	if isValid(result.Zipcode) {
+		geoResult.Extra["zipcode"] = result.Zipcode
+	}
+	if isValid(result.Timezone) {
+		geoResult.Extra["timezone"] = result.Timezone
+	}
+	if isValid(result.Isp) {
+		geoResult.Extra["isp"] = result.Isp
+	}
+	if isValid(result.Domain) {
+		geoResult.Extra["domain"] = result.Domain
+	}
+	if isValid(result.Usagetype) {
+		geoResult.Extra["usage_type"] = result.Usagetype
+	}
+
+	// Remove Extra if empty
+	if len(geoResult.Extra) == 0 {
+		geoResult.Extra = nil
 	}
 
 	return geoResult, nil
@@ -224,11 +288,8 @@ func (p *IP2LocationProvider) downloadDB() error {
 
 // downloadDBToPath downloads the IP2Location database
 func (p *IP2LocationProvider) downloadDBToPath(destPath string) error {
-	// Determine file code based on variant
-	fileCode := "DB1LITEBIN"
-	if p.variant == "DB3" {
-		fileCode = "DB3LITEBIN"
-	}
+	// Build file code from template
+	fileCode := strings.ReplaceAll(p.fileCodeTemplate, "{variant}", p.variant)
 
 	// Build download URL
 	url := fmt.Sprintf("%s/?token=%s&file=%s", ip2locationDownloadURL, p.token, fileCode)
@@ -314,17 +375,36 @@ func (p *IP2LocationProvider) SetToken(token string) {
 	p.token = token
 }
 
-// SetVariant updates the database variant
+// SetVariant updates the database variant and cleans up the old one
 func (p *IP2LocationProvider) SetVariant(variant string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.variant = variant
 
-	fileName := ip2locationDB1File
-	if variant == "DB3" {
-		fileName = ip2locationDB3File
+	// Skip if variant unchanged
+	if p.variant == variant {
+		return
 	}
+
+	oldFilePath := p.filePath
+
+	// Close current database
+	if p.db != nil {
+		p.db.Close()
+		p.db = nil
+	}
+
+	// Update to new variant
+	p.variant = variant
+	fileName := strings.ReplaceAll(p.fileNameTemplate, "{variant}", variant)
 	p.filePath = filepath.Join(p.dataDir, fileName)
+
+	// Delete old variant file if it exists
+	if oldFilePath != p.filePath {
+		if _, err := os.Stat(oldFilePath); err == nil {
+			os.Remove(oldFilePath)
+			log.Printf("IP2Location: cleaned up old variant file: %s", oldFilePath)
+		}
+	}
 }
 
 // GetFileSize returns the size of the database file

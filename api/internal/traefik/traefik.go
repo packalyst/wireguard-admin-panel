@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -36,16 +35,13 @@ func New() *Service {
 // Handlers returns the handler map for the router
 func (s *Service) Handlers() router.ServiceHandlers {
 	return router.ServiceHandlers{
-		"GetOverview":    s.handleOverview,
-		"GetRouters":     s.handleRouters,
-		"GetServices":    s.handleServices,
-		"GetMiddlewares": s.handleMiddlewares,
-		"GetConfig":      s.handleGetConfig,
-		"UpdateConfig":   s.handleUpdateConfig,
-		"GetLogs":        s.handleLogs,
-		"GetVPNOnly":     s.handleGetVPNOnly,
-		"SetVPNOnly":     s.handleSetVPNOnly,
-		"Health":         s.handleHealth,
+		"GetOverview":  s.handleOverview,
+		"GetConfig":    s.handleGetConfig,
+		"UpdateConfig": s.handleUpdateConfig,
+		"GetLogs":      s.handleLogs,
+		"GetVPNOnly":   s.handleGetVPNOnly,
+		"SetVPNOnly":   s.handleSetVPNOnly,
+		"Health":       s.handleHealth,
 	}
 }
 
@@ -63,52 +59,86 @@ func (s *Service) fetchTraefikAPI(path string) (map[string]interface{}, error) {
 	return result, nil
 }
 
+func (s *Service) fetchTraefikAPIArray(path string) ([]interface{}, error) {
+	resp, err := http.Get(s.traefikAPI + path)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result []interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// handleOverview fetches overview, routers, services, and middlewares in parallel
 func (s *Service) handleOverview(w http.ResponseWriter, r *http.Request) {
-	resp, err := http.Get(s.traefikAPI + "/overview")
-	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadGateway)
+	type result struct {
+		data interface{}
+		err  error
+	}
+
+	// Fetch all endpoints in parallel
+	overviewCh := make(chan result, 1)
+	routersCh := make(chan result, 1)
+	servicesCh := make(chan result, 1)
+	middlewaresCh := make(chan result, 1)
+
+	go func() {
+		data, err := s.fetchTraefikAPI("/overview")
+		overviewCh <- result{data, err}
+	}()
+	go func() {
+		data, err := s.fetchTraefikAPIArray("/http/routers")
+		routersCh <- result{data, err}
+	}()
+	go func() {
+		data, err := s.fetchTraefikAPIArray("/http/services")
+		servicesCh <- result{data, err}
+	}()
+	go func() {
+		data, err := s.fetchTraefikAPIArray("/http/middlewares")
+		middlewaresCh <- result{data, err}
+	}()
+
+	// Collect results
+	overview := <-overviewCh
+	routers := <-routersCh
+	services := <-servicesCh
+	middlewares := <-middlewaresCh
+
+	// Check for errors on overview (required)
+	if overview.err != nil {
+		router.JSONError(w, overview.err.Error(), http.StatusBadGateway)
 		return
 	}
-	defer resp.Body.Close()
 
-	w.Header().Set("Content-Type", "application/json")
-	io.Copy(w, resp.Body)
-}
-
-func (s *Service) handleRouters(w http.ResponseWriter, r *http.Request) {
-	resp, err := http.Get(s.traefikAPI + "/http/routers")
-	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadGateway)
-		return
+	// Build combined response (use empty arrays for failed fetches)
+	response := map[string]interface{}{
+		"overview": overview.data,
 	}
-	defer resp.Body.Close()
 
-	w.Header().Set("Content-Type", "application/json")
-	io.Copy(w, resp.Body)
-}
-
-func (s *Service) handleServices(w http.ResponseWriter, r *http.Request) {
-	resp, err := http.Get(s.traefikAPI + "/http/services")
-	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadGateway)
-		return
+	if routers.err == nil {
+		response["routers"] = routers.data
+	} else {
+		response["routers"] = []interface{}{}
 	}
-	defer resp.Body.Close()
 
-	w.Header().Set("Content-Type", "application/json")
-	io.Copy(w, resp.Body)
-}
-
-func (s *Service) handleMiddlewares(w http.ResponseWriter, r *http.Request) {
-	resp, err := http.Get(s.traefikAPI + "/http/middlewares")
-	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadGateway)
-		return
+	if services.err == nil {
+		response["services"] = services.data
+	} else {
+		response["services"] = []interface{}{}
 	}
-	defer resp.Body.Close()
 
-	w.Header().Set("Content-Type", "application/json")
-	io.Copy(w, resp.Body)
+	if middlewares.err == nil {
+		response["middlewares"] = middlewares.data
+	} else {
+		response["middlewares"] = []interface{}{}
+	}
+
+	router.JSON(w, response)
 }
 
 func (s *Service) handleGetConfig(w http.ResponseWriter, r *http.Request) {
