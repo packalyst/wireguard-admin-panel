@@ -11,7 +11,7 @@ http:
 
     # Unified API - all /api/* routes (except /api/v1 for headscale direct)
     unified-api:
-      rule: "PathPrefix(`/api/wg`) || PathPrefix(`/api/fw`) || PathPrefix(`/api/traefik`) || PathPrefix(`/api/adguard`) || PathPrefix(`/api/hs`) || PathPrefix(`/api/auth`) || PathPrefix(`/api/setup`) || PathPrefix(`/api/settings`) || PathPrefix(`/api/docker`) || PathPrefix(`/api/vpn`)"
+      rule: "PathPrefix(`/api/wg`) || PathPrefix(`/api/fw`) || PathPrefix(`/api/traefik`) || PathPrefix(`/api/adguard`) || PathPrefix(`/api/hs`) || PathPrefix(`/api/auth`) || PathPrefix(`/api/setup`) || PathPrefix(`/api/settings`) || PathPrefix(`/api/docker`) || PathPrefix(`/api/vpn`) || PathPrefix(`/api/geo`)"
       service: unified-api
       priority: 100
       middlewares:
