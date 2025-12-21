@@ -163,7 +163,7 @@ services:
   ui:
     build:
       context: ./ui
-      target: development  # Change to 'production' for smaller image (~80MB vs ~480MB)
+      target: production  # Change to 'production' for smaller image (~80MB vs ~480MB)
     container_name: ui
     restart: unless-stopped
     networks:
