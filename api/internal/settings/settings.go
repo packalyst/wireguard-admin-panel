@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"api/internal/auth"
 	"api/internal/config"
 	"api/internal/database"
 	"api/internal/helper"
@@ -22,15 +21,11 @@ import (
 )
 
 // Service handles settings management
-type Service struct {
-	auth *auth.Service
-}
+type Service struct{}
 
 // New creates a new settings service
 func New() *Service {
-	return &Service{
-		auth: auth.GetService(),
-	}
+	return &Service{}
 }
 
 // Handlers returns the handler map for the router
@@ -288,11 +283,7 @@ func getSettingEncrypted(key string) (string, error) {
 	}
 
 	if encrypted {
-		authSvc := auth.GetService()
-		if authSvc == nil {
-			return "", fmt.Errorf("auth service not available for decryption")
-		}
-		return authSvc.Decrypt(value)
+		return helper.Decrypt(value)
 	}
 
 	return value, nil
@@ -304,12 +295,7 @@ func setSettingEncrypted(key, value string) error {
 		return fmt.Errorf("database not initialized")
 	}
 
-	authSvc := auth.GetService()
-	if authSvc == nil {
-		return fmt.Errorf("auth service not available for encryption")
-	}
-
-	encrypted, err := authSvc.Encrypt(value)
+	encrypted, err := helper.Encrypt(value)
 	if err != nil {
 		return fmt.Errorf("failed to encrypt value: %v", err)
 	}

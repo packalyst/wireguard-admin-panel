@@ -2,6 +2,7 @@ package wireguard
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -11,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -85,31 +85,6 @@ func (s *Service) ListPeersWithStatus() []*Peer {
 	return peers
 }
 
-// addToVPNClients adds a peer to the vpn_clients table
-func (s *Service) addToVPNClients(peer *Peer) {
-	db := database.Get()
-	if db == nil {
-		return
-	}
-	// Strip sensitive keys before storing in database
-	peerCopy := *peer
-	peerCopy.PrivateKey = ""
-	peerCopy.PresharedKey = ""
-	rawData, _ := json.Marshal(peerCopy)
-	db.Exec(`
-		INSERT OR REPLACE INTO vpn_clients (name, ip, type, external_id, raw_data, acl_policy, default_direction)
-		VALUES (?, ?, 'wireguard', ?, ?, 'selected', 'bidirectional')
-	`, peer.Name, peer.IPAddress, peer.ID, string(rawData))
-}
-
-// removeFromVPNClients removes a peer from the vpn_clients table
-func (s *Service) removeFromVPNClients(ip string) {
-	db := database.Get()
-	if db == nil {
-		return
-	}
-	db.Exec(`DELETE FROM vpn_clients WHERE ip = ? AND type = 'wireguard'`, ip)
-}
 
 // Config holds WireGuard configuration
 type Config struct {
@@ -140,11 +115,11 @@ type Peer struct {
 	LastHandshake time.Time `json:"lastHandshake,omitempty"`
 }
 
-// PeerStore manages peers with file persistence
+// PeerStore manages peers with database persistence
 type PeerStore struct {
 	sync.RWMutex
-	peers    map[string]*Peer
-	filePath string
+	cache   map[string]*Peer // in-memory cache for performance
+	dataDir string           // for migration from legacy peers.json
 }
 
 // New creates a new WireGuard service
@@ -200,9 +175,14 @@ func New(dataDir string) (*Service, error) {
 
 	// Initialize peer store
 	svc.peerStore = &PeerStore{
-		peers:    make(map[string]*Peer),
-		filePath: filepath.Join(dataDir, "peers.json"),
+		cache:   make(map[string]*Peer),
+		dataDir: dataDir,
 	}
+	// Migrate from legacy peers.json if exists
+	if err := svc.peerStore.MigrateLegacyFile(); err != nil {
+		log.Printf("Warning: failed to migrate legacy peers.json: %v", err)
+	}
+	// Load peers from database into cache
 	svc.peerStore.Load()
 
 	// Initialize WireGuard interface
@@ -369,15 +349,15 @@ ListenPort = %d
 `, s.config.ServerPriKey, s.config.ListenPort)
 
 	s.peerStore.RLock()
-	for _, peer := range s.peerStore.peers {
+	for _, peer := range s.peerStore.cache {
 		if peer.Enabled {
 			enabledPeers[peer.PublicKey] = true
-			conf += fmt.Sprintf(`[Peer]
-PublicKey = %s
-PresharedKey = %s
-AllowedIPs = %s/32
-
-`, peer.PublicKey, peer.PresharedKey, peer.IPAddress)
+			peerConf := fmt.Sprintf("[Peer]\nPublicKey = %s\n", peer.PublicKey)
+			if peer.PresharedKey != "" {
+				peerConf += fmt.Sprintf("PresharedKey = %s\n", peer.PresharedKey)
+			}
+			peerConf += fmt.Sprintf("AllowedIPs = %s/32\n\n", peer.IPAddress)
+			conf += peerConf
 		}
 	}
 	s.peerStore.RUnlock()
@@ -451,69 +431,281 @@ func (s *Service) enrichPeersWithStatus(peers []*Peer) {
 }
 
 // PeerStore methods
+
+// MigrateLegacyFile migrates peers from legacy peers.json to database
+func (ps *PeerStore) MigrateLegacyFile() error {
+	legacyPath := filepath.Join(ps.dataDir, "peers.json")
+	data, err := os.ReadFile(legacyPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // No legacy file, nothing to migrate
+		}
+		return err
+	}
+
+	var legacyPeers map[string]*Peer
+	if err := json.Unmarshal(data, &legacyPeers); err != nil {
+		return fmt.Errorf("failed to parse legacy peers.json: %v", err)
+	}
+
+	if len(legacyPeers) == 0 {
+		// Empty file, just remove it
+		os.Remove(legacyPath)
+		return nil
+	}
+
+	log.Printf("Migrating %d peers from legacy peers.json to database", len(legacyPeers))
+
+	db := database.Get()
+	if db == nil {
+		return fmt.Errorf("database not available")
+	}
+
+	for _, peer := range legacyPeers {
+		// Encrypt sensitive keys
+		var privateKeyEnc, presharedKeyEnc string
+		var err error
+		if peer.PrivateKey != "" {
+			privateKeyEnc, err = helper.Encrypt(peer.PrivateKey)
+			if err != nil {
+				log.Printf("ERROR: Failed to encrypt private key for peer %s: %v", peer.Name, err)
+				continue // Skip this peer, don't lose the key by saving empty
+			}
+		}
+		if peer.PresharedKey != "" {
+			presharedKeyEnc, err = helper.Encrypt(peer.PresharedKey)
+			if err != nil {
+				log.Printf("ERROR: Failed to encrypt preshared key for peer %s: %v", peer.Name, err)
+				continue
+			}
+		}
+
+		// Prepare raw_data without sensitive keys
+		peerCopy := *peer
+		peerCopy.PrivateKey = ""
+		peerCopy.PresharedKey = ""
+		rawData, _ := json.Marshal(peerCopy)
+
+		enabledInt := 0
+		if peer.Enabled {
+			enabledInt = 1
+		}
+
+		// Insert or update in database
+		_, err = db.Exec(`
+			INSERT INTO vpn_clients (name, ip, type, external_id, raw_data, acl_policy, public_key, private_key_enc, preshared_key_enc, enabled)
+			VALUES (?, ?, 'wireguard', ?, ?, 'selected', ?, ?, ?, ?)
+			ON CONFLICT(ip) DO UPDATE SET
+				name = excluded.name,
+				external_id = excluded.external_id,
+				raw_data = excluded.raw_data,
+				public_key = excluded.public_key,
+				private_key_enc = excluded.private_key_enc,
+				preshared_key_enc = excluded.preshared_key_enc,
+				enabled = excluded.enabled,
+				updated_at = CURRENT_TIMESTAMP
+		`, peer.Name, peer.IPAddress, peer.ID, string(rawData), peer.PublicKey, privateKeyEnc, presharedKeyEnc, enabledInt)
+		if err != nil {
+			log.Printf("Warning: failed to migrate peer %s: %v", peer.Name, err)
+		}
+	}
+
+	// Rename legacy file to backup
+	backupPath := legacyPath + ".migrated"
+	if err := os.Rename(legacyPath, backupPath); err != nil {
+		log.Printf("Warning: could not rename legacy peers.json: %v", err)
+	} else {
+		log.Printf("Legacy peers.json migrated and renamed to peers.json.migrated")
+	}
+
+	return nil
+}
+
+// Load loads peers from database into cache
 func (ps *PeerStore) Load() error {
 	ps.Lock()
 	defer ps.Unlock()
 
-	data, err := os.ReadFile(ps.filePath)
+	db := database.Get()
+	if db == nil {
+		return fmt.Errorf("database not available")
+	}
+
+	rows, err := db.Query(`
+		SELECT external_id, name, ip, public_key, private_key_enc, preshared_key_enc, enabled, created_at
+		FROM vpn_clients
+		WHERE type = 'wireguard' AND external_id IS NOT NULL
+	`)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
+		return err
+	}
+	defer rows.Close()
+
+	ps.cache = make(map[string]*Peer)
+	for rows.Next() {
+		var id, name, ip string
+		var publicKey, privateKeyEnc, presharedKeyEnc sql.NullString
+		var enabled int
+		var createdAt time.Time
+
+		if err := rows.Scan(&id, &name, &ip, &publicKey, &privateKeyEnc, &presharedKeyEnc, &enabled, &createdAt); err != nil {
+			log.Printf("Warning: failed to scan peer row: %v", err)
+			continue
 		}
-		return err
+
+		peer := &Peer{
+			ID:        id,
+			Name:      name,
+			IPAddress: ip,
+			PublicKey: publicKey.String,
+			Enabled:   enabled == 1,
+			CreatedAt: createdAt,
+		}
+
+		// Decrypt sensitive keys
+		if privateKeyEnc.Valid && privateKeyEnc.String != "" {
+			if decrypted, err := helper.Decrypt(privateKeyEnc.String); err == nil {
+				peer.PrivateKey = decrypted
+			}
+		}
+		if presharedKeyEnc.Valid && presharedKeyEnc.String != "" {
+			if decrypted, err := helper.Decrypt(presharedKeyEnc.String); err == nil {
+				peer.PresharedKey = decrypted
+			}
+		}
+
+		ps.cache[id] = peer
 	}
-	return json.Unmarshal(data, &ps.peers)
+
+	log.Printf("Loaded %d WireGuard peers from database", len(ps.cache))
+	return nil
 }
 
-func (ps *PeerStore) Save() error {
-	ps.RLock()
-	data, err := json.MarshalIndent(ps.peers, "", "  ")
-	ps.RUnlock()
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(ps.filePath, data, 0600)
-}
-
+// Add adds or updates a peer in database and cache
 func (ps *PeerStore) Add(peer *Peer) {
 	ps.Lock()
-	ps.peers[peer.ID] = peer
-	ps.Unlock()
-	ps.Save()
+	defer ps.Unlock()
+
+	db := database.Get()
+	if db == nil {
+		return
+	}
+
+	// Encrypt sensitive keys
+	var privateKeyEnc, presharedKeyEnc string
+	var err error
+	if peer.PrivateKey != "" {
+		privateKeyEnc, err = helper.Encrypt(peer.PrivateKey)
+		if err != nil {
+			log.Printf("ERROR: Failed to encrypt private key for peer %s: %v", peer.Name, err)
+			return
+		}
+	}
+	if peer.PresharedKey != "" {
+		presharedKeyEnc, err = helper.Encrypt(peer.PresharedKey)
+		if err != nil {
+			log.Printf("ERROR: Failed to encrypt preshared key for peer %s: %v", peer.Name, err)
+			return
+		}
+	}
+
+	// Prepare raw_data without sensitive keys
+	peerCopy := *peer
+	peerCopy.PrivateKey = ""
+	peerCopy.PresharedKey = ""
+	rawData, _ := json.Marshal(peerCopy)
+
+	enabledInt := 0
+	if peer.Enabled {
+		enabledInt = 1
+	}
+
+	// Upsert to database
+	_, err = db.Exec(`
+		INSERT INTO vpn_clients (name, ip, type, external_id, raw_data, acl_policy, public_key, private_key_enc, preshared_key_enc, enabled)
+		VALUES (?, ?, 'wireguard', ?, ?, 'selected', ?, ?, ?, ?)
+		ON CONFLICT(ip) DO UPDATE SET
+			name = excluded.name,
+			external_id = excluded.external_id,
+			raw_data = excluded.raw_data,
+			public_key = excluded.public_key,
+			private_key_enc = excluded.private_key_enc,
+			preshared_key_enc = excluded.preshared_key_enc,
+			enabled = excluded.enabled,
+			updated_at = CURRENT_TIMESTAMP
+	`, peer.Name, peer.IPAddress, peer.ID, string(rawData), peer.PublicKey, privateKeyEnc, presharedKeyEnc, enabledInt)
+	if err != nil {
+		log.Printf("Warning: failed to save peer %s: %v", peer.Name, err)
+		return
+	}
+
+	// Update cache with a copy
+	peerForCache := *peer
+	ps.cache[peer.ID] = &peerForCache
 }
 
+// Get returns a copy of a peer by ID
 func (ps *PeerStore) Get(id string) *Peer {
 	ps.RLock()
 	defer ps.RUnlock()
-	return ps.peers[id]
+	if p, ok := ps.cache[id]; ok {
+		// Return a copy to prevent modification of cached data
+		peerCopy := *p
+		return &peerCopy
+	}
+	return nil
 }
 
+// Delete removes a peer from database and cache
 func (ps *PeerStore) Delete(id string) {
 	ps.Lock()
-	delete(ps.peers, id)
+	peer := ps.cache[id]
+	delete(ps.cache, id)
 	ps.Unlock()
-	ps.Save()
+
+	if peer == nil {
+		return
+	}
+
+	db := database.Get()
+	if db == nil {
+		return
+	}
+
+	_, err := db.Exec(`DELETE FROM vpn_clients WHERE ip = ? AND type = 'wireguard'`, peer.IPAddress)
+	if err != nil {
+		log.Printf("Warning: failed to delete peer %s from database: %v", id, err)
+	}
 }
 
+// List returns copies of all peers
 func (ps *PeerStore) List() []*Peer {
 	ps.RLock()
 	defer ps.RUnlock()
-	list := make([]*Peer, 0, len(ps.peers))
-	for _, p := range ps.peers {
-		list = append(list, p)
+	list := make([]*Peer, 0, len(ps.cache))
+	for _, p := range ps.cache {
+		// Return copies to prevent modification of cached data
+		peerCopy := *p
+		list = append(list, &peerCopy)
 	}
-	sort.Slice(list, func(i, j int) bool {
-		return list[i].CreatedAt.Before(list[j].CreatedAt)
-	})
+	// Sort by creation time
+	for i := 0; i < len(list)-1; i++ {
+		for j := i + 1; j < len(list); j++ {
+			if list[j].CreatedAt.Before(list[i].CreatedAt) {
+				list[i], list[j] = list[j], list[i]
+			}
+		}
+	}
 	return list
 }
 
+// AllocateIP allocates a new IP address for a peer
 func (ps *PeerStore) AllocateIP(ipRange string) string {
 	ps.RLock()
 	defer ps.RUnlock()
 
 	usedIPs := make(map[string]bool)
-	for _, p := range ps.peers {
+	for _, p := range ps.cache {
 		usedIPs[p.IPAddress] = true
 	}
 
@@ -654,9 +846,6 @@ func (s *Service) handleCreatePeer(w http.ResponseWriter, r *http.Request) {
 	s.peerStore.Add(peer)
 	s.syncConfig()
 
-	// Auto-insert into vpn_clients for unified view
-	s.addToVPNClients(peer)
-
 	w.WriteHeader(http.StatusCreated)
 	router.JSON(w, peer)
 }
@@ -702,13 +891,6 @@ func (s *Service) handleUpdatePeer(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) handleDeletePeer(w http.ResponseWriter, r *http.Request) {
 	id := router.ExtractPathParam(r, "/api/wg/peers/")
-
-	// Get peer before deleting to get IP for vpn_clients cleanup
-	peer := s.peerStore.Get(id)
-	if peer != nil {
-		s.removeFromVPNClients(peer.IPAddress)
-	}
-
 	s.peerStore.Delete(id)
 	s.syncConfig()
 	w.WriteHeader(http.StatusNoContent)

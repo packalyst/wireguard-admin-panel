@@ -103,6 +103,7 @@ services:
     environment:
       # Security
       - ENCRYPTION_SECRET=${ENCRYPTION_SECRET}
+      - TRUSTED_PROXIES=${TRUSTED_PROXIES:-${TRAEFIK_CONTAINER_IP}}
       # Docker access via socket proxy (not direct socket)
       - DOCKER_HOST=tcp://127.0.0.1:2375
       # Core settings (hardcoded paths inside container)

@@ -375,6 +375,30 @@ func runMigrations(db *sql.DB) error {
 		log.Printf("Migration: added 'status' column to blocked_countries")
 	}
 
+	// Add WireGuard peer columns to vpn_clients for storing encrypted keys
+	wgColumns := []struct {
+		name string
+		def  string
+	}{
+		{"public_key", "TEXT"},
+		{"private_key_enc", "TEXT"},
+		{"preshared_key_enc", "TEXT"},
+		{"enabled", "INTEGER DEFAULT 1"},
+	}
+	for _, col := range wgColumns {
+		err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('vpn_clients') WHERE name=?`, col.name).Scan(&count)
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			_, err = db.Exec(`ALTER TABLE vpn_clients ADD COLUMN ` + col.name + ` ` + col.def)
+			if err != nil {
+				return fmt.Errorf("failed to add %s column: %v", col.name, err)
+			}
+			log.Printf("Migration: added '%s' column to vpn_clients", col.name)
+		}
+	}
+
 	return nil
 }
 

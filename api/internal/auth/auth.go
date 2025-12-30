@@ -1,20 +1,15 @@
 package auth
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/rand"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
+	"net"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -50,12 +45,59 @@ type loginAttempt struct {
 var (
 	loginAttempts      = make(map[string]*loginAttempt)
 	loginAttemptsMutex sync.RWMutex
+	trustedProxyCIDRs  []*net.IPNet
 )
+
+func init() {
+	// Load trusted proxies from environment
+	// TRUSTED_PROXIES can be comma-separated list of IPs or CIDRs: "172.18.0.2,162.158.0.0/15"
+	proxies := helper.GetEnvOptional("TRUSTED_PROXIES", "")
+	if proxies != "" {
+		for _, entry := range strings.Split(proxies, ",") {
+			entry = strings.TrimSpace(entry)
+			if entry == "" {
+				continue
+			}
+
+			// Check if it's a CIDR or single IP
+			if !strings.Contains(entry, "/") {
+				// Single IP - convert to /32 CIDR
+				entry = entry + "/32"
+			}
+
+			_, cidr, err := net.ParseCIDR(entry)
+			if err != nil {
+				log.Printf("Auth: invalid trusted proxy entry (skipped): %s - %v", entry, err)
+				continue
+			}
+			trustedProxyCIDRs = append(trustedProxyCIDRs, cidr)
+			log.Printf("Auth: trusted proxy added: %s", cidr.String())
+		}
+	}
+}
+
+// isTrustedProxy checks if an IP is in the trusted proxy list
+func isTrustedProxy(ipStr string) bool {
+	if len(trustedProxyCIDRs) == 0 {
+		return true // No trusted proxies configured = trust all (backwards compatible)
+	}
+
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
+	}
+
+	for _, cidr := range trustedProxyCIDRs {
+		if cidr.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
 
 // Service handles authentication
 type Service struct {
-	db            *sql.DB
-	encryptionKey []byte
+	db *sql.DB
 }
 
 // User represents a user account
@@ -94,33 +136,14 @@ func New() (*Service, error) {
 		return nil, fmt.Errorf("database not initialized")
 	}
 
-	// Get encryption key from environment or generate one
-	encKey := getEncryptionKey()
-
 	svc := &Service{
-		db:            db,
-		encryptionKey: encKey,
+		db: db,
 	}
 
 	log.Printf("Auth service initialized")
 	return svc, nil
 }
 
-// getEncryptionKey gets the encryption key from environment
-func getEncryptionKey() []byte {
-	keyHex := os.Getenv("ENCRYPTION_SECRET")
-	if keyHex == "" {
-		log.Fatal("FATAL: ENCRYPTION_SECRET environment variable is required but not set. Generate one with: openssl rand -hex 32")
-	}
-
-	key, err := hex.DecodeString(keyHex)
-	if err != nil || len(key) != 32 {
-		// If not valid hex, derive a key from the secret (allows using any string as secret)
-		hash := sha256.Sum256([]byte(keyHex))
-		return hash[:]
-	}
-	return key
-}
 
 // Handlers returns the handler map for the router
 func (s *Service) Handlers() router.ServiceHandlers {
@@ -300,57 +323,6 @@ func (s *Service) HasUsers() bool {
 	return count > 0
 }
 
-// Encrypt encrypts a string value using AES-256-GCM
-func (s *Service) Encrypt(plaintext string) (string, error) {
-	block, err := aes.NewCipher(s.encryptionKey)
-	if err != nil {
-		return "", err
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", err
-	}
-
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return "", err
-	}
-
-	ciphertext := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
-	return base64.StdEncoding.EncodeToString(ciphertext), nil
-}
-
-// Decrypt decrypts an AES-256-GCM encrypted string
-func (s *Service) Decrypt(ciphertext string) (string, error) {
-	data, err := base64.StdEncoding.DecodeString(ciphertext)
-	if err != nil {
-		return "", err
-	}
-
-	block, err := aes.NewCipher(s.encryptionKey)
-	if err != nil {
-		return "", err
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", err
-	}
-
-	if len(data) < gcm.NonceSize() {
-		return "", errors.New("ciphertext too short")
-	}
-
-	nonce, cipherData := data[:gcm.NonceSize()], data[gcm.NonceSize():]
-	plaintext, err := gcm.Open(nil, nonce, cipherData, nil)
-	if err != nil {
-		return "", err
-	}
-
-	return string(plaintext), nil
-}
-
 // generateSessionID generates a random session ID
 func generateSessionID() string {
 	b := make([]byte, 32)
@@ -364,23 +336,29 @@ func generateSessionID() string {
 
 // getClientIP extracts the real client IP from the request
 func getClientIP(r *http.Request) string {
-	// Check X-Forwarded-For header (set by reverse proxy)
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// Take the first IP (original client)
-		if idx := strings.Index(xff, ","); idx != -1 {
-			return strings.TrimSpace(xff[:idx])
+	// Extract remote IP (without port)
+	remoteIP := r.RemoteAddr
+	if idx := strings.LastIndex(remoteIP, ":"); idx != -1 {
+		remoteIP = remoteIP[:idx]
+	}
+
+	// Only trust X-Forwarded-For and X-Real-IP from trusted proxies
+	if isTrustedProxy(remoteIP) {
+		// Check X-Forwarded-For header (set by reverse proxy)
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			// Take the first IP (original client)
+			if idx := strings.Index(xff, ","); idx != -1 {
+				return strings.TrimSpace(xff[:idx])
+			}
+			return strings.TrimSpace(xff)
 		}
-		return strings.TrimSpace(xff)
+		// Check X-Real-IP header
+		if xri := r.Header.Get("X-Real-IP"); xri != "" {
+			return xri
+		}
 	}
-	// Check X-Real-IP header
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
-	// Fall back to RemoteAddr
-	if idx := strings.LastIndex(r.RemoteAddr, ":"); idx != -1 {
-		return r.RemoteAddr[:idx]
-	}
-	return r.RemoteAddr
+
+	return remoteIP
 }
 
 // checkLoginRateLimit returns true if the IP is rate limited

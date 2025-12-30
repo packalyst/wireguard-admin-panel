@@ -16,6 +16,32 @@ import (
 	"api/internal/router"
 )
 
+// validSQLIdentifiers whitelists allowed table and column names for dynamic SQL
+// This prevents SQL injection when interpolating identifiers
+var validSQLIdentifiers = map[string]bool{
+	// Tables
+	"blocked_ips":   true,
+	"attempts":      true,
+	"traffic_logs":  true,
+	"allowed_ports": true,
+	"jails":         true,
+	// Columns
+	"jail_name": true,
+	"client_ip": true,
+	"ip":        true,
+	"port":      true,
+	"protocol":  true,
+}
+
+// isValidSQLIdentifier checks if a table or column name is whitelisted
+func isValidSQLIdentifier(name string) bool {
+	if !validSQLIdentifiers[name] {
+		log.Printf("Warning: invalid SQL identifier rejected: %s", name)
+		return false
+	}
+	return true
+}
+
 // handleStatus returns firewall status summary
 func (s *Service) handleStatus(w http.ResponseWriter, r *http.Request) {
 	var blockedCount, attemptsCount, portsCount, jailsCount int
@@ -773,6 +799,10 @@ func (s *Service) handleDeleteBlockedSource(w http.ResponseWriter, r *http.Reque
 
 // getDistinctJails returns distinct jail names from a table
 func (s *Service) getDistinctJails(table, whereClause string) []string {
+	if !isValidSQLIdentifier(table) {
+		return []string{}
+	}
+
 	query := fmt.Sprintf("SELECT DISTINCT jail_name FROM %s", table)
 	if whereClause != "" {
 		query += " WHERE " + whereClause
@@ -798,6 +828,10 @@ func (s *Service) getDistinctJails(table, whereClause string) []string {
 
 // getDistinctValues returns distinct values from a column
 func (s *Service) getDistinctValues(table, column string) []string {
+	if !isValidSQLIdentifier(table) || !isValidSQLIdentifier(column) {
+		return []string{}
+	}
+
 	query := fmt.Sprintf("SELECT DISTINCT %s FROM %s ORDER BY %s", column, table, column)
 
 	rows, err := s.db.Query(query)

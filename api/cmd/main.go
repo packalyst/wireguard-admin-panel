@@ -42,6 +42,9 @@ func main() {
 	}
 	defer database.Close()
 
+	// Initialize encryption (must be before services that use encryption)
+	helper.InitEncryption()
+
 	// Initialize and register services
 	// Auth must be first (other services depend on it)
 	if config.IsServiceEnabled("auth") {

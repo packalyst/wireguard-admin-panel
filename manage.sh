@@ -21,6 +21,29 @@ echo -e "${GREEN}=== VPN Stack Management ===${NC}"
 echo ""
 
 # ===========================================
+# Command Line Arguments
+# ===========================================
+
+# Handle direct commands before anything else
+case "${1:-}" in
+    update|--update|-u)
+        # Source the functions first, then check for updates
+        # (Functions are defined below, so we use a flag)
+        RUN_UPDATE_CHECK=true
+        ;;
+    help|--help|-h)
+        echo "Usage: ./manage.sh [command]"
+        echo ""
+        echo "Commands:"
+        echo "  (none)     Interactive mode - manage containers"
+        echo "  update     Check for and install updates"
+        echo "  help       Show this help message"
+        echo ""
+        exit 0
+        ;;
+esac
+
+# ===========================================
 # Helper Functions
 # ===========================================
 
@@ -191,6 +214,367 @@ install_wireguard() {
 }
 
 # ===========================================
+# Update Checker Functions
+# ===========================================
+
+check_for_updates() {
+    echo -e "${BLUE}=== Update Checker ===${NC}"
+    echo ""
+
+    # Check if git is available
+    if ! command -v git &> /dev/null; then
+        echo -e "${RED}Git is not installed. Cannot check for updates.${NC}"
+        return 1
+    fi
+
+    # Check if we're in a git repository
+    if ! git rev-parse --git-dir &> /dev/null 2>&1; then
+        echo -e "${RED}Not a git repository. Cannot check for updates.${NC}"
+        return 1
+    fi
+
+    # Get current branch
+    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+    if [ -z "$CURRENT_BRANCH" ]; then
+        echo -e "${RED}Cannot determine current branch${NC}"
+        return 1
+    fi
+
+    echo -e "${YELLOW}Fetching updates from remote...${NC}"
+    git fetch origin "$CURRENT_BRANCH" 2>/dev/null || {
+        echo -e "${RED}Failed to fetch from remote${NC}"
+        return 1
+    }
+
+    # Get current and remote commit
+    LOCAL_COMMIT=$(git rev-parse HEAD)
+    REMOTE_COMMIT=$(git rev-parse origin/"$CURRENT_BRANCH" 2>/dev/null)
+
+    if [ -z "$REMOTE_COMMIT" ]; then
+        echo -e "${RED}Cannot find remote branch origin/${CURRENT_BRANCH}${NC}"
+        return 1
+    fi
+
+    LOCAL_SHORT=$(git rev-parse --short HEAD)
+    REMOTE_SHORT=$(git rev-parse --short origin/"$CURRENT_BRANCH")
+
+    echo ""
+    echo -e "${CYAN}Current branch:${NC} $CURRENT_BRANCH"
+    echo -e "${CYAN}Local commit:${NC}  $LOCAL_SHORT"
+    echo -e "${CYAN}Remote commit:${NC} $REMOTE_SHORT"
+    echo ""
+
+    # Check if up to date
+    if [ "$LOCAL_COMMIT" = "$REMOTE_COMMIT" ]; then
+        echo -e "${GREEN}✓ You are up to date!${NC}"
+        echo ""
+        return 0
+    fi
+
+    # Count commits behind
+    COMMITS_BEHIND=$(git rev-list --count HEAD..origin/"$CURRENT_BRANCH")
+    COMMITS_AHEAD=$(git rev-list --count origin/"$CURRENT_BRANCH"..HEAD)
+
+    if [ "$COMMITS_AHEAD" -gt 0 ]; then
+        echo -e "${YELLOW}⚠ You are $COMMITS_AHEAD commit(s) ahead of remote${NC}"
+        echo "  (You have local commits not pushed to remote)"
+        echo ""
+    fi
+
+    if [ "$COMMITS_BEHIND" -eq 0 ]; then
+        echo -e "${GREEN}✓ No new updates available${NC}"
+        return 0
+    fi
+
+    echo -e "${YELLOW}⚠ You are $COMMITS_BEHIND commit(s) behind${NC}"
+    echo ""
+
+    # Show commits
+    echo -e "${BLUE}Available updates:${NC}"
+    echo -e "${CYAN}─────────────────────────────────────────────────────────────${NC}"
+
+    # Store commits in array for selection
+    COMMIT_LIST=()
+    COMMIT_INDEX=1
+
+    while IFS= read -r line; do
+        COMMIT_HASH=$(echo "$line" | cut -d'|' -f1)
+        COMMIT_DATE=$(echo "$line" | cut -d'|' -f2)
+        COMMIT_MSG=$(echo "$line" | cut -d'|' -f3)
+
+        COMMIT_LIST+=("$COMMIT_HASH")
+        echo -e "  ${GREEN}[$COMMIT_INDEX]${NC} ${YELLOW}$COMMIT_HASH${NC} - $COMMIT_DATE"
+        echo -e "      $COMMIT_MSG"
+
+        # Show changed files for this commit
+        FILES_CHANGED=$(git diff-tree --no-commit-id --name-only -r "$COMMIT_HASH" 2>/dev/null | head -5)
+        if [ -n "$FILES_CHANGED" ]; then
+            echo -e "      ${CYAN}Files:${NC}"
+            while IFS= read -r file; do
+                echo -e "        - $file"
+            done <<< "$FILES_CHANGED"
+
+            TOTAL_FILES=$(git diff-tree --no-commit-id --name-only -r "$COMMIT_HASH" 2>/dev/null | wc -l)
+            if [ "$TOTAL_FILES" -gt 5 ]; then
+                echo -e "        ${YELLOW}... and $((TOTAL_FILES - 5)) more files${NC}"
+            fi
+        fi
+        echo ""
+
+        ((COMMIT_INDEX++))
+    done < <(git log --oneline --format="%h|%cr|%s" HEAD..origin/"$CURRENT_BRANCH" | head -10)
+
+    if [ "$COMMITS_BEHIND" -gt 10 ]; then
+        echo -e "  ${YELLOW}... and $((COMMITS_BEHIND - 10)) more commits${NC}"
+        echo ""
+    fi
+
+    echo -e "${CYAN}─────────────────────────────────────────────────────────────${NC}"
+    echo ""
+
+    # Check for local modifications
+    echo -e "${BLUE}Checking for local modifications...${NC}"
+    LOCAL_CHANGES=$(git status --porcelain 2>/dev/null)
+
+    if [ -n "$LOCAL_CHANGES" ]; then
+        echo -e "${YELLOW}⚠ You have local modifications:${NC}"
+        echo ""
+
+        # Categorize changes
+        MODIFIED_FILES=$(echo "$LOCAL_CHANGES" | grep "^ M\| M " | awk '{print $2}')
+        UNTRACKED_FILES=$(echo "$LOCAL_CHANGES" | grep "^??" | awk '{print $2}')
+
+        if [ -n "$MODIFIED_FILES" ]; then
+            echo -e "  ${YELLOW}Modified files:${NC}"
+            while IFS= read -r file; do
+                [ -n "$file" ] && echo -e "    ${RED}M${NC} $file"
+            done <<< "$MODIFIED_FILES"
+        fi
+
+        if [ -n "$UNTRACKED_FILES" ]; then
+            echo -e "  ${CYAN}Untracked files (won't be affected):${NC}"
+            while IFS= read -r file; do
+                [ -n "$file" ] && echo -e "    ${CYAN}?${NC} $file"
+            done <<< "$UNTRACKED_FILES"
+        fi
+        echo ""
+
+        HAS_MODIFICATIONS=true
+    else
+        echo -e "${GREEN}✓ No local modifications${NC}"
+        echo ""
+        HAS_MODIFICATIONS=false
+    fi
+
+    # Update options
+    echo -e "${YELLOW}Update options:${NC}"
+    echo "  1) Update to latest (commit $REMOTE_SHORT)"
+    if [ ${#COMMIT_LIST[@]} -gt 1 ]; then
+        echo "  2) Choose specific commit"
+    fi
+    echo "  3) View full changelog"
+    echo "  4) Cancel"
+    echo ""
+
+    read -p "Enter your choice: " update_choice
+
+    case "$update_choice" in
+        1)
+            perform_update "$REMOTE_COMMIT" "$HAS_MODIFICATIONS"
+            ;;
+        2)
+            if [ ${#COMMIT_LIST[@]} -gt 1 ]; then
+                echo ""
+                read -p "Enter commit number [1-${#COMMIT_LIST[@]}]: " commit_num
+                if [[ "$commit_num" =~ ^[0-9]+$ ]] && [ "$commit_num" -ge 1 ] && [ "$commit_num" -le ${#COMMIT_LIST[@]} ]; then
+                    TARGET_COMMIT="${COMMIT_LIST[$((commit_num-1))]}"
+                    # Get full hash
+                    FULL_HASH=$(git rev-parse "$TARGET_COMMIT")
+                    perform_update "$FULL_HASH" "$HAS_MODIFICATIONS"
+                else
+                    echo -e "${RED}Invalid selection${NC}"
+                fi
+            else
+                echo -e "${RED}Invalid option${NC}"
+            fi
+            ;;
+        3)
+            echo ""
+            echo -e "${BLUE}Full changelog:${NC}"
+            git log --oneline HEAD..origin/"$CURRENT_BRANCH"
+            echo ""
+            read -p "Press Enter to continue..."
+            check_for_updates
+            ;;
+        4)
+            echo -e "${BLUE}Update cancelled${NC}"
+            ;;
+        *)
+            echo -e "${RED}Invalid choice${NC}"
+            ;;
+    esac
+}
+
+perform_update() {
+    local TARGET_COMMIT="$1"
+    local HAS_MODIFICATIONS="$2"
+
+    echo ""
+
+    if [ "$HAS_MODIFICATIONS" = true ]; then
+        echo -e "${YELLOW}╔════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${YELLOW}║${NC}  ${RED}⚠ LOCAL MODIFICATIONS DETECTED${NC}                           ${YELLOW}║${NC}"
+        echo -e "${YELLOW}╠════════════════════════════════════════════════════════════╣${NC}"
+        echo -e "${YELLOW}║${NC}                                                            ${YELLOW}║${NC}"
+        echo -e "${YELLOW}║${NC}  How would you like to handle local changes?              ${YELLOW}║${NC}"
+        echo -e "${YELLOW}║${NC}                                                            ${YELLOW}║${NC}"
+        echo -e "${YELLOW}║${NC}  1) Stash changes (save & restore after update)           ${YELLOW}║${NC}"
+        echo -e "${YELLOW}║${NC}  2) Discard changes (lose local modifications)            ${YELLOW}║${NC}"
+        echo -e "${YELLOW}║${NC}  3) Keep changes (may cause conflicts)                    ${YELLOW}║${NC}"
+        echo -e "${YELLOW}║${NC}  4) Cancel update                                         ${YELLOW}║${NC}"
+        echo -e "${YELLOW}║${NC}                                                            ${YELLOW}║${NC}"
+        echo -e "${YELLOW}╚════════════════════════════════════════════════════════════╝${NC}"
+        echo ""
+
+        read -p "Enter your choice [1-4]: " mod_choice
+
+        case "$mod_choice" in
+            1)
+                echo -e "${YELLOW}Stashing local changes...${NC}"
+                STASH_MSG="Auto-stash before update to $(git rev-parse --short $TARGET_COMMIT)"
+                git stash push -m "$STASH_MSG"
+                echo -e "${GREEN}✓ Changes stashed${NC}"
+                RESTORE_STASH=true
+                ;;
+            2)
+                echo -e "${YELLOW}Discarding local changes...${NC}"
+                git checkout -- .
+                git clean -fd
+                echo -e "${GREEN}✓ Changes discarded${NC}"
+                RESTORE_STASH=false
+                ;;
+            3)
+                echo -e "${YELLOW}Keeping local changes, attempting merge...${NC}"
+                RESTORE_STASH=false
+                ;;
+            4)
+                echo -e "${BLUE}Update cancelled${NC}"
+                return 0
+                ;;
+            *)
+                echo -e "${RED}Invalid choice, cancelling${NC}"
+                return 1
+                ;;
+        esac
+    else
+        RESTORE_STASH=false
+    fi
+
+    echo ""
+    echo -e "${YELLOW}Updating to commit $(git rev-parse --short $TARGET_COMMIT)...${NC}"
+
+    # Stop containers before update
+    echo -e "${YELLOW}Stopping containers...${NC}"
+    docker compose down 2>/dev/null || true
+
+    # Perform the update
+    if git merge "$TARGET_COMMIT" --no-edit 2>/dev/null; then
+        echo -e "${GREEN}✓ Update successful${NC}"
+    else
+        # Check for merge conflicts
+        if git diff --name-only --diff-filter=U | grep -q .; then
+            echo -e "${RED}✗ Merge conflicts detected${NC}"
+            echo ""
+            echo "Conflicting files:"
+            git diff --name-only --diff-filter=U
+            echo ""
+            echo -e "${YELLOW}Options:${NC}"
+            echo "  1) Abort update and restore previous state"
+            echo "  2) Accept all incoming changes (theirs)"
+            echo "  3) Keep all local changes (ours)"
+            echo ""
+            read -p "Enter your choice [1-3]: " conflict_choice
+
+            case "$conflict_choice" in
+                1)
+                    git merge --abort
+                    echo -e "${YELLOW}Update aborted${NC}"
+                    if [ "$RESTORE_STASH" = true ]; then
+                        git stash pop
+                        echo -e "${GREEN}✓ Local changes restored${NC}"
+                    fi
+                    return 1
+                    ;;
+                2)
+                    git checkout --theirs .
+                    git add .
+                    git commit -m "Resolved conflicts: accepted incoming changes"
+                    echo -e "${GREEN}✓ Conflicts resolved (accepted incoming)${NC}"
+                    ;;
+                3)
+                    git checkout --ours .
+                    git add .
+                    git commit -m "Resolved conflicts: kept local changes"
+                    echo -e "${GREEN}✓ Conflicts resolved (kept local)${NC}"
+                    ;;
+                *)
+                    git merge --abort
+                    echo -e "${RED}Invalid choice, aborting${NC}"
+                    return 1
+                    ;;
+            esac
+        else
+            echo -e "${RED}✗ Update failed${NC}"
+            return 1
+        fi
+    fi
+
+    # Restore stashed changes if applicable
+    if [ "$RESTORE_STASH" = true ]; then
+        echo ""
+        echo -e "${YELLOW}Restoring stashed changes...${NC}"
+        if git stash pop 2>/dev/null; then
+            echo -e "${GREEN}✓ Local changes restored${NC}"
+        else
+            echo -e "${YELLOW}⚠ Could not auto-restore changes (conflicts)${NC}"
+            echo "  Your changes are saved in git stash. Run 'git stash pop' manually."
+        fi
+    fi
+
+    echo ""
+    echo -e "${GREEN}✓ Update complete!${NC}"
+    echo ""
+
+    # Ask to rebuild
+    if prompt_yes_no "Rebuild and restart containers?" "y"; then
+        echo ""
+        echo -e "${YELLOW}Rebuilding containers...${NC}"
+
+        # Regenerate configs
+        if [ -f ".env" ]; then
+            set -a
+            source .env
+            set +a
+        fi
+
+        # Run the rest of the script to rebuild
+        exec "$0"
+    else
+        echo ""
+        echo -e "${CYAN}Run ./manage.sh to rebuild when ready${NC}"
+    fi
+}
+
+# ===========================================
+# Handle Update Command
+# ===========================================
+
+if [ "${RUN_UPDATE_CHECK:-}" = true ]; then
+    check_for_updates
+    exit 0
+fi
+
+# ===========================================
 # Check if Docker is already running
 # ===========================================
 
@@ -213,10 +597,11 @@ if [ "$DOCKER_RUNNING" = true ]; then
     echo "  3) View logs"
     echo "  4) Clean everything (stop, remove containers, volumes, images)"
     echo "  5) Continue to reconfigure and restart"
-    echo "  6) Exit"
+    echo "  6) Check for updates"
+    echo "  7) Exit"
     echo ""
 
-    read -p "Enter your choice [1-6]: " choice
+    read -p "Enter your choice [1-7]: " choice
 
     case "$choice" in
         1)
@@ -282,6 +667,10 @@ if [ "$DOCKER_RUNNING" = true ]; then
             echo ""
             ;;
         6)
+            check_for_updates
+            exit 0
+            ;;
+        7)
             echo -e "${BLUE}Exiting...${NC}"
             exit 0
             ;;
