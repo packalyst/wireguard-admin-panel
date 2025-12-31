@@ -3,12 +3,14 @@ package main
 import (
 	"log"
 	"net/http"
+	"time"
 
 	"api/internal/adguard"
 	"api/internal/auth"
 	"api/internal/config"
 	"api/internal/database"
 	"api/internal/docker"
+	"api/internal/domains"
 	"api/internal/firewall"
 	"api/internal/geolocation"
 	"api/internal/headscale"
@@ -19,6 +21,7 @@ import (
 	"api/internal/traefik"
 	"api/internal/vpn"
 	"api/internal/wireguard"
+	"api/internal/ws"
 )
 
 func main() {
@@ -146,23 +149,92 @@ func main() {
 		log.Println("AdGuard service registered")
 	}
 
+	var dockerSvc *docker.Service
 	if config.IsServiceEnabled("docker") {
-		dockerSvc := docker.New()
+		dockerSvc = docker.New()
 		r.RegisterService("docker", dockerSvc.Handlers())
 		log.Println("Docker service registered")
 	}
 
+	var vpnSvc *vpn.Service
 	if config.IsServiceEnabled("vpn") {
-		vpnSvc := vpn.New()
+		vpnSvc = vpn.New()
 		r.RegisterService("vpn", vpnSvc.Handlers())
 		log.Println("VPN ACL service registered")
 	}
 
+	if config.IsServiceEnabled("domains") {
+		domainsSvc := domains.New()
+		r.RegisterService("domains", domainsSvc.Handlers())
+		log.Println("Domains service registered")
+	}
+
+	// Initialize WebSocket service
+	wsSvc := ws.New()
+	log.Println("WebSocket service initialized")
+
+	// Set up node status checker for real-time updates
+	if vpnSvc != nil {
+		ws.SetNodeStatsProvider(
+			func() { vpnSvc.SyncClients() },
+			vpn.GetNodeStats,
+		)
+	}
+
+	// Set up docker provider for real-time container updates
+	if dockerSvc != nil {
+		ws.SetDockerProvider(func() []ws.DockerContainer {
+			containers, err := dockerSvc.GetContainers()
+			if err != nil {
+				return nil
+			}
+			// Convert docker.Container to ws.DockerContainer
+			result := make([]ws.DockerContainer, len(containers))
+			for i, c := range containers {
+				result[i] = ws.DockerContainer{
+					ID:     c.ID,
+					Name:   c.Name,
+					Image:  c.Image,
+					State:  c.State,
+					Status: c.Status,
+				}
+			}
+			return result
+		})
+
+		// Set up docker log streamer
+		ws.SetDockerLogStreamer(&dockerLogAdapter{svc: dockerSvc})
+	}
+
+	// Start status checker (checks both nodes and docker)
+	wsCfg := config.GetWebSocketConfig()
+	ws.StartStatusChecker(time.Duration(wsCfg.StatusCheckIntervalSec) * time.Second)
+
 	// Build router
 	handler := r.Build()
+
+	// Add WebSocket endpoint (needs special handling, not REST)
+	mux := http.NewServeMux()
+	mux.Handle("/api/ws", http.HandlerFunc(wsSvc.HandleWebSocket))
+	mux.Handle("/", handler)
 
 	// Start server
 	port := helper.GetEnv("API_PORT")
 	log.Printf("Unified API server starting on port %s", port)
-	log.Fatal(http.ListenAndServe(":"+port, handler))
+	log.Fatal(http.ListenAndServe(":"+port, mux))
+}
+
+// dockerLogAdapter adapts docker.Service to ws.DockerLogStreamer interface
+type dockerLogAdapter struct {
+	svc *docker.Service
+}
+
+func (a *dockerLogAdapter) StreamLogs(containerName string, onLog func(ws.DockerLogEntry), stop <-chan struct{}) error {
+	return a.svc.StreamLogs(containerName, func(entry docker.LogEntry) {
+		onLog(ws.DockerLogEntry{
+			Timestamp: entry.Timestamp,
+			Message:   entry.Message,
+			Stream:    entry.Stream,
+		})
+	}, stop)
 }

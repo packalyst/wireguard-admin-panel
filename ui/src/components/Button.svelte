@@ -7,9 +7,11 @@
     icon = undefined,
     iconOnly = false,
     disabled = false,
+    loading = false,
     type = 'button',
     class: className = '',
     onclick = undefined,
+    label = undefined,
     children,
     ...restProps
   } = $props();
@@ -29,6 +31,12 @@
     xs: 'kt-btn-xs'
   };
 
+  const spinnerSizes = {
+    default: 'w-4 h-4',
+    sm: 'w-3 h-3',
+    xs: 'w-3 h-3'
+  };
+
   const classes = $derived([
     'kt-btn',
     variantClasses[variant],
@@ -40,15 +48,21 @@
 
 <button
   {type}
-  {disabled}
+  disabled={disabled || loading}
   {onclick}
   class={classes}
   {...restProps}
 >
-  {#if icon}
+  {#if loading}
+    <span class="{spinnerSizes[size]} border-2 border-current border-t-transparent rounded-full animate-spin"></span>
+  {:else if icon}
     <Icon name={icon} size={size === 'xs' ? 12 : 14} />
   {/if}
   {#if !iconOnly}
-    {@render children?.()}
+    {#if label}
+      {label}
+    {:else}
+      {@render children?.()}
+    {/if}
   {/if}
 </button>

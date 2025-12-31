@@ -1,5 +1,5 @@
 <script>
-  import { onMount, onDestroy } from 'svelte'
+  import { onMount } from 'svelte'
   import { toast, apiGet, apiPost, apiPut, apiDelete } from '../stores/app.js'
   import { formatRelativeDate } from '$lib/utils/format.js'
   import Icon from '../components/Icon.svelte'
@@ -7,12 +7,13 @@
   import Button from '../components/Button.svelte'
   import Modal from '../components/Modal.svelte'
   import Toolbar from '../components/Toolbar.svelte'
+  import InfoCard from '../components/InfoCard.svelte'
+  import EmptyState from '../components/EmptyState.svelte'
 
   let { loading = $bindable(true) } = $props()
 
   let users = $state([])
   let nodes = $state([])
-  let pollInterval = null
 
   async function loadData() {
     try {
@@ -31,11 +32,6 @@
 
   onMount(() => {
     loadData()
-    pollInterval = setInterval(loadData, 30000)
-  })
-
-  onDestroy(() => {
-    if (pollInterval) clearInterval(pollInterval)
   })
 
   // Modals
@@ -192,21 +188,11 @@
 </script>
 
 <div class="space-y-4">
-  <!-- Info Card -->
-  <div class="bg-gradient-to-r from-primary/5 to-info/5 border border-primary/20 rounded-lg p-4">
-    <div class="flex items-start gap-3">
-      <div class="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-        <Icon name="users" size={18} class="text-primary" />
-      </div>
-      <div class="flex-1 min-w-0">
-        <h3 class="text-sm font-medium text-foreground mb-1">Users</h3>
-        <p class="text-xs text-muted-foreground leading-relaxed">
-          Organize your network with users. Each user can own multiple nodes and have their own
-          pre-auth keys. Customize avatars and colors for easy identification.
-        </p>
-      </div>
-    </div>
-  </div>
+  <InfoCard
+    icon="users"
+    title="Users"
+    description="Organize your network with users. Each user can own multiple nodes and have their own pre-auth keys. Customize avatars and colors for easy identification."
+  />
 
   <!-- Toolbar -->
   <Toolbar bind:search={searchQuery} placeholder="Search users..." />
@@ -241,8 +227,8 @@
           <!-- Stats grid -->
           <div class="grid grid-cols-2 gap-x-3 border-t border-border px-3 py-2.5 text-[11px]">
             <div class="flex items-center gap-1.5">
-              <Icon name="server" size={12} class="text-slate-400 dark:text-zinc-600" />
-              <span class="text-slate-600 dark:text-zinc-400">{nodeCount} nodes</span>
+              <Icon name="server" size={12} class="text-dim" />
+              <span class="text-muted-foreground">{nodeCount} nodes</span>
             </div>
             <div class="flex items-center gap-1.5">
               <span class="status-dot {onlineCount > 0 ? 'status-dot-success' : 'status-dot-muted'}"></span>
@@ -282,40 +268,34 @@
         onclick={() => showCreateModal = true}
         class="add-item-card"
       >
-        <div class="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200/80 text-slate-600 dark:bg-zinc-700 dark:text-zinc-100">
+        <div class="flex h-8 w-8 items-center justify-center rounded-full bg-secondary text-foreground">
           <Icon name="plus" size={16} />
         </div>
-        <div class="font-medium text-slate-700 dark:text-zinc-100">Add new user</div>
-        <p class="max-w-[200px] text-slate-400 dark:text-zinc-500">
+        <div class="font-medium text-foreground">Add new user</div>
+        <p class="max-w-[200px] text-muted-foreground">
           Create users to organize nodes and generate auth keys
         </p>
       </article>
     </div>
   {:else if users.length > 0}
-    <!-- No search results -->
-    <div class="flex flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 py-12 text-center dark:border-zinc-700 dark:bg-zinc-900/70">
-      <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-200/80 text-slate-500 dark:bg-zinc-700 dark:text-zinc-400">
-        <Icon name="search" size={20} />
-      </div>
-      <h4 class="mt-3 text-sm font-medium text-slate-700 dark:text-zinc-200">No users found</h4>
-      <p class="mt-1 text-xs text-slate-500 dark:text-zinc-500">Try a different search term</p>
-    </div>
+    <EmptyState
+      icon="search"
+      title="No users found"
+      description="Try a different search term"
+    />
   {/if}
 
   {#if filteredUsers.length === 0 && users.length === 0}
-    <div class="flex flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 py-12 text-center dark:border-zinc-700 dark:bg-zinc-900/70">
-      <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-200/80 text-slate-500 dark:bg-zinc-700 dark:text-zinc-400">
-        <Icon name="users" size={20} />
-      </div>
-      <h4 class="mt-3 text-sm font-medium text-slate-700 dark:text-zinc-200">No users yet</h4>
-      <p class="mt-1 text-xs text-slate-500 dark:text-zinc-500">
-        Create users to organize nodes and generate auth keys
-      </p>
-      <Button onclick={() => showCreateModal = true} size="sm" class="mt-4">
+    <EmptyState
+      icon="users"
+      title="No users yet"
+      description="Create users to organize nodes and generate auth keys"
+    >
+      <Button onclick={() => showCreateModal = true} size="sm">
         <Icon name="plus" size={14} />
         Add User
       </Button>
-    </div>
+    </EmptyState>
   {/if}
 </div>
 

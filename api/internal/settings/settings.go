@@ -2,14 +2,12 @@ package settings
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"api/internal/config"
 	"api/internal/database"
@@ -52,6 +50,13 @@ type SettingsResponse struct {
 
 	// Session
 	SessionTimeout string `json:"session_timeout"`
+
+	// Port Scanner
+	ScannerPortStart  int `json:"scanner_port_start"`  // Range start (default: 1)
+	ScannerPortEnd    int `json:"scanner_port_end"`    // Range end (default: 5000)
+	ScannerConcurrent int `json:"scanner_concurrent"`  // Concurrent connections (default: 100)
+	ScannerPauseMs    int `json:"scanner_pause_ms"`    // Pause between batches in ms (default: 0)
+	ScannerTimeoutMs  int `json:"scanner_timeout_ms"`  // Connection timeout in ms (default: 500)
 }
 
 // UpdateSettingsRequest for PUT /api/settings
@@ -61,6 +66,13 @@ type UpdateSettingsRequest struct {
 	AdGuardPassword         *string `json:"adguard_password,omitempty"`
 	AdGuardDashboardEnabled *bool   `json:"adguard_dashboard_enabled,omitempty"`
 	SessionTimeout          *string `json:"session_timeout,omitempty"`
+
+	// Port Scanner
+	ScannerPortStart  *int `json:"scanner_port_start,omitempty"`
+	ScannerPortEnd    *int `json:"scanner_port_end,omitempty"`
+	ScannerConcurrent *int `json:"scanner_concurrent,omitempty"`
+	ScannerPauseMs    *int `json:"scanner_pause_ms,omitempty"`
+	ScannerTimeoutMs  *int `json:"scanner_timeout_ms,omitempty"`
 }
 
 // TestAdGuardRequest for POST /api/settings/test-adguard
@@ -113,21 +125,26 @@ func (s *Service) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		resp.SessionTimeout = strconv.Itoa(config.GetSessionConfig().TimeoutHours)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	// Get Scanner settings with defaults
+	resp.ScannerPortStart = getSettingInt("scanner_port_start", 1)
+	resp.ScannerPortEnd = getSettingInt("scanner_port_end", 5000)
+	resp.ScannerConcurrent = getSettingInt("scanner_concurrent", 100)
+	resp.ScannerPauseMs = getSettingInt("scanner_pause_ms", 0)
+	resp.ScannerTimeoutMs = getSettingInt("scanner_timeout_ms", 500)
+
+	router.JSON(w, resp)
 }
 
 func (s *Service) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	var req UpdateSettingsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
 
 	// Update Headscale public URL (api_url is readonly, set during setup)
 	if req.HeadscaleURL != nil {
 		if err := setSetting("headscale_url", *req.HeadscaleURL); err != nil {
-			http.Error(w, "Failed to save headscale_url: "+err.Error(), http.StatusInternalServerError)
+			router.JSONError(w, "Failed to save headscale_url: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		log.Printf("Updated headscale_url")
@@ -137,14 +154,14 @@ func (s *Service) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	adguardRestartRequired := false
 	if req.AdGuardUsername != nil {
 		if err := setSetting("adguard_username", *req.AdGuardUsername); err != nil {
-			http.Error(w, "Failed to save adguard_username: "+err.Error(), http.StatusInternalServerError)
+			router.JSONError(w, "Failed to save adguard_username: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		log.Printf("Updated adguard_username")
 	}
 	if req.AdGuardPassword != nil {
 		if err := setSettingEncrypted("adguard_password", *req.AdGuardPassword); err != nil {
-			http.Error(w, "Failed to save adguard_password: "+err.Error(), http.StatusInternalServerError)
+			router.JSONError(w, "Failed to save adguard_password: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		// Mark that adguard password has been configured
@@ -174,14 +191,30 @@ func (s *Service) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	// Update Session settings
 	if req.SessionTimeout != nil {
 		if err := setSetting("session_timeout", *req.SessionTimeout); err != nil {
-			http.Error(w, "Failed to save session_timeout: "+err.Error(), http.StatusInternalServerError)
+			router.JSONError(w, "Failed to save session_timeout: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		log.Printf("Updated session_timeout to %s hours", *req.SessionTimeout)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	// Update Scanner settings
+	if req.ScannerPortStart != nil {
+		setSettingInt("scanner_port_start", *req.ScannerPortStart)
+	}
+	if req.ScannerPortEnd != nil {
+		setSettingInt("scanner_port_end", *req.ScannerPortEnd)
+	}
+	if req.ScannerConcurrent != nil {
+		setSettingInt("scanner_concurrent", *req.ScannerConcurrent)
+	}
+	if req.ScannerPauseMs != nil {
+		setSettingInt("scanner_pause_ms", *req.ScannerPauseMs)
+	}
+	if req.ScannerTimeoutMs != nil {
+		setSettingInt("scanner_timeout_ms", *req.ScannerTimeoutMs)
+	}
+
+	router.JSON(w, map[string]interface{}{
 		"status":                 "ok",
 		"adguardRestartRequired": adguardRestartRequired,
 	})
@@ -189,13 +222,12 @@ func (s *Service) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) handleTestAdGuard(w http.ResponseWriter, r *http.Request) {
 	var req TestAdGuardRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
 
 	if req.URL == "" {
-		http.Error(w, "URL is required", http.StatusBadRequest)
+		router.JSONError(w, "URL is required", http.StatusBadRequest)
 		return
 	}
 
@@ -208,10 +240,10 @@ func (s *Service) handleTestAdGuard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Test connection to AdGuard
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: helper.HTTPClientTimeout}
 	testReq, err := http.NewRequest("GET", req.URL+"/control/status", nil)
 	if err != nil {
-		http.Error(w, "Invalid URL: "+err.Error(), http.StatusBadRequest)
+		router.JSONError(w, "Invalid URL: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -223,45 +255,57 @@ func (s *Service) handleTestAdGuard(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := client.Do(testReq)
 	if err != nil {
-		http.Error(w, "Connection failed: "+err.Error(), http.StatusBadGateway)
+		router.JSONError(w, "Connection failed: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 401 || resp.StatusCode == 403 {
-		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		router.JSONError(w, "Invalid credentials", http.StatusUnauthorized)
 		return
 	}
 
 	if resp.StatusCode >= 400 {
-		http.Error(w, fmt.Sprintf("AdGuard returned error: %d", resp.StatusCode), http.StatusBadGateway)
+		router.JSONError(w, fmt.Sprintf("AdGuard returned error: %d", resp.StatusCode), http.StatusBadGateway)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	router.JSON(w, map[string]string{"status": "ok"})
 }
 
 // Helper functions for settings
 
 func getSetting(key string) (string, error) {
-	db := database.Get()
-	if db == nil {
-		return "", fmt.Errorf("database not initialized")
+	db, err := database.GetDB()
+	if err != nil {
+		return "", err
 	}
 
 	var value string
-	err := db.QueryRow("SELECT value FROM settings WHERE key = ? AND encrypted = 0", key).Scan(&value)
+	err = db.QueryRow("SELECT value FROM settings WHERE key = ? AND encrypted = 0", key).Scan(&value)
 	return value, err
 }
 
+func getSettingInt(key string, defaultVal int) int {
+	if val, err := getSetting(key); err == nil {
+		if i, err := strconv.Atoi(val); err == nil {
+			return i
+		}
+	}
+	return defaultVal
+}
+
+func setSettingInt(key string, value int) error {
+	return setSetting(key, strconv.Itoa(value))
+}
+
 func setSetting(key, value string) error {
-	db := database.Get()
-	if db == nil {
-		return fmt.Errorf("database not initialized")
+	db, err := database.GetDB()
+	if err != nil {
+		return err
 	}
 
-	_, err := db.Exec(`
+	_, err = db.Exec(`
 		INSERT INTO settings (key, value, encrypted, updated_at)
 		VALUES (?, ?, 0, CURRENT_TIMESTAMP)
 		ON CONFLICT(key) DO UPDATE SET value = ?, encrypted = 0, updated_at = CURRENT_TIMESTAMP
@@ -270,14 +314,14 @@ func setSetting(key, value string) error {
 }
 
 func getSettingEncrypted(key string) (string, error) {
-	db := database.Get()
-	if db == nil {
-		return "", fmt.Errorf("database not initialized")
+	db, err := database.GetDB()
+	if err != nil {
+		return "", err
 	}
 
 	var value string
 	var encrypted bool
-	err := db.QueryRow("SELECT value, encrypted FROM settings WHERE key = ?", key).Scan(&value, &encrypted)
+	err = db.QueryRow("SELECT value, encrypted FROM settings WHERE key = ?", key).Scan(&value, &encrypted)
 	if err != nil {
 		return "", err
 	}
@@ -290,9 +334,9 @@ func getSettingEncrypted(key string) (string, error) {
 }
 
 func setSettingEncrypted(key, value string) error {
-	db := database.Get()
-	if db == nil {
-		return fmt.Errorf("database not initialized")
+	db, err := database.GetDB()
+	if err != nil {
+		return err
 	}
 
 	encrypted, err := helper.Encrypt(value)
@@ -328,14 +372,19 @@ func SetSettingEncrypted(key, value string) error {
 	return setSettingEncrypted(key, value)
 }
 
+// GetSettingInt exports the integer getter for other packages
+func GetSettingInt(key string, defaultVal int) int {
+	return getSettingInt(key, defaultVal)
+}
+
 // DeleteSetting removes a setting from the database
 func DeleteSetting(key string) error {
-	db := database.Get()
-	if db == nil {
-		return fmt.Errorf("database not initialized")
+	db, err := database.GetDB()
+	if err != nil {
+		return err
 	}
 
-	_, err := db.Exec("DELETE FROM settings WHERE key = ?", key)
+	_, err = db.Exec("DELETE FROM settings WHERE key = ?", key)
 	return err
 }
 

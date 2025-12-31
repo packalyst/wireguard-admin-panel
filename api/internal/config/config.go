@@ -63,10 +63,24 @@ type SessionAppConfig struct {
 	TimeoutHours int `json:"timeoutHours"`
 }
 
+// WebSocketAppConfig holds WebSocket-specific configuration
+type WebSocketAppConfig struct {
+	WriteWaitSec           int      `json:"writeWaitSec"`
+	PongWaitSec            int      `json:"pongWaitSec"`
+	MaxMessageSize         int64    `json:"maxMessageSize"`
+	SendBufferSize         int      `json:"sendBufferSize"`
+	ReadBufferSize         int      `json:"readBufferSize"`
+	WriteBufferSize        int      `json:"writeBufferSize"`
+	BroadcastBufferSize    int      `json:"broadcastBufferSize"`
+	StatusCheckIntervalSec int      `json:"statusCheckIntervalSec"`
+	Channels               []string `json:"channels"`
+}
+
 // AppConfig holds application-level configurations
 type AppConfig struct {
-	Firewall FirewallAppConfig `json:"firewall"`
-	Session  SessionAppConfig  `json:"session"`
+	Firewall  FirewallAppConfig  `json:"firewall"`
+	Session   SessionAppConfig   `json:"session"`
+	WebSocket WebSocketAppConfig `json:"websocket"`
 }
 
 // Config represents the complete endpoints configuration
@@ -176,4 +190,12 @@ func GetSessionConfig() SessionAppConfig {
 		cfg.TimeoutHours = 24
 	}
 	return cfg
+}
+
+// GetWebSocketConfig returns WebSocket-specific config
+func GetWebSocketConfig() WebSocketAppConfig {
+	if config == nil {
+		return WebSocketAppConfig{}
+	}
+	return config.App.WebSocket
 }

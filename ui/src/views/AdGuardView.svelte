@@ -12,6 +12,8 @@
   import Input from '../components/Input.svelte'
   import Button from '../components/Button.svelte'
   import Tabs from '../components/Tabs.svelte'
+  import Checkbox from '../components/Checkbox.svelte'
+  import ContentBlock from '../components/ContentBlock.svelte'
   import blocklists from '../data/blocklists.json'
 
   let { loading = $bindable(true) } = $props()
@@ -416,88 +418,60 @@
               <h4 class="text-sm font-semibold text-foreground mb-3">Active Protections</h4>
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <!-- Safe Browsing -->
-                <div class="p-4 rounded-lg border {safeBrowsing?.enabled ? 'border-success/30 bg-success/5' : 'border-border bg-muted/30'}">
-                  <div class="flex items-start justify-between">
-                    <div class="flex items-center gap-3">
-                      <div class="w-10 h-10 rounded-lg flex items-center justify-center {safeBrowsing?.enabled ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}">
-                        <Icon name="shield" size={20} />
-                      </div>
-                      <div>
-                        <div class="font-medium text-foreground">Safe Browsing</div>
-                        <div class="text-xs text-muted-foreground">Block malware & phishing sites</div>
-                      </div>
-                    </div>
-                    <input
-                      type="checkbox"
-                      class="kt-switch"
-                      checked={safeBrowsing?.enabled}
-                      onchange={() => toggleSafeBrowsing(!safeBrowsing?.enabled)}
-                    />
-                  </div>
-                </div>
+                <ContentBlock
+                  icon="shield"
+                  title="Safe Browsing"
+                  description="Block malware & phishing sites"
+                  active={safeBrowsing?.enabled}
+                >
+                  <Checkbox
+                    variant="switch"
+                    checked={safeBrowsing?.enabled}
+                    onchange={() => toggleSafeBrowsing(!safeBrowsing?.enabled)}
+                  />
+                </ContentBlock>
 
                 <!-- Parental Control -->
-                <div class="p-4 rounded-lg border {parental?.enabled ? 'border-success/30 bg-success/5' : 'border-border bg-muted/30'}">
-                  <div class="flex items-start justify-between">
-                    <div class="flex items-center gap-3">
-                      <div class="w-10 h-10 rounded-lg flex items-center justify-center {parental?.enabled ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}">
-                        <Icon name="users" size={20} />
-                      </div>
-                      <div>
-                        <div class="font-medium text-foreground">Parental Control</div>
-                        <div class="text-xs text-muted-foreground">Block adult content</div>
-                      </div>
-                    </div>
-                    <input
-                      type="checkbox"
-                      class="kt-switch"
-                      checked={parental?.enabled}
-                      onchange={() => toggleParental(!parental?.enabled)}
-                    />
-                  </div>
-                </div>
+                <ContentBlock
+                  icon="users"
+                  title="Parental Control"
+                  description="Block adult content"
+                  active={parental?.enabled}
+                >
+                  <Checkbox
+                    variant="switch"
+                    checked={parental?.enabled}
+                    onchange={() => toggleParental(!parental?.enabled)}
+                  />
+                </ContentBlock>
 
                 <!-- Safe Search -->
-                <div class="p-4 rounded-lg border {safeSearch?.enabled ? 'border-success/30 bg-success/5' : 'border-border bg-muted/30'}">
-                  <div class="flex items-start justify-between">
-                    <div class="flex items-center gap-3">
-                      <div class="w-10 h-10 rounded-lg flex items-center justify-center {safeSearch?.enabled ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}">
-                        <Icon name="search" size={20} />
-                      </div>
-                      <div>
-                        <div class="font-medium text-foreground">Safe Search</div>
-                        <div class="text-xs text-muted-foreground">Force safe search on engines</div>
-                      </div>
-                    </div>
-                    <input
-                      type="checkbox"
-                      class="kt-switch"
-                      checked={safeSearch?.enabled}
-                      onchange={() => toggleSafeSearch(!safeSearch?.enabled)}
-                    />
-                  </div>
-                </div>
+                <ContentBlock
+                  icon="search"
+                  title="Safe Search"
+                  description="Force safe search on engines"
+                  active={safeSearch?.enabled}
+                >
+                  <Checkbox
+                    variant="switch"
+                    checked={safeSearch?.enabled}
+                    onchange={() => toggleSafeSearch(!safeSearch?.enabled)}
+                  />
+                </ContentBlock>
 
                 <!-- DNS Protection -->
-                <div class="p-4 rounded-lg border {status?.protection_enabled ? 'border-success/30 bg-success/5' : 'border-border bg-muted/30'}">
-                  <div class="flex items-start justify-between">
-                    <div class="flex items-center gap-3">
-                      <div class="w-10 h-10 rounded-lg flex items-center justify-center {status?.protection_enabled ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}">
-                        <Icon name="shield-check" size={20} />
-                      </div>
-                      <div>
-                        <div class="font-medium text-foreground">DNS Protection</div>
-                        <div class="text-xs text-muted-foreground">Block ads, trackers & malware</div>
-                      </div>
-                    </div>
-                    <input
-                      type="checkbox"
-                      class="kt-switch"
-                      checked={status?.protection_enabled}
-                      onchange={() => toggleProtection(!status?.protection_enabled)}
-                    />
-                  </div>
-                </div>
+                <ContentBlock
+                  icon="shield-check"
+                  title="DNS Protection"
+                  description="Block ads, trackers & malware"
+                  active={status?.protection_enabled}
+                >
+                  <Checkbox
+                    variant="switch"
+                    checked={status?.protection_enabled}
+                    onchange={() => toggleProtection(!status?.protection_enabled)}
+                  />
+                </ContentBlock>
               </div>
             </div>
 
@@ -570,9 +544,9 @@
                   <span class="text-muted-foreground">No blocklists configured</span>
                 {/if}
               </div>
-              <div class="flex gap-2">
+              <div class="kt-btn-group">
                 {#if filters.length > 0}
-                  <Button onclick={refreshFilters} variant="secondary" size="sm" icon="refresh" loading={refreshingFilters} disabled={refreshingFilters}>
+                  <Button onclick={refreshFilters} variant="outline" size="sm" icon="refresh" loading={refreshingFilters} disabled={refreshingFilters}>
                     {refreshingFilters ? 'Updating...' : 'Update'}
                   </Button>
                 {/if}
@@ -596,11 +570,11 @@
                     <div class="p-3">
                       <div class="flex items-start justify-between gap-2 mb-1">
                         <span class="text-sm font-medium text-foreground line-clamp-2 leading-tight">{filter.name}</span>
-                        <input
-                          type="checkbox"
-                          class="kt-switch flex-shrink-0"
+                        <Checkbox
+                          variant="switch"
                           checked={filter.enabled}
                           onchange={() => toggleFilter(filter.url, filter.name, !filter.enabled)}
+                          class="flex-shrink-0"
                         />
                       </div>
                       <span class="text-xs text-muted-foreground">{formatNumber(filter.rules_count)} rules</span>
@@ -768,24 +742,12 @@
 <!-- Add Filter Modal -->
 <Modal bind:open={showAddFilterModal} title="Add Blocklist" size="lg">
   <!-- Mode tabs -->
-  <div class="flex border-b border-border mb-4 -mt-2">
-    <button
-      onclick={() => addFilterMode = 'list'}
-      class="px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors
-        {addFilterMode === 'list' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}"
-    >
-      <Icon name="list" size={14} class="inline mr-1.5" />
-      Choose from List
-    </button>
-    <button
-      onclick={() => addFilterMode = 'manual'}
-      class="px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors
-        {addFilterMode === 'manual' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}"
-    >
-      <Icon name="edit" size={14} class="inline mr-1.5" />
-      Add Manually
-    </button>
-  </div>
+  <Tabs
+    tabs={[{id:'list',label:'Choose from List',icon:'list'},{id:'manual',label:'Add Manually',icon:'edit'}]}
+    bind:activeTab={addFilterMode}
+    size="sm"
+    class="mb-4 -mt-2"
+  />
 
   {#if addFilterMode === 'list'}
     <div class="mb-4">
@@ -806,24 +768,20 @@
             {#each category.lists as list}
               {@const alreadyAdded = isListAlreadyAdded(list.url)}
               {@const isSelected = selectedLists.includes(list.id)}
-              <label
-                class="flex items-center gap-3 p-2 rounded-lg border transition-colors cursor-pointer
+              <Checkbox
+                checked={isSelected || alreadyAdded}
+                disabled={alreadyAdded}
+                onchange={() => !alreadyAdded && toggleListSelection(list.id)}
+                class="!flex !gap-3 p-2 rounded-lg border transition-colors
                   {alreadyAdded ? 'border-success/30 bg-success/5 opacity-60' : isSelected ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/50'}"
               >
-                <input
-                  type="checkbox"
-                  checked={isSelected || alreadyAdded}
-                  disabled={alreadyAdded}
-                  onchange={() => !alreadyAdded && toggleListSelection(list.id)}
-                  class="w-4 h-4"
-                />
                 <div class="flex-1 min-w-0">
                   <div class="text-sm font-medium text-foreground">{list.name}</div>
                 </div>
                 {#if alreadyAdded}
                   <Badge variant="success" size="sm">Added</Badge>
                 {/if}
-              </label>
+              </Checkbox>
             {/each}
           </div>
         </div>

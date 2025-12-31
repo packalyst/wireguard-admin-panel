@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"api/internal/database"
+	"api/internal/helper"
 	"api/internal/router"
 	"api/internal/settings"
 )
@@ -53,9 +54,9 @@ func GetService() *Service {
 
 // New creates a new geolocation service
 func New(dataDir string) (*Service, error) {
-	db := database.Get()
-	if db == nil {
-		log.Printf("Warning: database not initialized for geolocation service")
+	db, err := database.GetDB()
+	if err != nil {
+		log.Printf("Warning: database not initialized for geolocation service: %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -117,7 +118,7 @@ func (s *Service) ensureDirectories() error {
 
 // loadCountryConfigs loads country metadata from JSON file
 func (s *Service) loadCountryConfigs() {
-	configPath := "/app/configs/countries.json"
+	configPath := helper.CountriesConfigPath
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		log.Printf("Warning: failed to load country configs from %s: %v", configPath, err)
@@ -134,7 +135,7 @@ func (s *Service) loadCountryConfigs() {
 
 // loadProvidersConfig loads provider configurations from JSON file
 func (s *Service) loadProvidersConfig() {
-	configPath := "/app/configs/geolocation.json"
+	configPath := helper.GeolocationConfigPath
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		log.Printf("Warning: failed to load providers config from %s: %v", configPath, err)

@@ -214,7 +214,7 @@
         </div>
       </div>
       <h1 class="text-2xl font-bold mb-2">Initial Setup</h1>
-      <p class="text-sm text-gray-400">Configure your VPN Admin Panel</p>
+      <p class="text-sm text-muted-foreground">Configure your VPN Admin Panel</p>
     </div>
   </div>
 
@@ -237,7 +237,7 @@
         <h2 class="text-4xl font-bold mb-3 leading-tight">
           Welcome to<br/>Your VPN Admin Panel
         </h2>
-        <p class="text-gray-400 text-base leading-relaxed">
+        <p class="text-muted-foreground text-base leading-relaxed">
           Let's get you set up in just a few steps. We'll create your admin account and connect to Headscale.
         </p>
       </div>
@@ -251,7 +251,7 @@
             </div>
             <h3 class="font-semibold text-sm">Admin Account</h3>
           </div>
-          <p class="text-xs text-gray-400 leading-relaxed">Create your administrator credentials</p>
+          <p class="text-xs text-muted-foreground leading-relaxed">Create your administrator credentials</p>
         </div>
 
         <div class="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4">
@@ -261,12 +261,12 @@
             </div>
             <h3 class="font-semibold text-sm">Headscale</h3>
           </div>
-          <p class="text-xs text-gray-400 leading-relaxed">Connect to your VPN server</p>
+          <p class="text-xs text-muted-foreground leading-relaxed">Connect to your VPN server</p>
         </div>
       </div>
 
       <!-- Footer -->
-      <div class="flex flex-wrap gap-6 text-xs text-gray-400">
+      <div class="flex flex-wrap gap-6 text-xs text-muted-foreground">
         <div class="flex items-center gap-2">
           <div class="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></div>
           <span>Secure Setup</span>
@@ -448,12 +448,12 @@
             <!-- Test connection -->
             <Button
               onclick={testHeadscale}
-              disabled={testingConnection || !headscaleApiUrl || !headscaleApiKey}
+              loading={testingConnection}
+              disabled={!headscaleApiUrl || !headscaleApiKey}
               variant="secondary"
               class="w-full justify-center"
             >
               {#if testingConnection}
-                <span class="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
                 Testing...
               {:else if connectionValid}
                 <Icon name="check-circle" size={18} class="text-success" />
@@ -491,11 +491,11 @@
               </Button>
               <Button
                 onclick={completeSetup}
-                disabled={loading || !connectionValid || !headscaleUrl}
+                loading={loading}
+                disabled={!connectionValid || !headscaleUrl}
                 class="flex-1 justify-center"
               >
                 {#if loading}
-                  <span class="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
                   Completing...
                 {:else}
                   Complete Setup

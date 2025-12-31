@@ -65,7 +65,10 @@ func GenerateAndApplyHeadscaleACL() error {
 }
 
 func generateHeadscaleACL() (*HeadscaleACL, error) {
-	db := database.Get()
+	db, err := database.GetDB()
+	if err != nil {
+		return nil, err
+	}
 	wgIPRange := helper.GetEnv("WG_IP_RANGE")
 
 	// Get all clients

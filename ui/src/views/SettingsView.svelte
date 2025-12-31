@@ -7,6 +7,9 @@
   import Badge from '../components/Badge.svelte'
   import Select from '../components/Select.svelte'
   import LoadingSpinner from '../components/LoadingSpinner.svelte'
+  import InfoCard from '../components/InfoCard.svelte'
+  import ContentBlock from '../components/ContentBlock.svelte'
+  import Checkbox from '../components/Checkbox.svelte'
 
   let { loading = $bindable(true) } = $props()
   let savingAdguard = $state(false)
@@ -52,6 +55,17 @@
   // Session settings
   let sessionTimeout = $state('24')
   let sessionChanged = $state(false)
+
+  // Scanner settings
+  let scannerSettings = $state({
+    portStart: 1,
+    portEnd: 5000,
+    concurrent: 100,
+    pauseMs: 10,
+    timeoutMs: 500
+  })
+  let originalScanner = $state(null)
+  let savingScanner = $state(false)
 
   // UI settings (stored in localStorage)
   let itemsPerPage = $state('25')
@@ -128,6 +142,16 @@
       sessionTimeout = settings.session_timeout || '24'
       originalSession = { timeout: sessionTimeout }
 
+      // Scanner
+      scannerSettings = {
+        portStart: settings.scanner_port_start || 1,
+        portEnd: settings.scanner_port_end || 5000,
+        concurrent: settings.scanner_concurrent || 100,
+        pauseMs: settings.scanner_pause_ms || 10,
+        timeoutMs: settings.scanner_timeout_ms || 500
+      }
+      originalScanner = { ...scannerSettings }
+
       // UI (from localStorage)
       itemsPerPage = localStorage.getItem('settings_items_per_page') || '25'
     } catch (e) {
@@ -150,6 +174,18 @@
 
   $effect(() => {
     sessionChanged = sessionTimeout !== originalSession.timeout
+  })
+
+  // Derived state for scanner change detection
+  const scannerHasChanges = $derived.by(() => {
+    if (!originalScanner) return false
+    return (
+      scannerSettings.portStart !== originalScanner.portStart ||
+      scannerSettings.portEnd !== originalScanner.portEnd ||
+      scannerSettings.concurrent !== originalScanner.concurrent ||
+      scannerSettings.pauseMs !== originalScanner.pauseMs ||
+      scannerSettings.timeoutMs !== originalScanner.timeoutMs
+    )
   })
 
   // Derived state for traefik change detection
@@ -241,6 +277,26 @@
       toast('Failed to save: ' + e.message, 'error')
     } finally {
       savingSession = false
+    }
+  }
+
+  // Save Scanner settings
+  async function saveScanner() {
+    savingScanner = true
+    try {
+      await apiPut('/api/settings', {
+        scanner_port_start: parseInt(scannerSettings.portStart),
+        scanner_port_end: parseInt(scannerSettings.portEnd),
+        scanner_concurrent: parseInt(scannerSettings.concurrent),
+        scanner_pause_ms: parseInt(scannerSettings.pauseMs),
+        scanner_timeout_ms: parseInt(scannerSettings.timeoutMs)
+      })
+      originalScanner = { ...scannerSettings }
+      toast('Scanner settings saved', 'success')
+    } catch (e) {
+      toast('Failed to save: ' + e.message, 'error')
+    } finally {
+      savingScanner = false
     }
   }
 
@@ -460,21 +516,11 @@
 </script>
 
 <div class="space-y-4">
-  <!-- Info Card -->
-  <div class="bg-gradient-to-r from-primary/5 to-info/5 border border-primary/20 rounded-lg p-4">
-    <div class="flex items-start gap-3">
-      <div class="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-        <Icon name="settings" size={18} class="text-primary" />
-      </div>
-      <div class="flex-1 min-w-0">
-        <h3 class="text-sm font-medium text-foreground mb-1">Settings</h3>
-        <p class="text-xs text-muted-foreground leading-relaxed">
-          Configure your VPN admin panel. Manage Headscale connection, AdGuard integration,
-          session preferences, and interface customization.
-        </p>
-      </div>
-    </div>
-  </div>
+  <InfoCard
+    icon="settings"
+    title="Settings"
+    description="Configure your VPN admin panel. Manage Headscale connection, AdGuard integration, session preferences, and interface customization."
+  />
 
   {#if loading}
     <LoadingSpinner centered size="lg" />
@@ -482,14 +528,14 @@
     <!-- Two column grid -->
     <div class="grid gap-4 lg:grid-cols-2">
       <!-- Headscale Settings -->
-      <div class="bg-card border border-border rounded-lg overflow-hidden">
-        <div class="px-4 py-3 border-b border-border bg-muted/30">
-          <div class="flex items-center gap-2">
-            <Icon name="server" size={16} class="text-primary" />
-            <h3 class="text-sm font-semibold text-foreground">Headscale</h3>
-          </div>
+      <div class="kt-panel">
+        <div class="kt-panel-header">
+          <h3 class="kt-panel-title">
+            <Icon name="server" size={16} />
+            Headscale
+          </h3>
         </div>
-        <div class="p-4 space-y-3">
+        <div class="kt-panel-body">
           <div class="grid grid-cols-2 gap-3">
             <Input
               id="headscaleApiUrl"
@@ -531,57 +577,48 @@
                 />
                 <Button
                   onclick={regenerateHeadscaleKey}
-                  disabled={regeneratingKey}
+                  loading={regeneratingKey}
                   variant="ghost"
                   size="xs"
                   iconOnly
-                  icon={regeneratingKey ? undefined : "refresh"}
+                  icon="refresh"
                   class="-me-1.5 size-6"
                   title="Regenerate API key"
-                >
-                  {#if regeneratingKey}
-                    <span class="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
-                  {/if}
-                </Button>
+                />
               </div>
           </div>
-          <div class="pt-2">
-            <Button
-              onclick={saveHeadscale}
-              disabled={savingHeadscale || !headscaleUrlChanged}
-              size="sm"
-              icon={savingHeadscale ? undefined : "device-floppy"}
-            >
-              {#if savingHeadscale}
-                <span class="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
-              {:else}
-                Save
-              {/if}
-            </Button>
-          </div>
+        </div>
+        <div class="kt-panel-footer">
+          <Button
+            onclick={saveHeadscale}
+            loading={savingHeadscale}
+            disabled={!headscaleUrlChanged}
+            size="sm"
+            icon="device-floppy"
+          >
+            Save
+          </Button>
         </div>
       </div>
 
       <!-- AdGuard Settings -->
-      <div class="bg-card border border-border rounded-lg overflow-hidden">
-        <div class="px-4 py-3 border-b border-border bg-muted/30">
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-2">
-              <Icon name="shield" size={16} class="text-primary" />
-              <h3 class="text-sm font-semibold text-foreground">AdGuard Home</h3>
-            </div>
-            <Button
-              onclick={regenerateAdguardCredentials}
-              variant="ghost"
-              size="xs"
-              icon="wand"
-              title="Generate random secure credentials"
-            >
-              Generate
-            </Button>
-          </div>
+      <div class="kt-panel">
+        <div class="kt-panel-header">
+          <h3 class="kt-panel-title">
+            <Icon name="shield" size={16} />
+            AdGuard Home
+          </h3>
+          <Button
+            onclick={regenerateAdguardCredentials}
+            variant="outline"
+            size="xs"
+            icon="wand"
+            title="Generate random secure credentials"
+          >
+            Generate
+          </Button>
         </div>
-        <div class="p-4 space-y-3">
+        <div class="kt-panel-body">
           <div class="grid grid-cols-2 gap-3">
             <Input
               id="adguardUsername"
@@ -607,40 +644,37 @@
               <span class="text-xs font-medium text-foreground">Dashboard Access</span>
               <p class="text-[10px] text-muted-foreground">Allow external access to AdGuard web UI</p>
             </div>
-            <input type="checkbox" class="kt-switch" bind:checked={adguardDashboardEnabled} />
+            <Checkbox variant="switch" bind:checked={adguardDashboardEnabled} />
           </div>
-          <div class="flex items-center gap-2 pt-2">
-            <Button
-              onclick={saveAdguard}
-              disabled={savingAdguard || !adguardChanged}
-              size="sm"
-              icon={savingAdguard ? undefined : "device-floppy"}
-            >
-              {#if savingAdguard}
-                <span class="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
-              {:else}
-                Save
-              {/if}
-            </Button>
-            {#if adguardDashboardURL}
-              <a href={adguardDashboardURL} target="_blank" class="kt-btn kt-btn-secondary kt-btn-sm">
-                <Icon name="link" size={14} />
-                Open Dashboard
-              </a>
-            {/if}
-          </div>
+        </div>
+        <div class="kt-panel-footer">
+          <Button
+            onclick={saveAdguard}
+            loading={savingAdguard}
+            disabled={!adguardChanged}
+            size="sm"
+            icon="device-floppy"
+          >
+            Save
+          </Button>
+          {#if adguardDashboardURL}
+            <a href={adguardDashboardURL} target="_blank" class="kt-btn kt-btn-secondary kt-btn-sm">
+              <Icon name="link" size={14} />
+              Open Dashboard
+            </a>
+          {/if}
         </div>
       </div>
 
       <!-- Session Settings -->
-      <div class="bg-card border border-border rounded-lg overflow-hidden">
-        <div class="px-4 py-3 border-b border-border bg-muted/30">
-          <div class="flex items-center gap-2">
-            <Icon name="clock" size={16} class="text-primary" />
-            <h3 class="text-sm font-semibold text-foreground">Session</h3>
-          </div>
+      <div class="kt-panel">
+        <div class="kt-panel-header">
+          <h3 class="kt-panel-title">
+            <Icon name="clock" size={16} />
+            Session
+          </h3>
         </div>
-        <div class="p-4 space-y-3">
+        <div class="kt-panel-body">
           <Select
             label="Session Timeout"
             bind:value={sessionTimeout}
@@ -653,32 +687,29 @@
             ]}
             helperText="How long until you need to login again"
           />
-          <div class="pt-2">
-            <Button
-              onclick={saveSession}
-              disabled={savingSession || !sessionChanged}
-              size="sm"
-              icon={savingSession ? undefined : "device-floppy"}
-            >
-              {#if savingSession}
-                <span class="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
-              {:else}
-                Save
-              {/if}
-            </Button>
-          </div>
+        </div>
+        <div class="kt-panel-footer">
+          <Button
+            onclick={saveSession}
+            loading={savingSession}
+            disabled={!sessionChanged}
+            size="sm"
+            icon="device-floppy"
+          >
+            Save
+          </Button>
         </div>
       </div>
 
       <!-- UI Settings -->
-      <div class="bg-card border border-border rounded-lg overflow-hidden">
-        <div class="px-4 py-3 border-b border-border bg-muted/30">
-          <div class="flex items-center gap-2">
-            <Icon name="layout" size={16} class="text-primary" />
-            <h3 class="text-sm font-semibold text-foreground">Interface</h3>
-          </div>
+      <div class="kt-panel">
+        <div class="kt-panel-header">
+          <h3 class="kt-panel-title">
+            <Icon name="layout" size={16} />
+            Interface
+          </h3>
         </div>
-        <div class="p-4 space-y-3">
+        <div class="kt-panel-body">
           <div class="flex items-center justify-between">
             <div>
               <div class="text-xs font-medium text-foreground">Theme</div>
@@ -693,139 +724,246 @@
               {$theme === 'dark' ? 'Light' : 'Dark'}
             </Button>
           </div>
-          <div class="border-t border-border pt-3">
-            <div class="flex items-end gap-2">
-              <Select
-                label="Items per page"
-                bind:value={itemsPerPage}
-                options={[
-                  { value: '10', label: '10' },
-                  { value: '25', label: '25' },
-                  { value: '50', label: '50' },
-                  { value: '100', label: '100' }
-                ]}
-                class="flex-1"
-              />
-              <Button
-                onclick={saveUISettings}
-                variant="secondary"
-                size="sm"
-                icon="device-floppy"
-                iconOnly
-              />
-            </div>
+          <div class="flex items-end gap-2 border-t border-border pt-3">
+            <Select
+              label="Items per page"
+              bind:value={itemsPerPage}
+              options={[
+                { value: '10', label: '10' },
+                { value: '25', label: '25' },
+                { value: '50', label: '50' },
+                { value: '100', label: '100' }
+              ]}
+              class="flex-1"
+            />
+            <Button
+              onclick={saveUISettings}
+              variant="secondary"
+              size="sm"
+              icon="device-floppy"
+              iconOnly
+            />
           </div>
+        </div>
+      </div>
+
+      <!-- Port Scanner Settings -->
+      <div class="kt-panel">
+        <div class="kt-panel-header">
+          <h3 class="kt-panel-title">
+            <Icon name="scan" size={16} />
+            Port Scanner
+          </h3>
+        </div>
+        <div class="kt-panel-body">
+          <p class="text-[10px] text-muted-foreground">
+            Default settings for scanning VPN client ports in Domain Routes.
+          </p>
+          <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <Input
+              label="Port Start"
+              type="number"
+              bind:value={scannerSettings.portStart}
+              min="1"
+              max="65535"
+              prefixIcon="player-play"
+              class="text-xs"
+            />
+            <Input
+              label="Port End"
+              type="number"
+              bind:value={scannerSettings.portEnd}
+              min="1"
+              max="65535"
+              prefixIcon="player-stop"
+              class="text-xs"
+            />
+            <Input
+              label="Concurrent"
+              type="number"
+              bind:value={scannerSettings.concurrent}
+              min="10"
+              max="500"
+              prefixIcon="layers-subtract"
+              class="text-xs"
+            />
+            <Input
+              label="Pause (ms)"
+              type="number"
+              bind:value={scannerSettings.pauseMs}
+              min="0"
+              max="1000"
+              prefixIcon="player-pause"
+              class="text-xs"
+            />
+            <Input
+              label="Timeout (ms)"
+              type="number"
+              bind:value={scannerSettings.timeoutMs}
+              min="100"
+              max="5000"
+              prefixIcon="clock"
+              class="text-xs"
+            />
+          </div>
+        </div>
+        <div class="kt-panel-footer">
+          <Button
+            onclick={saveScanner}
+            loading={savingScanner}
+            disabled={!scannerHasChanges}
+            size="sm"
+            icon="device-floppy"
+          >
+            Save
+          </Button>
+        </div>
+      </div>
+
+      <!-- Cross-Network Router -->
+      <div class="kt-panel">
+        <div class="kt-panel-header">
+          <h3 class="kt-panel-title">
+            <Icon name="route" size={16} />
+            Cross-Network Router
+          </h3>
+          {#if routerStatus?.status === 'running'}
+            <Badge variant="success" size="sm">Running</Badge>
+          {:else if routerStatus?.status === 'starting'}
+            <Badge variant="warning" size="sm">Starting</Badge>
+          {:else}
+            <Badge variant="muted" size="sm">Disabled</Badge>
+          {/if}
+        </div>
+        <div class="kt-panel-body">
+          {#if routerStatus?.status === 'running'}
+            <div class="grid grid-cols-2 gap-2">
+              <ContentBlock variant="data" label="Router IP" value={routerStatus.ip || '—'} mono padding="sm" />
+              <ContentBlock variant="data" label="Route" value={routerStatus.advertisedRoute || '—'} mono padding="sm" />
+            </div>
+            <p class="text-[10px] text-muted-foreground">
+              Routing between WireGuard and Headscale networks.
+            </p>
+          {:else if routerStatus?.status === 'starting'}
+            <div class="flex items-center gap-2 p-2 bg-warning/10 rounded">
+              <div class="w-4 h-4 border-2 border-warning/30 border-t-warning rounded-full animate-spin"></div>
+              <div class="text-xs text-foreground">Starting up...</div>
+            </div>
+          {:else}
+            <p class="text-[10px] text-muted-foreground">
+              Enable routing between WireGuard and Headscale networks via a Tailscale container.
+            </p>
+          {/if}
+        </div>
+        <div class="kt-panel-footer">
+          {#if routerStatus?.status === 'running'}
+            <Button onclick={restartRouter} size="sm" variant="secondary" icon="refresh" disabled={routerLoading}>
+              {routerLoading ? '...' : 'Restart'}
+            </Button>
+            <Button onclick={removeRouter} size="sm" variant="destructive" icon="trash" disabled={routerLoading}>
+              {routerLoading ? '...' : 'Remove'}
+            </Button>
+          {:else if routerStatus?.status === 'starting'}
+            <Button onclick={loadRouterStatus} size="sm" variant="secondary" icon="refresh">
+              Check Status
+            </Button>
+          {:else}
+            <Button onclick={setupRouter} size="sm" icon="play" disabled={routerLoading}>
+              {routerLoading ? 'Setting up...' : 'Enable'}
+            </Button>
+          {/if}
         </div>
       </div>
     </div>
 
     <!-- Traefik Settings - Full width -->
-    <div class="bg-card border border-border rounded-lg overflow-hidden">
-      <div class="px-4 py-3 border-b border-border bg-muted/30">
-        <div class="flex items-center gap-2">
-          <Icon name="route" size={16} class="text-primary" />
-          <h3 class="text-sm font-semibold text-foreground">Traefik</h3>
-        </div>
+    <div class="kt-panel">
+      <div class="kt-panel-header">
+        <h3 class="kt-panel-title">
+          <Icon name="route" size={16} />
+          Traefik
+        </h3>
       </div>
-      <div class="p-4 space-y-4">
-        <!-- Rate Limiting -->
-        <div>
-          <h4 class="text-xs font-medium text-foreground mb-2">Rate Limiting</h4>
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Input
-              label="Standard (req/s)"
-              labelClass="block text-[10px] text-muted-foreground mb-1"
-              type="number"
-              bind:value={traefikForm.rateLimitAverage}
-              class="w-full text-xs"
-              min="1"
-            />
-            <Input
-              label="Standard Burst"
-              labelClass="block text-[10px] text-muted-foreground mb-1"
-              type="number"
-              bind:value={traefikForm.rateLimitBurst}
-              class="w-full text-xs"
-              min="1"
-            />
-            <Input
-              label="Strict (req/s)"
-              labelClass="block text-[10px] text-muted-foreground mb-1"
-              type="number"
-              bind:value={traefikForm.strictRateAverage}
-              class="w-full text-xs"
-              min="1"
-            />
-            <Input
-              label="Strict Burst"
-              labelClass="block text-[10px] text-muted-foreground mb-1"
-              type="number"
-              bind:value={traefikForm.strictRateBurst}
-              class="w-full text-xs"
-              min="1"
-            />
-          </div>
-        </div>
-
-        <!-- Dashboard & VPN-Only Mode -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 py-3 border-t border-border">
-          <!-- Dashboard Toggle -->
-          <div class="flex items-center justify-between">
-            <div>
-              <div class="text-xs font-medium text-foreground">Dashboard</div>
-              <div class="text-[10px] text-muted-foreground">Port 8080 (restart required)</div>
-            </div>
-            <input type="checkbox" class="kt-switch" bind:checked={traefikForm.dashboardEnabled} />
-          </div>
-
-          <!-- VPN-Only Mode Dropdown -->
-          <div class="flex items-center justify-between">
-            <div>
-              <div class="text-xs font-medium text-foreground">VPN-Only Mode</div>
-              <div class="text-[10px] text-muted-foreground">Restrict access</div>
-            </div>
-            <div class="flex items-center gap-2">
-              {#if vpnOnlyLoading}
-                <span class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
-              {/if}
-              <Select
-                value={vpnOnlyMode}
-                options={[
-                  { value: 'off', label: 'Disabled' },
-                  { value: '403', label: '403 Forbidden' },
-                  { value: 'silent', label: 'Silent Drop' }
-                ]}
-                onchange={(e) => setVPNOnlyMode(e.target.value)}
-                disabled={vpnOnlyLoading}
+      <div class="kt-panel-body">
+        <!-- Two columns: Rate Limiting + Switches -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <!-- Rate Limiting (4 inputs in 2x2) -->
+          <div>
+            <ContentBlock variant="header" title="Rate Limiting" />
+            <div class="grid grid-cols-2 gap-3">
+              <Input
+                label="Standard (req/s)"
+                type="number"
+                bind:value={traefikForm.rateLimitAverage}
+                prefixIcon="gauge"
+                class="text-xs"
+                min="1"
+              />
+              <Input
+                label="Standard Burst"
+                type="number"
+                bind:value={traefikForm.rateLimitBurst}
+                prefixIcon="bolt"
+                class="text-xs"
+                min="1"
+              />
+              <Input
+                label="Strict (req/s)"
+                type="number"
+                bind:value={traefikForm.strictRateAverage}
+                prefixIcon="gauge"
+                class="text-xs"
+                min="1"
+              />
+              <Input
+                label="Strict Burst"
+                type="number"
+                bind:value={traefikForm.strictRateBurst}
+                prefixIcon="bolt"
+                class="text-xs"
+                min="1"
               />
             </div>
           </div>
+
+          <!-- Switches -->
+          <div class="space-y-3">
+            <ContentBlock variant="header" title="Access Control" />
+            <ContentBlock title="Dashboard" description="Port 8080 (restart required)">
+              <Checkbox variant="switch" bind:checked={traefikForm.dashboardEnabled} />
+            </ContentBlock>
+            <ContentBlock title="VPN-Only Mode" description="Restrict access to VPN clients">
+              <div class="flex items-center gap-2">
+                {#if vpnOnlyLoading}
+                  <span class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
+                {/if}
+                <Select
+                  value={vpnOnlyMode}
+                  options={[
+                    { value: 'off', label: 'Disabled' },
+                    { value: '403', label: '403 Forbidden' },
+                    { value: 'silent', label: 'Silent Drop' }
+                  ]}
+                  onchange={(e) => setVPNOnlyMode(e.target.value)}
+                  disabled={vpnOnlyLoading}
+                />
+              </div>
+            </ContentBlock>
+          </div>
         </div>
 
-        <!-- IP Allowlist -->
+        <!-- IP Allowlist - Full width -->
         <div class="border-t border-border pt-3">
           <h4 class="text-xs font-medium text-foreground mb-2">IP Allowlist (VPN-only middleware)</h4>
-          <div class="flex gap-2 mb-2">
-            <Input
-              type="text"
-              bind:value={traefikForm.newIP}
-              prefixIcon="network"
-              placeholder="e.g., 192.168.1.0/24"
-              class="flex-1 text-xs"
-              onkeydown={(e) => e.key === 'Enter' && addTraefikIP()}
-            >
-              {#snippet suffixButton()}
-                <Button
-                  onclick={addTraefikIP}
-                  variant="ghost"
-                  size="xs"
-                  iconOnly
-                  icon="plus"
-                  class="-me-1.5 size-6"
-                />
-              {/snippet}
-            </Input>
-          </div>
+          <Input
+            type="text"
+            bind:value={traefikForm.newIP}
+            prefixIcon="network"
+            placeholder="e.g., 192.168.1.0/24"
+            class="text-xs"
+            suffixAddonBtn={{ icon: "plus", label: "Add", onclick: addTraefikIP }}
+            onkeydown={(e) => e.key === 'Enter' && addTraefikIP()}
+          />
           {#if traefikForm.ipAllowlist.length > 0}
             <div class="flex flex-wrap gap-1.5 pt-2">
               {#each traefikForm.ipAllowlist as ip}
@@ -838,49 +976,42 @@
               {/each}
             </div>
           {:else}
-            <p class="text-[10px] text-muted-foreground italic">No IP ranges configured</p>
+            <p class="text-[10px] text-muted-foreground italic pt-2">No IP ranges configured</p>
           {/if}
         </div>
-
-        <!-- Save Button -->
-        <div class="flex justify-end pt-2 border-t border-border">
-          <Button
-            onclick={saveTraefik}
-            disabled={savingTraefik || !traefikHasChanges}
-            size="sm"
-            icon={savingTraefik ? undefined : "device-floppy"}
-          >
-            {#if savingTraefik}
-              <span class="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
-            {:else}
-              Save
-            {/if}
-          </Button>
-        </div>
+      </div>
+      <div class="kt-panel-footer justify-end">
+        <Button
+          onclick={saveTraefik}
+          loading={savingTraefik}
+          disabled={!traefikHasChanges}
+          size="sm"
+          icon="device-floppy"
+        >
+          Save
+        </Button>
       </div>
     </div>
 
     <!-- Geolocation Settings - Full width -->
-    <div class="bg-card border border-border rounded-lg overflow-hidden">
-      <div class="px-4 py-3 border-b border-border bg-muted/30">
-        <div class="flex items-center gap-2">
-          <Icon name="world" size={16} class="text-primary" />
-          <h3 class="text-sm font-semibold text-foreground">Geolocation</h3>
-        </div>
+    <div class="kt-panel">
+      <div class="kt-panel-header">
+        <h3 class="kt-panel-title">
+          <Icon name="world" size={16} />
+          Geolocation
+        </h3>
       </div>
-      <div class="p-4 space-y-4">
-        {#if loadingGeo}
-          <div class="flex items-center justify-center py-4">
-            <div class="w-5 h-5 border-2 border-muted border-t-primary rounded-full animate-spin"></div>
-          </div>
-        {:else}
-          <!-- IP Lookup Provider -->
-          <div>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
-              <div>
-                <h4 class="text-xs font-medium text-foreground mb-1">IP Lookup Provider</h4>
-                <p class="text-[10px] text-muted-foreground">Select a provider for IP geolocation lookups (country detection in traffic logs)</p>
-              </div>
+      {#if loadingGeo}
+        <div class="kt-panel-body flex items-center justify-center py-8">
+          <div class="w-5 h-5 border-2 border-muted border-t-primary rounded-full animate-spin"></div>
+        </div>
+      {:else}
+        <div class="kt-panel-body">
+          <!-- Two columns: IP Lookup + Toggles -->
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <!-- IP Lookup Provider -->
+            <div>
+              <ContentBlock variant="header" title="IP Lookup Provider" />
               <Select
                 label="Provider"
                 bind:value={geoSettings.lookup_provider}
@@ -890,97 +1021,92 @@
                   { value: 'ip2location', label: 'IP2Location Lite' }
                 ]}
               />
-            </div>
-            {#if geoSettings.lookup_provider === 'maxmind'}
-              <div class="mt-3">
-                <Input
-                  label="License Key"
-                  type="password"
-                  bind:value={geoSettings.maxmind_license_key}
-                  placeholder="Your MaxMind license key"
-                  helperText="Free at maxmind.com/en/geolite2/signup"
-                />
-              </div>
-            {:else if geoSettings.lookup_provider === 'ip2location'}
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
-                <Select
-                  label="Database Variant"
-                  bind:value={geoSettings.ip2location_variant}
-                  options={geoProviders?.ip2location?.variants?.map(v => ({ value: v.id, label: `${v.name}` })) || [{ value: 'DB1', label: 'DB1 - Country' }]}
-                />
-                <Input
-                  label="Download Token"
-                  type="password"
-                  bind:value={geoSettings.ip2location_token}
-                  placeholder="Your IP2Location download token"
-                  helperText="Required. Get at ip2location.com/register"
-                />
-              </div>
-            {/if}
-            {#if geoStatus?.providers && geoSettings.lookup_provider !== 'none'}
-              <div class="mt-3 p-2 bg-muted/50 rounded text-[10px]">
-                {#if geoStatus.providers[geoSettings.lookup_provider]?.available}
-                  <div class="flex items-center gap-1 text-success">
-                    <Icon name="check" size={12} />
-                    <span>Database available ({(geoStatus.providers[geoSettings.lookup_provider].file_size / 1024 / 1024).toFixed(1)}MB)</span>
-                  </div>
-                  {#if geoStatus.providers[geoSettings.lookup_provider].last_update}
-                    <div class="text-muted-foreground mt-1">Last updated: {geoStatus.providers[geoSettings.lookup_provider].last_update}</div>
+              {#if geoSettings.lookup_provider === 'maxmind'}
+                <div class="mt-3">
+                  <Input
+                    label="License Key"
+                    type="password"
+                    bind:value={geoSettings.maxmind_license_key}
+                    placeholder="Your MaxMind license key"
+                    prefixIcon="key"
+                    helperText="Free at maxmind.com/en/geolite2/signup"
+                  />
+                </div>
+              {:else if geoSettings.lookup_provider === 'ip2location'}
+                <div class="space-y-3 mt-3">
+                  <Select
+                    label="Database Variant"
+                    bind:value={geoSettings.ip2location_variant}
+                    options={geoProviders?.ip2location?.variants?.map(v => ({ value: v.id, label: `${v.name}` })) || [{ value: 'DB1', label: 'DB1 - Country' }]}
+                  />
+                  <Input
+                    label="Download Token"
+                    type="password"
+                    bind:value={geoSettings.ip2location_token}
+                    placeholder="Your IP2Location download token"
+                    prefixIcon="key"
+                    helperText="Required. Get at ip2location.com/register"
+                  />
+                </div>
+              {/if}
+              {#if geoStatus?.providers && geoSettings.lookup_provider !== 'none'}
+                <div class="mt-3 p-2 bg-muted/50 rounded text-[10px]">
+                  {#if geoStatus.providers[geoSettings.lookup_provider]?.available}
+                    <div class="flex items-center gap-1 text-success">
+                      <Icon name="check" size={12} />
+                      <span>Database available ({(geoStatus.providers[geoSettings.lookup_provider].file_size / 1024 / 1024).toFixed(1)}MB)</span>
+                    </div>
+                    {#if geoStatus.providers[geoSettings.lookup_provider].last_update}
+                      <div class="text-muted-foreground mt-1">Last updated: {geoStatus.providers[geoSettings.lookup_provider].last_update}</div>
+                    {/if}
+                  {:else}
+                    <div class="flex items-center gap-1 text-warning">
+                      <Icon name="alert-circle" size={12} />
+                      <span>Database not downloaded yet. Save settings and click "Update Now".</span>
+                    </div>
                   {/if}
-                {:else}
-                  <div class="flex items-center gap-1 text-warning">
-                    <Icon name="alert-circle" size={12} />
-                    <span>Database not downloaded yet. Save settings and click "Update Now".</span>
-                  </div>
-                {/if}
-              </div>
-            {/if}
-          </div>
+                </div>
+              {/if}
+            </div>
 
-          <!-- Country Blocking -->
-          <div class="flex items-center justify-between border-t border-border pt-4">
-            <div>
-              <h4 class="text-xs font-medium text-foreground">Country Blocking</h4>
-              <p class="text-[10px] text-muted-foreground">Block traffic from specific countries using IPDeny zone files</p>
+            <!-- Toggles -->
+            <div class="space-y-3">
+              <ContentBlock variant="header" title="Options" />
+              <ContentBlock title="Country Blocking" description="Block traffic using IPDeny zone files">
+                <Checkbox variant="switch" bind:checked={geoSettings.blocking_enabled} />
+              </ContentBlock>
+              {#if !geoSettings.blocking_enabled}
+                <div class="p-2 bg-info/10 border border-info/20 rounded text-[10px] text-muted-foreground">
+                  <Icon name="info-circle" size={12} class="inline mr-1" />
+                  Firewall country controls hidden when disabled.
+                </div>
+              {/if}
+              <ContentBlock title="Auto-Update" description="Update databases daily">
+                <Checkbox variant="switch" bind:checked={geoSettings.auto_update} />
+              </ContentBlock>
+              {#if geoSettings.auto_update}
+                <div class="grid grid-cols-2 gap-3">
+                  <Select
+                    label="Update Time"
+                    bind:value={geoSettings.update_hour}
+                    options={Array.from({length: 24}, (_, i) => ({ value: i, label: `${i.toString().padStart(2, '0')}:00` }))}
+                  />
+                  <Select
+                    label="Services"
+                    bind:value={geoSettings.update_services}
+                    options={[
+                      { value: 'all', label: 'All services' },
+                      { value: 'lookup', label: 'IP lookup only' },
+                      { value: 'blocking', label: 'Country blocking only' }
+                    ]}
+                  />
+                </div>
+              {/if}
             </div>
-            <input type="checkbox" class="kt-switch" bind:checked={geoSettings.blocking_enabled} />
           </div>
-          {#if !geoSettings.blocking_enabled}
-            <div class="p-2 bg-info/10 border border-info/20 rounded text-[10px] text-muted-foreground">
-              <Icon name="info-circle" size={12} class="inline mr-1" />
-              Firewall country controls hidden when disabled.
-            </div>
-          {/if}
-
-          <!-- Auto-Update Schedule -->
-          <div class="flex items-center justify-between border-t border-border pt-4">
-            <div>
-              <h4 class="text-xs font-medium text-foreground">Auto-Update Schedule</h4>
-              <p class="text-[10px] text-muted-foreground">Automatically update geolocation databases daily</p>
-            </div>
-            <input type="checkbox" class="kt-switch" bind:checked={geoSettings.auto_update} />
-          </div>
-          {#if geoSettings.auto_update}
-            <div class="grid grid-cols-2 gap-3">
-              <Select
-                label="Update Time"
-                bind:value={geoSettings.update_hour}
-                options={Array.from({length: 24}, (_, i) => ({ value: i, label: `${i.toString().padStart(2, '0')}:00` }))}
-              />
-              <Select
-                label="Services"
-                bind:value={geoSettings.update_services}
-                options={[
-                  { value: 'all', label: 'All services' },
-                  { value: 'lookup', label: 'IP lookup only' },
-                  { value: 'blocking', label: 'Country blocking only' }
-                ]}
-              />
-            </div>
-          {/if}
 
           {#if geoStatus?.last_update_lookup || geoStatus?.last_update_blocking}
-            <div class="text-[10px] text-muted-foreground">
+            <div class="text-[10px] text-muted-foreground pt-3 border-t border-border">
               {#if geoStatus.last_update_lookup}
                 <span>Lookup: {geoStatus.last_update_lookup}</span>
               {/if}
@@ -992,115 +1118,41 @@
               {/if}
             </div>
           {/if}
-
-          <!-- Save Button -->
-          <div class="flex justify-between items-center pt-2 border-t border-border">
-            <Button
-              onclick={triggerGeoUpdate}
-              disabled={triggeringGeoUpdate || (geoSettings.lookup_provider === 'none' && !geoSettings.blocking_enabled)}
-              variant="secondary"
-              size="sm"
-              icon={triggeringGeoUpdate ? undefined : "refresh"}
-              title={geoSettings.lookup_provider === 'none' && !geoSettings.blocking_enabled ? 'Select a provider or enable blocking first' : 'Update geolocation databases now'}
-            >
-              {#if triggeringGeoUpdate}
-                <span class="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
-              {/if}
-              Update Now
-            </Button>
-            <Button
-              onclick={saveGeoSettings}
-              disabled={savingGeo || !geoHasChanges}
-              size="sm"
-              icon={savingGeo ? undefined : "device-floppy"}
-            >
-              {#if savingGeo}
-                <span class="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
-              {:else}
-                Save
-              {/if}
-            </Button>
-          </div>
-        {/if}
-      </div>
-    </div>
-
-    <!-- Cross-Network Router - Full width -->
-    <div class="bg-card border border-border rounded-lg overflow-hidden">
-      <div class="px-4 py-3 border-b border-border bg-muted/30">
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-2">
-            <Icon name="route" size={16} class="text-primary" />
-            <h3 class="text-sm font-semibold text-foreground">Cross-Network Router</h3>
-          </div>
-          {#if routerStatus?.status === 'running'}
-            <Badge variant="success" size="sm">Running</Badge>
-          {:else if routerStatus?.status === 'starting'}
-            <Badge variant="warning" size="sm">Starting</Badge>
-          {:else}
-            <Badge variant="muted" size="sm">Disabled</Badge>
-          {/if}
         </div>
-      </div>
-      <div class="p-4">
-        {#if routerStatus?.status === 'running'}
-          <!-- Running state -->
-          <div class="grid grid-cols-2 gap-3 mb-4">
-            <div class="p-3 bg-muted/50 rounded-lg">
-              <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Router IP</div>
-              <code class="text-sm font-mono text-foreground">{routerStatus.ip || '—'}</code>
-            </div>
-            <div class="p-3 bg-muted/50 rounded-lg">
-              <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Advertised Route</div>
-              <code class="text-sm font-mono text-foreground">{routerStatus.advertisedRoute || '—'}</code>
-            </div>
-          </div>
-          <p class="text-xs text-muted-foreground mb-3">
-            Routing traffic between WireGuard ({routerStatus.wgIPRange || 'N/A'}) and Tailscale/Headscale ({routerStatus.headscaleIPRange || 'N/A'}) networks.
-          </p>
-          <div class="flex gap-2">
-            <Button onclick={restartRouter} size="sm" variant="secondary" icon="refresh" disabled={routerLoading}>
-              {routerLoading ? 'Restarting...' : 'Restart'}
-            </Button>
-            <Button onclick={removeRouter} size="sm" variant="destructive" icon="trash" disabled={routerLoading}>
-              {routerLoading ? 'Removing...' : 'Remove'}
-            </Button>
-          </div>
-        {:else if routerStatus?.status === 'starting'}
-          <!-- Starting state -->
-          <div class="flex items-center gap-3 mb-4 p-3 bg-warning/10 rounded-lg">
-            <div class="w-5 h-5 border-2 border-warning/30 border-t-warning rounded-full animate-spin"></div>
-            <div class="text-sm text-foreground">Router is starting up and connecting to Headscale...</div>
-          </div>
-          <Button onclick={loadRouterStatus} size="sm" variant="secondary" icon="refresh">
-            Check Status
+        <div class="kt-panel-footer justify-between">
+          <Button
+            onclick={triggerGeoUpdate}
+            loading={triggeringGeoUpdate}
+            disabled={geoSettings.lookup_provider === 'none' && !geoSettings.blocking_enabled}
+            variant="secondary"
+            size="sm"
+            icon="refresh"
+            title={geoSettings.lookup_provider === 'none' && !geoSettings.blocking_enabled ? 'Select a provider or enable blocking first' : 'Update geolocation databases now'}
+          >
+            Update Now
           </Button>
-        {:else}
-          <!-- Not started state -->
-          <p class="text-xs text-muted-foreground mb-3">
-            Enable cross-network communication between WireGuard clients ({routerStatus?.wgIPRange || 'N/A'}) and Tailscale/Headscale clients ({routerStatus?.headscaleIPRange || 'N/A'}).
-            This creates a Tailscale container that advertises the WireGuard subnet as a route.
-          </p>
-          <div class="p-3 bg-info/10 border border-info/20 rounded-lg text-xs text-muted-foreground mb-4">
-            <strong class="text-foreground">How it works:</strong> A Tailscale container joins your Headscale network and advertises the WireGuard
-            subnet. Traffic between networks flows through this router. Access control rules can be configured per-node.
-          </div>
-          <Button onclick={setupRouter} size="sm" icon="play" disabled={routerLoading}>
-            {routerLoading ? 'Setting up...' : 'Enable Cross-Network Routing'}
+          <Button
+            onclick={saveGeoSettings}
+            loading={savingGeo}
+            disabled={!geoHasChanges}
+            size="sm"
+            icon="device-floppy"
+          >
+            Save
           </Button>
-        {/if}
-      </div>
+        </div>
+      {/if}
     </div>
 
     <!-- About - Full width -->
-    <div class="bg-card border border-border rounded-lg overflow-hidden">
-      <div class="px-4 py-3 border-b border-border bg-muted/30">
-        <div class="flex items-center gap-2">
-          <Icon name="info-circle" size={16} class="text-primary" />
-          <h3 class="text-sm font-semibold text-foreground">About</h3>
-        </div>
+    <div class="kt-panel">
+      <div class="kt-panel-header">
+        <h3 class="kt-panel-title">
+          <Icon name="info-circle" size={16} />
+          About
+        </h3>
       </div>
-      <div class="p-4 flex items-center justify-between">
+      <div class="kt-panel-body flex items-center justify-between !py-3">
         <div class="text-xs text-muted-foreground">
           <p class="font-medium text-foreground">VPN Admin Panel</p>
           <p class="mt-0.5">Headscale + WireGuard management interface</p>

@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"api/internal/auth"
@@ -17,7 +18,8 @@ import (
 
 // Service handles initial setup
 type Service struct {
-	auth *auth.Service
+	auth    *auth.Service
+	setupMu sync.Mutex // Protects concurrent setup attempts
 }
 
 // requireAuthIfCompleted validates authentication if setup is completed
@@ -30,18 +32,18 @@ func (s *Service) requireAuthIfCompleted(w http.ResponseWriter, r *http.Request)
 
 	token := r.Header.Get("Authorization")
 	if token == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		router.JSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return false
 	}
 	token = strings.TrimPrefix(token, "Bearer ")
 
 	if s.auth == nil {
-		http.Error(w, "Auth service not available", http.StatusInternalServerError)
+		router.JSONError(w, "Auth service not available", http.StatusInternalServerError)
 		return false
 	}
 
 	if _, err := s.auth.ValidateSession(token); err != nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		router.JSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return false
 	}
 
@@ -81,7 +83,6 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"GetStatus":        s.handleGetStatus,
 		"TestHeadscale":    s.handleTestHeadscale,
 		"CompleteSetup":    s.handleCompleteSetup,
-		"Health":           s.handleHealth,
 		"DetectHeadscale":  s.handleDetectHeadscale,
 		"GenerateAPIKey":   s.handleGenerateAPIKey,
 	}
@@ -90,7 +91,7 @@ func (s *Service) Handlers() router.ServiceHandlers {
 // detectHeadscaleURL finds headscale by querying Docker socket
 func detectHeadscaleURL() (string, error) {
 	// Create HTTP client that connects to Docker (via socket or proxy)
-	client := helper.NewDockerHTTPClientWithTimeout(5 * time.Second)
+	client := helper.NewDockerHTTPClientWithTimeout(helper.DockerQuickTimeout)
 
 	// Query Docker API for headscale container
 	resp, err := client.Get("http://docker/containers/headscale/json")
@@ -179,12 +180,11 @@ func demuxDockerStream(r io.Reader) (string, error) {
 func (s *Service) handleDetectHeadscale(w http.ResponseWriter, r *http.Request) {
 	url, err := detectHeadscaleURL()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		router.JSONError(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"url": url})
+	router.JSON(w, map[string]string{"url": url})
 }
 
 func (s *Service) handleGenerateAPIKey(w http.ResponseWriter, r *http.Request) {
@@ -199,7 +199,7 @@ func (s *Service) handleGenerateAPIKey(w http.ResponseWriter, r *http.Request) {
 		// Check if current key expires in more than 7 days
 		expiresIn, err := getHeadscaleKeyExpiration()
 		if err == nil && expiresIn > 7*24*time.Hour {
-			http.Error(w, fmt.Sprintf("API key still valid for %d days, regeneration not needed", int(expiresIn.Hours()/24)), http.StatusBadRequest)
+			router.JSONError(w, fmt.Sprintf("API key still valid for %d days, regeneration not needed", int(expiresIn.Hours()/24)), http.StatusBadRequest)
 			return
 		}
 		log.Printf("Regenerating API key (current expires in %v)", expiresIn)
@@ -207,8 +207,7 @@ func (s *Service) handleGenerateAPIKey(w http.ResponseWriter, r *http.Request) {
 		// Before setup - check if we already have a pending key in DB
 		if existingKey, err := settings.GetSettingEncrypted("headscale_api_key_pending"); err == nil && existingKey != "" {
 			// Return existing pending key
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{"apiKey": existingKey})
+			router.JSON(w, map[string]string{"apiKey": existingKey})
 			return
 		}
 	}
@@ -216,7 +215,7 @@ func (s *Service) handleGenerateAPIKey(w http.ResponseWriter, r *http.Request) {
 	// Generate new key
 	key, err := generateHeadscaleAPIKey()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		router.JSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -228,14 +227,13 @@ func (s *Service) handleGenerateAPIKey(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// After setup - save directly as the active key
 		if err := settings.SetSettingEncrypted("headscale_api_key", key); err != nil {
-			http.Error(w, "Failed to save API key: "+err.Error(), http.StatusInternalServerError)
+			router.JSONError(w, "Failed to save API key: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		log.Printf("API key regenerated and saved")
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"apiKey": key})
+	router.JSON(w, map[string]string{"apiKey": key})
 }
 
 // getHeadscaleKeyExpiration checks when the current API key expires
@@ -394,44 +392,36 @@ func (s *Service) CompleteSetup(req *SetupRequest) error {
 func (s *Service) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 	status, err := s.GetStatus()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		router.JSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(status)
+	router.JSON(w, status)
 }
 
 func (s *Service) handleCompleteSetup(w http.ResponseWriter, r *http.Request) {
-	// Check if already setup
+	// Lock to prevent race condition with concurrent setup attempts
+	s.setupMu.Lock()
+	defer s.setupMu.Unlock()
+
+	// Check if already setup (inside lock to prevent TOCTOU race)
 	status, _ := s.GetStatus()
 	if status.Completed {
-		http.Error(w, "Setup already completed", http.StatusBadRequest)
+		router.JSONError(w, "Setup already completed", http.StatusBadRequest)
 		return
 	}
 
 	var req SetupRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
 
 	if err := s.CompleteSetup(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		router.JSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"message": "Setup completed"})
-}
-
-func (s *Service) handleHealth(w http.ResponseWriter, r *http.Request) {
-	status, _ := s.GetStatus()
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":    "ok",
-		"completed": status.Completed,
-	})
+	router.JSON(w, map[string]string{"message": "Setup completed"})
 }
 
 // TestHeadscaleRequest for testing headscale connection
@@ -442,13 +432,12 @@ type TestHeadscaleRequest struct {
 
 func (s *Service) handleTestHeadscale(w http.ResponseWriter, r *http.Request) {
 	var req TestHeadscaleRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
 
 	if req.URL == "" || req.APIKey == "" {
-		http.Error(w, "URL and API key are required", http.StatusBadRequest)
+		router.JSONError(w, "URL and API key are required", http.StatusBadRequest)
 		return
 	}
 
@@ -460,31 +449,30 @@ func (s *Service) handleTestHeadscale(w http.ResponseWriter, r *http.Request) {
 	testURL := baseURL + "/user"
 
 	// Test connection to headscale
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: helper.HTTPClientTimeout}
 	testReq, err := http.NewRequest("GET", testURL, nil)
 	if err != nil {
-		http.Error(w, "Invalid URL: "+err.Error(), http.StatusBadRequest)
+		router.JSONError(w, "Invalid URL: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	testReq.Header.Set("Authorization", "Bearer "+req.APIKey)
 
 	resp, err := client.Do(testReq)
 	if err != nil {
-		http.Error(w, "Connection failed: "+err.Error(), http.StatusBadGateway)
+		router.JSONError(w, "Connection failed: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 401 || resp.StatusCode == 403 {
-		http.Error(w, "Invalid API key", http.StatusUnauthorized)
+		router.JSONError(w, "Invalid API key", http.StatusUnauthorized)
 		return
 	}
 
 	if resp.StatusCode >= 400 {
-		http.Error(w, fmt.Sprintf("Headscale returned error: %d", resp.StatusCode), http.StatusBadGateway)
+		router.JSONError(w, fmt.Sprintf("Headscale returned error: %d", resp.StatusCode), http.StatusBadGateway)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	router.JSON(w, map[string]string{"status": "ok"})
 }

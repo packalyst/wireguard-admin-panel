@@ -4,7 +4,7 @@
 }
 
 /* Safelist all used icons - Tailwind needs static class names */
-@source inline("icon-[tabler--activity] icon-[tabler--alert-circle] icon-[tabler--alert-triangle] icon-[tabler--arrow-left] icon-[tabler--arrow-right] icon-[tabler--arrows-right-left] icon-[tabler--ban] icon-[tabler--book] icon-[tabler--box] icon-[tabler--brand-github] icon-[tabler--check] icon-[tabler--check-circle] icon-[tabler--chevron-down] icon-[tabler--chevron-left] icon-[tabler--chevron-right] icon-[tabler--chevrons-left] icon-[tabler--chevrons-right] icon-[tabler--circle-check] icon-[tabler--clock] icon-[tabler--cloud] icon-[tabler--code] icon-[tabler--copy] icon-[tabler--device-desktop] icon-[tabler--device-floppy] icon-[tabler--device-laptop] icon-[tabler--device-mobile] icon-[tabler--device-tablet] icon-[tabler--dots] icon-[tabler--download] icon-[tabler--edit] icon-[tabler--external-link] icon-[tabler--file-text] icon-[tabler--filter] icon-[tabler--git-branch] icon-[tabler--globe] icon-[tabler--hand-off] icon-[tabler--hand-stop] icon-[tabler--info-circle] icon-[tabler--key] icon-[tabler--layout] icon-[tabler--link] icon-[tabler--list] icon-[tabler--lock] icon-[tabler--lock-open] icon-[tabler--logout] icon-[tabler--menu] icon-[tabler--moon] icon-[tabler--network] icon-[tabler--play] icon-[tabler--player-pause] icon-[tabler--player-play] icon-[tabler--player-stop] icon-[tabler--plug] icon-[tabler--plus] icon-[tabler--refresh] icon-[tabler--route] icon-[tabler--search] icon-[tabler--server] icon-[tabler--settings] icon-[tabler--shield] icon-[tabler--shield-check] icon-[tabler--shield-lock] icon-[tabler--sun] icon-[tabler--trash] icon-[tabler--user] icon-[tabler--user-plus] icon-[tabler--users] icon-[tabler--wand] icon-[tabler--world] icon-[tabler--world-off] icon-[tabler--x]");
+@source inline("icon-[tabler--activity] icon-[tabler--alert-circle] icon-[tabler--alert-triangle] icon-[tabler--arrow-left] icon-[tabler--arrow-right] icon-[tabler--arrows-right-left] icon-[tabler--ban] icon-[tabler--bolt] icon-[tabler--book] icon-[tabler--box] icon-[tabler--brand-github] icon-[tabler--chart-pie] icon-[tabler--check] icon-[tabler--check-circle] icon-[tabler--chevron-down] icon-[tabler--chevron-left] icon-[tabler--chevron-right] icon-[tabler--chevrons-left] icon-[tabler--chevrons-right] icon-[tabler--circle-check] icon-[tabler--clock] icon-[tabler--cloud] icon-[tabler--code] icon-[tabler--copy] icon-[tabler--device-desktop] icon-[tabler--device-floppy] icon-[tabler--device-laptop] icon-[tabler--device-mobile] icon-[tabler--device-tablet] icon-[tabler--dots] icon-[tabler--download] icon-[tabler--edit] icon-[tabler--external-link] icon-[tabler--file-text] icon-[tabler--filter] icon-[tabler--gauge] icon-[tabler--git-branch] icon-[tabler--globe] icon-[tabler--hand-off] icon-[tabler--hand-stop] icon-[tabler--info-circle] icon-[tabler--key] icon-[tabler--layers-subtract] icon-[tabler--layout] icon-[tabler--link] icon-[tabler--list] icon-[tabler--lock] icon-[tabler--lock-open] icon-[tabler--logout] icon-[tabler--menu] icon-[tabler--moon] icon-[tabler--network] icon-[tabler--pencil] icon-[tabler--play] icon-[tabler--player-pause] icon-[tabler--player-play] icon-[tabler--player-stop] icon-[tabler--plug] icon-[tabler--plus] icon-[tabler--refresh] icon-[tabler--route] icon-[tabler--scan] icon-[tabler--search] icon-[tabler--server] icon-[tabler--settings] icon-[tabler--shield] icon-[tabler--shield-check] icon-[tabler--shield-lock] icon-[tabler--sun] icon-[tabler--trash] icon-[tabler--user] icon-[tabler--user-plus] icon-[tabler--users] icon-[tabler--wand] icon-[tabler--world] icon-[tabler--world-off] icon-[tabler--world-www] icon-[tabler--x]");
 @import "@keenthemes/ktui/src/components/modal/modal.css";
 @import "@keenthemes/ktui/src/components/input/input.css";
 @import "@keenthemes/ktui/src/components/input/input-group.css";
@@ -49,6 +49,8 @@
   --input: oklch(92% 0.01 250);
   --ring: oklch(50% 0.08 250);
   --radius: 0.5rem;
+  /* Dim color for icons and decorative elements */
+  --dim: oklch(45% 0.01 250);
 
   /* Semantic colors - unified palette */
   --success: oklch(52% 0.14 160);
@@ -62,35 +64,37 @@
 }
 
 .dark {
-  /* Neutrals - dark mode */
-  --background: oklch(12% 0.01 250);
-  --foreground: oklch(92% 0.01 250);
-  --card: oklch(16% 0.01 250);
-  --card-foreground: oklch(92% 0.01 250);
-  --popover: oklch(16% 0.01 250);
-  --popover-foreground: oklch(92% 0.01 250);
-  --primary: oklch(60% 0.10 250);
+  /* Warm Slate - High visibility dark theme */
+  --background: oklch(16% 0.008 260);
+  --foreground: oklch(95% 0.005 260);
+  --card: oklch(20% 0.008 260);
+  --card-foreground: oklch(95% 0.005 260);
+  --popover: oklch(22% 0.008 260);
+  --popover-foreground: oklch(95% 0.005 260);
+  --primary: oklch(68% 0.14 250);
   --primary-foreground: oklch(100% 0 0);
-  --secondary: oklch(22% 0.01 250);
-  --secondary-foreground: oklch(90% 0.01 250);
-  --muted: oklch(20% 0.01 250);
-  --muted-foreground: oklch(60% 0.02 250);
-  --accent: oklch(22% 0.01 250);
-  --accent-foreground: oklch(90% 0.01 250);
-  --mono: oklch(85% 0.005 250);
-  --mono-foreground: oklch(15% 0 0);
-  --border: oklch(24% 0.01 250);
-  --input: oklch(20% 0.01 250);
-  --ring: oklch(60% 0.10 250);
+  --secondary: oklch(28% 0.008 260);
+  --secondary-foreground: oklch(90% 0.005 260);
+  --muted: oklch(26% 0.008 260);
+  --muted-foreground: oklch(78% 0.01 260);
+  --accent: oklch(28% 0.008 260);
+  --accent-foreground: oklch(90% 0.005 260);
+  --mono: oklch(90% 0.005 260);
+  --mono-foreground: oklch(16% 0 0);
+  --border: oklch(38% 0.01 260);
+  --input: oklch(24% 0.008 260);
+  --ring: oklch(68% 0.14 250);
+  /* Dim color for icons - bright enough to see clearly */
+  --dim: oklch(65% 0.01 260);
 
-  /* Semantic colors - dark mode (lighter for visibility) */
-  --success: oklch(62% 0.14 160);
+  /* Semantic colors - vivid for dark backgrounds */
+  --success: oklch(72% 0.18 155);
   --success-foreground: oklch(98% 0 0);
-  --warning: oklch(68% 0.14 70);
-  --warning-foreground: oklch(20% 0.02 70);
-  --destructive: oklch(62% 0.18 25);
+  --warning: oklch(80% 0.16 75);
+  --warning-foreground: oklch(15% 0.02 75);
+  --destructive: oklch(68% 0.22 25);
   --destructive-foreground: oklch(98% 0 0);
-  --info: oklch(62% 0.08 250);
+  --info: oklch(72% 0.12 250);
   --info-foreground: oklch(98% 0 0);
 }
 
@@ -122,6 +126,7 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-dim: var(--dim);
   --radius-xl: calc(var(--radius) + 4px);
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 2px);
@@ -141,8 +146,8 @@ body {
 
 /* Scrollbar */
 ::-webkit-scrollbar {
-  width: 2px;
-  height: 2px;
+  width: 1px;
+  height: 1px;
 }
 ::-webkit-scrollbar-track {
   @apply bg-transparent;
@@ -173,6 +178,11 @@ body {
 .kt-modal-content {
   max-height: 90vh;
   overflow: hidden;
+}
+
+/* KTUI Switch - improve visibility in dark mode */
+.dark .kt-switch:not(:checked) {
+  @apply border border-border bg-muted;
 }
 
 /* KTUI Button variants */
@@ -223,7 +233,7 @@ input:-webkit-autofill:active {
 
 @layer components {
   .custom_btns {
-    @apply flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-300 cursor-pointer;
+    @apply flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground cursor-pointer;
   }
 
   /* Grouped buttons - joined together with dividers */
@@ -246,6 +256,29 @@ input:-webkit-autofill:active {
   }
   .icon-btn-destructive {
     @apply p-1.5 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors cursor-pointer;
+  }
+
+  /* Custom checkbox */
+  .kt-checkbox {
+    @apply appearance-none w-4 h-4 rounded border border-border bg-background cursor-pointer transition-all duration-150;
+    @apply hover:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/10 focus:ring-offset-0;
+  }
+  .kt-checkbox:checked {
+    @apply bg-primary border-primary;
+    background-image: url("data:image/svg+xml,%3csvg viewBox='0 0 16 16' fill='white' xmlns='http://www.w3.org/2000/svg'%3e%3cpath d='M12.207 4.793a1 1 0 010 1.414l-5 5a1 1 0 01-1.414 0l-2-2a1 1 0 011.414-1.414L6.5 9.086l4.293-4.293a1 1 0 011.414 0z'/%3e%3c/svg%3e");
+    background-size: 100% 100%;
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+  .kt-checkbox:indeterminate {
+    @apply bg-primary border-primary;
+    background-image: url("data:image/svg+xml,%3csvg viewBox='0 0 16 16' fill='white' xmlns='http://www.w3.org/2000/svg'%3e%3crect x='3' y='7' width='10' height='2' rx='1'/%3e%3c/svg%3e");
+    background-size: 100% 100%;
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+  .kt-checkbox:disabled {
+    @apply opacity-50 cursor-not-allowed;
   }
 
   /* Status indicator dots */
@@ -284,12 +317,64 @@ input:-webkit-autofill:active {
 
   /* Add item card - dashed border for "add new" actions */
   .add-item-card {
-    @apply flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-center text-xs text-slate-500 transition hover:border-slate-400 hover:bg-slate-100 dark:border-zinc-700 dark:bg-zinc-900/70 dark:text-zinc-300 dark:hover:border-zinc-600 dark:hover:bg-zinc-800/70;
+    @apply flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-muted/50 p-4 text-center text-xs text-muted-foreground transition hover:border-muted-foreground hover:bg-muted;
   }
 
   /* Header icon box */
   .header-icon {
     @apply w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0;
+  }
+
+  /* Empty state container */
+  .empty-state {
+    @apply flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-muted/50 py-12 text-center;
+  }
+  .empty-state-compact {
+    @apply py-8;
+  }
+  .empty-state-lg {
+    @apply py-16 rounded-2xl;
+  }
+
+  /* Empty state icon */
+  .empty-state-icon {
+    @apply flex h-10 w-10 items-center justify-center rounded-lg bg-secondary text-muted-foreground;
+  }
+  .empty-state-icon-lg {
+    @apply h-12 w-12 rounded-full;
+  }
+
+  /* Small uppercase label */
+  .label-xs {
+    @apply text-[10px] uppercase tracking-wide text-muted-foreground;
+  }
+
+  /* Extra small text utilities */
+  .text-2xs {
+    @apply text-[10px];
+  }
+  .text-xxs {
+    @apply text-[11px];
+  }
+
+  /* Panel components - reusable card structure */
+  .kt-panel {
+    @apply bg-card border border-border rounded-lg overflow-hidden flex flex-col;
+  }
+  .kt-panel-header {
+    @apply px-4 py-3 border-b border-border bg-muted/30 flex items-center justify-between;
+  }
+  .kt-panel-title {
+    @apply flex items-center gap-2 text-sm font-semibold text-foreground;
+  }
+  .kt-panel-title > :first-child {
+    @apply text-primary;
+  }
+  .kt-panel-body {
+    @apply p-4 space-y-3 flex-1;
+  }
+  .kt-panel-footer {
+    @apply px-4 py-3 border-t border-border/50 bg-muted/20 flex items-center gap-2 mt-auto;
   }
 
   /* Button group - joins buttons together */
@@ -323,6 +408,14 @@ input:-webkit-autofill:active {
   /* Dropdown backdrop (invisible click target to close) */
   .kt-dropdown-backdrop {
     @apply fixed inset-0 z-40;
+  }
+
+  /* OTP Input - single digit input for 2FA codes */
+  .otp-input {
+    @apply text-center font-mono rounded-lg border-2 border-border bg-background
+           focus:border-primary focus:ring-2 focus:ring-primary/20
+           outline-none transition-all
+           disabled:opacity-50 disabled:cursor-not-allowed;
   }
 }
 

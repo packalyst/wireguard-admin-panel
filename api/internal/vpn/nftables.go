@@ -46,7 +46,10 @@ func GenerateAndApplyNftables() error {
 }
 
 func generateNftablesRules() (string, error) {
-	db := database.Get()
+	db, err := database.GetDB()
+	if err != nil {
+		return "", err
+	}
 	wgIPRange := helper.GetEnv("WG_IP_RANGE")
 	hsIPRange := helper.GetEnv("HEADSCALE_IP_RANGE")
 

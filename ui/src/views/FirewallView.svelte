@@ -13,6 +13,7 @@
   import Select from '../components/Select.svelte'
   import Button from '../components/Button.svelte'
   import Tabs from '../components/Tabs.svelte'
+  import Checkbox from '../components/Checkbox.svelte'
   let { loading = $bindable(true) } = $props()
 
   // Tabs with dynamic badge for blocked count
@@ -892,27 +893,23 @@
         <!-- Ports Tab -->
         {#if activeTab === 'ports'}
           <!-- Add Port Toolbar -->
-          <div class="rounded-xl border border-slate-200 bg-slate-50/90 px-4 py-3 mb-4 dark:border-zinc-800 dark:bg-zinc-900/80">
+          <div class="rounded-xl border border-border bg-muted/80 px-4 py-3 mb-4">
             <div class="flex flex-wrap items-center gap-3">
               <Input
                 type="number"
                 bind:value={newPort}
                 placeholder="Port number"
-                class="w-32"
+                prefixIcon="plug"
+                suffixAddonBtn={{ icon: "plus", onclick: addPort }}
+                class="w-40"
                 min="1"
                 max="65535"
                 onkeydown={(e) => e.key === 'Enter' && addPort()}
               />
-              <Button onclick={addPort} size="sm" icon="plus">
-                Add Port
-              </Button>
-              <div class="ml-auto flex items-center gap-3">
+              <div class="ml-auto">
                 <Button onclick={() => { newSSHPort = sshPort.toString(); showSSHModal = true }} variant="outline" size="sm" icon="key">
                   SSH: {sshPort}
                 </Button>
-                <span class="text-sm text-slate-500 dark:text-zinc-400">
-                  {sortedPorts.length} ports allowed
-                </span>
               </div>
             </div>
           </div>
@@ -923,23 +920,23 @@
               <p class="mt-2 text-sm text-muted-foreground">Loading ports...</p>
             </div>
           {:else if sortedPorts.length > 0}
-            <div class="rounded-xl border border-slate-200 bg-white overflow-hidden dark:border-zinc-800 dark:bg-zinc-900">
+            <div class="rounded-xl border border-border bg-card overflow-hidden">
               <div class="overflow-x-auto">
                 <table class="w-full">
                   <thead>
-                    <tr class="border-b border-slate-200 dark:border-zinc-700">
-                      <th class="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-slate-400 dark:text-zinc-500">Port</th>
-                      <th class="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-slate-400 dark:text-zinc-500">Protocol</th>
-                      <th class="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-slate-400 dark:text-zinc-500">Type</th>
-                      <th class="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-slate-400 dark:text-zinc-500">Service</th>
+                    <tr class="border-b border-border">
+                      <th class="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Port</th>
+                      <th class="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Protocol</th>
+                      <th class="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Type</th>
+                      <th class="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Service</th>
                       <th class="px-4 py-3 w-10"></th>
                     </tr>
                   </thead>
-                  <tbody class="divide-y divide-slate-100 dark:divide-zinc-800">
+                  <tbody class="divide-y divide-border/50">
                     {#each sortedPorts as p}
-                      <tr class="group hover:bg-slate-50 dark:hover:bg-zinc-800/50 transition-colors">
+                      <tr class="group hover:bg-muted/50 transition-colors">
                         <td class="px-4 py-3 align-middle">
-                          <code class="text-sm font-mono font-semibold text-slate-900 dark:text-zinc-100">{p.port}</code>
+                          <code class="text-sm font-mono font-semibold text-foreground">{p.port}</code>
                         </td>
                         <td class="px-4 py-3 align-middle">
                           <span class="inline-flex items-center justify-center min-w-[42px] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide rounded-md bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">
@@ -953,10 +950,10 @@
                               Essential
                             </span>
                           {:else}
-                            <span class="text-xs text-slate-500 dark:text-zinc-500">Custom</span>
+                            <span class="text-xs text-muted-foreground">Custom</span>
                           {/if}
                         </td>
-                        <td class="px-4 py-3 align-middle text-sm text-slate-600 dark:text-zinc-400">
+                        <td class="px-4 py-3 align-middle text-sm text-muted-foreground">
                           {#if p.service}
                             {p.service}
                           {:else if p.port === 22}SSH
@@ -981,7 +978,7 @@
                               <Icon name="trash" size={14} />
                             </button>
                           {:else}
-                            <span class="p-1.5 text-slate-300 dark:text-zinc-600">
+                            <span class="p-1.5 text-dim">
                               <Icon name="lock" size={14} />
                             </span>
                           {/if}
@@ -993,13 +990,12 @@
               </div>
             </div>
           {:else}
-            <div class="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 py-16 text-center dark:border-zinc-700 dark:bg-zinc-900/70">
-              <div class="flex h-12 w-12 items-center justify-center rounded-full bg-slate-200/80 text-slate-500 dark:bg-zinc-700 dark:text-zinc-300">
-                <Icon name="shield" size={24} />
-              </div>
-              <h4 class="mt-4 text-base font-medium text-slate-700 dark:text-zinc-200">No ports configured</h4>
-              <p class="mt-1 text-sm text-slate-500 dark:text-zinc-400">Add ports to allow traffic through the firewall</p>
-            </div>
+            <EmptyState
+              icon="shield"
+              title="No ports configured"
+              description="Add ports to allow traffic through the firewall"
+              large
+            />
           {/if}
 
         <!-- Blocked Tab -->
@@ -1251,9 +1247,9 @@
         <!-- Jails Tab -->
         {:else if activeTab === 'jails'}
           <!-- Toolbar -->
-          <div class="rounded-xl border border-slate-200 bg-slate-50/90 px-4 py-3 mb-4 dark:border-zinc-800 dark:bg-zinc-900/80">
+          <div class="rounded-xl border border-border bg-muted/80 px-4 py-3 mb-4">
             <div class="flex flex-wrap items-center gap-3">
-              <span class="text-sm text-slate-500 dark:text-zinc-400">
+              <span class="text-sm text-muted-foreground">
                 {jails.length} jail{jails.length !== 1 ? 's' : ''} configured
               </span>
               <div class="ml-auto"></div>
@@ -1269,27 +1265,27 @@
               <p class="mt-2 text-sm text-muted-foreground">Loading jails...</p>
             </div>
           {:else if jails.length === 0}
-            <div class="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 py-16 text-center dark:border-zinc-700 dark:bg-zinc-900/70">
-              <div class="flex h-12 w-12 items-center justify-center rounded-full bg-slate-200/80 text-slate-500 dark:bg-zinc-700 dark:text-zinc-300">
-                <Icon name="lock" size={24} />
-              </div>
-              <h4 class="mt-4 text-base font-medium text-slate-700 dark:text-zinc-200">No Jails Configured</h4>
-              <p class="mt-1 text-sm text-slate-500 dark:text-zinc-400">Create a jail to automatically block malicious IPs</p>
-              <Button onclick={openCreateJail} size="sm" icon="plus" class="mt-4">
+            <EmptyState
+              icon="lock"
+              title="No Jails Configured"
+              description="Create a jail to automatically block malicious IPs"
+              large
+            >
+              <Button onclick={openCreateJail} size="sm" icon="plus">
                 Create Jail
               </Button>
-            </div>
+            </EmptyState>
           {:else}
             <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
               {#each jails as jail}
-                <div class="rounded-lg border border-slate-200 bg-white dark:border-zinc-800 dark:bg-zinc-900 {!jail.enabled && 'opacity-50'}">
+                <div class="rounded-lg border border-border bg-card {!jail.enabled && 'opacity-50'}">
                   <!-- Header row -->
-                  <div class="flex items-center gap-3 px-3 py-2.5 border-b border-slate-100 dark:border-zinc-800">
-                    <div class="flex h-7 w-7 items-center justify-center rounded-md {jail.enabled ? 'bg-success/10 text-success' : 'bg-slate-100 text-slate-400 dark:bg-zinc-800 dark:text-zinc-500'}">
+                  <div class="flex items-center gap-3 px-3 py-2.5 border-b border-border/50">
+                    <div class="flex h-7 w-7 items-center justify-center rounded-md {jail.enabled ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}">
                       <Icon name={jail.name === 'sshd' ? 'key' : 'shield'} size={14} />
                     </div>
                     <div class="flex-1 min-w-0">
-                      <h3 class="font-semibold text-sm text-slate-900 dark:text-zinc-100 capitalize truncate">{jail.name}</h3>
+                      <h3 class="font-semibold text-sm text-foreground capitalize truncate">{jail.name}</h3>
                     </div>
                     <!-- Status & Actions grouped -->
                     <div class="flex items-center gap-1">
@@ -1306,7 +1302,7 @@
                           <Icon name="wand" size={10} />
                         </Badge>
                       {/if}
-                      <div class="w-px h-4 bg-slate-200 dark:bg-zinc-700 mx-1"></div>
+                      <div class="w-px h-4 bg-border mx-1"></div>
                       <div class="kt-btn-group">
                         <Button onclick={() => openEditJail(jail)} variant="outline" size="xs" icon="edit" title="Edit" />
                         <Button onclick={() => confirmDeleteJail(jail)} variant="outline" size="xs" icon="trash" title="Delete" />
@@ -1317,24 +1313,24 @@
                   <!-- Stats row -->
                   <div class="flex items-center px-3 py-2 gap-3">
                     <div class="flex-1 text-center">
-                      <div class="text-xl font-bold text-slate-900 dark:text-zinc-100">{jail.currentlyBanned || 0}</div>
-                      <div class="text-[10px] text-slate-400 dark:text-zinc-500">Banned</div>
+                      <div class="text-xl font-bold text-foreground">{jail.currentlyBanned || 0}</div>
+                      <div class="text-[10px] text-muted-foreground">Banned</div>
                     </div>
-                    <div class="w-px h-8 bg-slate-100 dark:bg-zinc-800"></div>
+                    <div class="w-px h-8 bg-muted"></div>
                     <div class="flex-1 text-center">
-                      <div class="text-xl font-bold text-slate-900 dark:text-zinc-100">{jail.totalBanned || 0}</div>
-                      <div class="text-[10px] text-slate-400 dark:text-zinc-500">Total</div>
+                      <div class="text-xl font-bold text-foreground">{jail.totalBanned || 0}</div>
+                      <div class="text-[10px] text-muted-foreground">Total</div>
                     </div>
                   </div>
 
                   <!-- Config row -->
-                  <div class="flex items-center justify-between gap-2 px-3 py-2 bg-slate-50 dark:bg-zinc-800/50 border-t border-slate-100 dark:border-zinc-800 text-[10px]">
-                    <div class="flex items-center gap-2 text-slate-500 dark:text-zinc-400">
-                      <span><strong class="text-slate-700 dark:text-zinc-300">{jail.maxRetry}</strong> retry</span>
+                  <div class="flex items-center justify-between gap-2 px-3 py-2 bg-muted/50 border-t border-border/50 text-[10px]">
+                    <div class="flex items-center gap-2 text-muted-foreground">
+                      <span><strong class="text-foreground">{jail.maxRetry}</strong> retry</span>
                       <span>·</span>
-                      <span><strong class="text-slate-700 dark:text-zinc-300">{formatBanTime(jail.findTime)}</strong> find</span>
+                      <span><strong class="text-foreground">{formatBanTime(jail.findTime)}</strong> find</span>
                       <span>·</span>
-                      <span><strong class="text-slate-700 dark:text-zinc-300">{formatBanTime(jail.banTime)}</strong> ban</span>
+                      <span><strong class="text-foreground">{formatBanTime(jail.banTime)}</strong> ban</span>
                     </div>
                     <Badge variant="mono" size="sm">{jail.action || 'drop'}</Badge>
                   </div>
@@ -1370,9 +1366,9 @@
           {:else}
             <div class="space-y-6">
               <!-- Currently Blocked Countries -->
-              <div class="rounded-xl border border-slate-200 bg-white overflow-hidden dark:border-zinc-800 dark:bg-zinc-900">
+              <div class="rounded-xl border border-border bg-card overflow-hidden">
                 <!-- Table Header -->
-                <div class="px-4 py-3 border-b border-slate-200 dark:border-zinc-700 bg-slate-50 dark:bg-zinc-800/50">
+                <div class="px-4 py-3 border-b border-border bg-muted/50">
                   <div class="flex items-center justify-between">
                     <div class="flex items-center gap-3">
                       <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-destructive/10 text-destructive">
@@ -1449,17 +1445,17 @@
                   <div class="overflow-x-auto">
                     <table class="w-full">
                       <thead>
-                        <tr class="border-b border-slate-100 dark:border-zinc-800 bg-slate-50/50 dark:bg-zinc-800/30">
-                          <th class="px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-zinc-400">Country</th>
-                          <th class="px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-zinc-400">Direction</th>
-                          <th class="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-zinc-400">IP Ranges</th>
-                          <th class="px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-zinc-400">Added</th>
+                        <tr class="border-b border-border/50 bg-muted/30">
+                          <th class="px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Country</th>
+                          <th class="px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Direction</th>
+                          <th class="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">IP Ranges</th>
+                          <th class="px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Added</th>
                           <th class="px-4 py-2.5 w-12"></th>
                         </tr>
                       </thead>
-                      <tbody class="divide-y divide-slate-100 dark:divide-zinc-800">
+                      <tbody class="divide-y divide-border/50">
                         {#each blockedCountries as country}
-                          <tr class="group transition-colors {country.status === 'removing' ? 'opacity-50 bg-slate-100 dark:bg-zinc-800' : 'hover:bg-slate-50 dark:hover:bg-zinc-800/50'}">
+                          <tr class="group transition-colors {country.status === 'removing' ? 'opacity-50 bg-muted' : 'hover:bg-muted/50'}">
                             <td class="px-3 py-2">
                               <div class="flex items-center gap-3">
                                 <img
@@ -1469,8 +1465,8 @@
                                   class="rounded-sm shadow-sm"
                                   loading="lazy"
                                 />
-                                <div class="font-medium text-slate-900 dark:text-zinc-100">
-                                  {country.name}<sup class="ml-1 text-[10px] text-slate-400 dark:text-zinc-500 font-mono">{country.country_code}</sup>
+                                <div class="font-medium text-foreground">
+                                  {country.name}<sup class="ml-1 text-[10px] text-muted-foreground font-mono">{country.country_code}</sup>
                                 </div>
                                 {#if country.status === 'removing'}
                                   <Badge variant="warning" size="sm">
@@ -1533,11 +1529,11 @@
                   </div>
                 {:else}
                   <div class="flex flex-col items-center justify-center py-12 text-center">
-                    <div class="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-400 dark:bg-zinc-800 dark:text-zinc-500">
+                    <div class="flex h-12 w-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
                       <Icon name="world" size={24} />
                     </div>
-                    <h4 class="mt-4 text-sm font-medium text-slate-600 dark:text-zinc-300">No countries blocked</h4>
-                    <p class="mt-1 text-xs text-slate-400 dark:text-zinc-500">Select countries above to block traffic</p>
+                    <h4 class="mt-4 text-sm font-medium text-muted-foreground">No countries blocked</h4>
+                    <p class="mt-1 text-xs text-muted-foreground">Select countries above to block traffic</p>
                   </div>
                 {/if}
               </div>
@@ -1618,14 +1614,23 @@
 
     <div class="flex gap-3">
       <div class="flex-1">
-        <label class="kt-label">Current Port</label>
-        <div class="kt-input font-mono bg-muted">{sshPort}</div>
+        <Input
+          label="Current Port"
+          value={sshPort}
+          prefixIcon="key"
+          size="default"
+          class="font-mono"
+          readonly
+          disabled
+        />
       </div>
       <div class="flex-1">
         <Input
           label="New Port"
           type="number"
           bind:value={newSSHPort}
+          prefixIcon="key"
+          size="default"
           class="font-mono"
           placeholder="2222"
           min="1"
@@ -1718,20 +1723,17 @@
     </div>
 
     <!-- Auto-Escalation Settings -->
-    <div class="border-t border-slate-200 dark:border-zinc-700 pt-4 mt-4">
+    <div class="border-t border-border pt-4 mt-4">
       <div class="flex items-center justify-between mb-3">
         <div>
           <label class="kt-label mb-0">Auto-Escalation</label>
           <p class="text-xs text-muted-foreground">Automatically block entire /24 range when threshold IPs are blocked</p>
         </div>
-        <label class="relative inline-flex items-center cursor-pointer">
-          <input type="checkbox" bind:checked={jailForm.escalateEnabled} class="sr-only peer">
-          <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-zinc-600 peer-checked:bg-primary"></div>
-        </label>
+        <Checkbox variant="switch" bind:checked={jailForm.escalateEnabled} />
       </div>
 
       {#if jailForm.escalateEnabled}
-        <div class="grid grid-cols-2 gap-4 p-3 bg-slate-50 dark:bg-zinc-800/50 rounded-lg">
+        <div class="grid grid-cols-2 gap-4 p-3 bg-muted/50 rounded-lg">
           <Input
             label="IP Threshold"
             type="number"
@@ -1798,7 +1800,7 @@
       </div>
     {:else}
       <!-- Internet Scanners -->
-      <div>
+      <div class="pb-4 border-b border-dashed border-border">
         <h4 class="text-sm font-medium text-foreground mb-2">Internet Scanners</h4>
         <p class="text-xs text-muted-foreground mb-3">Block known scanning services like Censys, Shodan</p>
         <div class="flex flex-wrap gap-2">
@@ -1820,7 +1822,7 @@
       </div>
 
       <!-- Threat Intelligence -->
-      <div>
+      <div class="pb-4 border-b border-dashed border-border">
         <h4 class="text-sm font-medium text-foreground mb-2">Threat Intelligence</h4>
         <p class="text-xs text-muted-foreground mb-3">IP addresses flagged as malicious by multiple sources</p>
         <div class="flex flex-wrap gap-2">
@@ -1845,24 +1847,19 @@
       <div>
         <h4 class="text-sm font-medium text-foreground mb-2">Custom URL</h4>
         <p class="text-xs text-muted-foreground mb-3">Import from any IP/CIDR list URL</p>
-        <div class="flex gap-2">
-          <Input
-            bind:value={customURL}
-            placeholder="https://example.com/blocklist.txt"
-            class="flex-1"
-          />
-          <Button
-            onclick={() => importBlocklist('custom')}
-            variant="outline"
-            size="sm"
-            disabled={!customURL || importingSource === 'custom'}
-          >
-            {#if importingSource === 'custom'}
-              <div class="w-3 h-3 border-2 border-muted border-t-primary rounded-full animate-spin mr-1"></div>
-            {/if}
-            Import
-          </Button>
-        </div>
+        <Input
+          bind:value={customURL}
+          placeholder="https://example.com/blocklist.txt"
+          prefixIcon="link"
+          suffixAddonBtn={{
+            icon: "download",
+            label: importingSource === 'custom' ? 'Importing...' : 'Import',
+            onclick: () => importBlocklist('custom'),
+            disabled: !customURL || importingSource === 'custom',
+            loading: importingSource === 'custom'
+          }}
+          onkeydown={(e) => e.key === 'Enter' && customURL && importBlocklist('custom')}
+        />
         <p class="text-xs text-muted-foreground mt-2">Supports: plain IP lists, CIDR notation, ipsum format, FireHOL netset</p>
       </div>
     {/if}
@@ -1893,7 +1890,7 @@
           Select all{countrySearch ? ' filtered' : ''}
         </button>
         {#if selectedCountries.length > 0}
-          <span class="text-slate-300 dark:text-zinc-600">|</span>
+          <span class="text-dim">|</span>
           <button
             onclick={clearCountrySelection}
             class="text-xs text-muted-foreground hover:text-foreground"
@@ -1908,21 +1905,20 @@
     </div>
 
     <!-- Countries grouped by continent -->
-    <div class="max-h-96 overflow-y-auto border border-slate-200 dark:border-zinc-700 rounded-lg">
+    <div class="max-h-96 overflow-y-auto border border-border rounded-lg">
       {#if sortedContinents.length > 0}
-        <div class="divide-y divide-slate-200 dark:divide-zinc-700">
+        <div class="divide-y divide-border">
           {#each sortedContinents as continent}
-            <div class="bg-white dark:bg-zinc-900">
+            <div class="bg-card">
               <!-- Continent header -->
               <button
                 onclick={() => toggleContinentSelection(continent)}
-                class="w-full flex items-center gap-3 px-3 py-2 bg-slate-50 dark:bg-zinc-800 hover:bg-slate-100 dark:hover:bg-zinc-700 transition-colors sticky top-0 z-10"
+                class="w-full flex items-center gap-3 px-3 py-2 bg-muted hover:bg-muted/80 transition-colors sticky top-0 z-10"
               >
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={isContinentFullySelected(continent)}
                   indeterminate={isContinentPartiallySelected(continent)}
-                  class="w-4 h-4 rounded border-slate-300 text-primary focus:ring-primary/20 dark:border-zinc-600 dark:bg-zinc-700 pointer-events-none"
+                  class="pointer-events-none"
                   tabindex="-1"
                 />
                 <span class="font-medium text-sm text-foreground">{continent}</span>
@@ -1933,23 +1929,19 @@
               <!-- Countries in continent -->
               <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-1 p-2">
                 {#each countriesByContinent[continent] || [] as country}
-                  <label
-                    class="flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer hover:bg-slate-50 dark:hover:bg-zinc-800 transition-colors {selectedCountries.includes(country.code) ? 'bg-primary/5 dark:bg-primary/10' : ''}"
+                  <Checkbox
+                    checked={selectedCountries.includes(country.code)}
+                    onchange={() => toggleCountrySelection(country.code)}
+                    class="px-2 py-1.5 rounded-md hover:bg-muted transition-colors {selectedCountries.includes(country.code) ? 'bg-primary/10' : ''}"
                   >
-                    <input
-                      type="checkbox"
-                      checked={selectedCountries.includes(country.code)}
-                      onchange={() => toggleCountrySelection(country.code)}
-                      class="w-3.5 h-3.5 rounded border-slate-300 text-primary focus:ring-primary/20 dark:border-zinc-600 dark:bg-zinc-700"
-                    />
                     <img
                       use:lazyLoad={"https://flagcdn.com/" + country.code.toLowerCase() + ".svg"}
                       width="16"
                       alt={country.code}
                       class="rounded-sm"
                     />
-                    <span class="text-xs text-slate-700 dark:text-zinc-300 truncate">{country.name}</span>
-                  </label>
+                    <span class="text-xs text-foreground truncate">{country.name}</span>
+                  </Checkbox>
                 {/each}
               </div>
             </div>

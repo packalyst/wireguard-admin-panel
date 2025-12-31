@@ -16,7 +16,7 @@ theme.subscribe(value => {
 
 // Valid view IDs for URL routing
 export const validViews = ['nodes', 'users', 'firewall', 'routes', 'authkeys', 'apikeys',
-                           'traefik', 'adguard', 'docker', 'logs', 'settings', 'about']
+                           'traefik', 'domains', 'adguard', 'docker', 'logs', 'settings', 'about']
 
 // Get initial tab from URL hash (for tab persistence on refresh)
 export function getInitialTab(defaultTab, validTabs) {
@@ -91,9 +91,10 @@ export function toast(message, type = 'info') {
     window.KTToast.show({
       message,
       variant: toastVariants[type] || 'info',
-      appearance: 'outline',
+      appearance: 'light',
       progress: true,
       size: 'sm',
+      pauseOnHover: true,
       position: 'bottom-end',
       icon: toastIcons[type] || toastIcons.info
     })
@@ -108,6 +109,18 @@ function getAuthHeaders(extraHeaders = {}) {
   return headers
 }
 
+// Global logout handler - set by App.svelte to handle session expiration
+let globalLogoutHandler = null
+export function setGlobalLogoutHandler(handler) {
+  globalLogoutHandler = handler
+}
+
+// Clear session tokens
+export function clearSessionTokens() {
+  localStorage.removeItem('session_token')
+  localStorage.removeItem('session_expires')
+}
+
 // Base API helper - includes auth token automatically
 async function api(endpoint, options = {}) {
   const headers = getAuthHeaders({
@@ -120,6 +133,19 @@ async function api(endpoint, options = {}) {
   if (res.ok) {
     const text = await res.text()
     return text ? JSON.parse(text) : {}
+  }
+
+  // Handle 401 Unauthorized - session expired
+  if (res.status === 401) {
+    const error = await res.text().catch(() => 'Session expired')
+    // Trigger global logout if not on login/setup endpoints
+    if (!endpoint.includes('/api/auth/login') && !endpoint.includes('/api/setup/')) {
+      clearSessionTokens()
+      if (globalLogoutHandler) {
+        globalLogoutHandler()
+      }
+    }
+    throw new Error(error || 'Session expired')
   }
 
   const error = await res.text().catch(() => res.statusText)
@@ -146,18 +172,22 @@ export async function apiGetBlob(endpoint) {
   return res.blob()
 }
 
-// Generate random secure credentials for AdGuard
+// Generate random secure credentials for AdGuard using crypto API
 export function generateAdguardCredentials() {
   const usernameChars = 'abcdefghijklmnopqrstuvwxyz0123456789'
+  const passwordChars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*'
+
+  const randomValues = new Uint32Array(24)
+  crypto.getRandomValues(randomValues)
+
   let username = 'admin_'
   for (let i = 0; i < 8; i++) {
-    username += usernameChars.charAt(Math.floor(Math.random() * usernameChars.length))
+    username += usernameChars.charAt(randomValues[i] % usernameChars.length)
   }
 
-  const passwordChars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*'
   let password = ''
-  for (let i = 0; i < 16; i++) {
-    password += passwordChars.charAt(Math.floor(Math.random() * passwordChars.length))
+  for (let i = 8; i < 24; i++) {
+    password += passwordChars.charAt(randomValues[i] % passwordChars.length)
   }
 
   return { username, password }

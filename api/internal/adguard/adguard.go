@@ -3,6 +3,7 @@ package adguard
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -10,13 +11,30 @@ import (
 	"strconv"
 	"strings"
 
+	"api/internal/helper"
 	"api/internal/router"
 	"api/internal/settings"
 )
 
+// httpClient with timeout for AdGuard API requests
+var httpClient = &http.Client{Timeout: helper.HTTPClientTimeout}
+
 // Service handles AdGuard operations
 type Service struct {
 	adguardAPI string
+}
+
+// Global instance for package-level helper functions
+var serviceInstance *Service
+
+// SetService sets the global service instance
+func SetService(s *Service) {
+	serviceInstance = s
+}
+
+// GetService returns the global service instance
+func GetService() *Service {
+	return serviceInstance
 }
 
 // New creates a new AdGuard service
@@ -29,6 +47,7 @@ func New() *Service {
 		adguardAPI: "http://127.0.0.1:" + port,
 	}
 
+	serviceInstance = svc
 	log.Printf("AdGuard service initialized, API: %s", svc.adguardAPI)
 	return svc
 }
@@ -64,7 +83,6 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"GetRewrites":    s.handleGetRewrites,
 		"UpdateRewrites": s.handleRewriteAction,
 		"GetQueryLog":    s.handleGetQueryLog,
-		"Health":         s.handleHealth,
 	}
 }
 
@@ -83,7 +101,7 @@ func (s *Service) doRequest(method, path string, body io.Reader) (*http.Response
 		req.SetBasicAuth(username, password)
 	}
 
-	return http.DefaultClient.Do(req)
+	return httpClient.Do(req)
 }
 
 func (s *Service) proxyGet(w http.ResponseWriter, path string) {
@@ -516,329 +534,6 @@ func (s *Service) handleFilteringAction(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-func (s *Service) handleSetFiltering(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Enabled bool `json:"enabled"`
-	}
-	if !router.DecodeJSONOrError(w, r, &req) {
-		return
-	}
-
-	path := "/control/filtering/config"
-	body := `{"enabled":` + strconv.FormatBool(req.Enabled) + `,"interval":24}`
-
-	resp, err := s.doRequest("POST", path, newStringReader(body))
-	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	if proxyError(w, resp) {
-		return
-	}
-
-	router.JSON(w, map[string]bool{"enabled": req.Enabled})
-}
-
-func (s *Service) handleAddFilter(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Name string `json:"name"`
-		URL  string `json:"url"`
-	}
-	if !router.DecodeJSONOrError(w, r, &req) {
-		return
-	}
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"name":      req.Name,
-		"url":       req.URL,
-		"whitelist": false,
-	})
-
-	resp, err := s.doRequest("POST", "/control/filtering/add_url", newBytesReader(body))
-	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	if proxyError(w, resp) {
-		return
-	}
-
-	router.JSON(w, map[string]string{"status": "added"})
-}
-
-func (s *Service) handleRemoveFilter(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		URL string `json:"url"`
-	}
-	if !router.DecodeJSONOrError(w, r, &req) {
-		return
-	}
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"url":       req.URL,
-		"whitelist": false,
-	})
-
-	resp, err := s.doRequest("POST", "/control/filtering/remove_url", newBytesReader(body))
-	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	if proxyError(w, resp) {
-		return
-	}
-
-	router.JSON(w, map[string]string{"status": "removed"})
-}
-
-func (s *Service) handleToggleFilter(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		URL     string `json:"url"`
-		Name    string `json:"name"`
-		Enabled bool   `json:"enabled"`
-	}
-	if !router.DecodeJSONOrError(w, r, &req) {
-		return
-	}
-
-	// AdGuard expects: {"url": "...", "data": {"enabled": true, "url": "...", "name": "..."}, "whitelist": false}
-	body, _ := json.Marshal(map[string]interface{}{
-		"url":       req.URL,
-		"whitelist": false,
-		"data": map[string]interface{}{
-			"enabled": req.Enabled,
-			"url":     req.URL,
-			"name":    req.Name,
-		},
-	})
-
-	resp, err := s.doRequest("POST", "/control/filtering/set_url", newBytesReader(body))
-	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	if proxyError(w, resp) {
-		return
-	}
-
-	router.JSON(w, map[string]bool{"enabled": req.Enabled})
-}
-
-func (s *Service) handleRefreshFilters(w http.ResponseWriter, r *http.Request) {
-	body := `{"whitelist":false}`
-
-	resp, err := s.doRequest("POST", "/control/filtering/refresh", newStringReader(body))
-	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	if proxyError(w, resp) {
-		return
-	}
-
-	// Proxy the response (contains updated counts)
-	w.Header().Set("Content-Type", "application/json")
-	io.Copy(w, resp.Body)
-}
-
-func (s *Service) handleSetFilteringRules(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Rules []string `json:"rules"`
-	}
-	if !router.DecodeJSONOrError(w, r, &req) {
-		return
-	}
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"rules": req.Rules,
-	})
-
-	resp, err := s.doRequest("POST", "/control/filtering/set_rules", newBytesReader(body))
-	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	if proxyError(w, resp) {
-		return
-	}
-
-	router.JSON(w, map[string]string{"status": "updated"})
-}
-
-func (s *Service) handleSetProtection(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Enabled bool `json:"enabled"`
-	}
-	if !router.DecodeJSONOrError(w, r, &req) {
-		return
-	}
-
-	body := `{"protection_enabled":` + strconv.FormatBool(req.Enabled) + `}`
-
-	resp, err := s.doRequest("POST", "/control/dns_config", newStringReader(body))
-	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	if proxyError(w, resp) {
-		return
-	}
-
-	router.JSON(w, map[string]bool{"protection_enabled": req.Enabled})
-}
-
-func (s *Service) handleGetBlockedServices(w http.ResponseWriter, r *http.Request) {
-	s.proxyGet(w, "/control/blocked_services/list")
-}
-
-func (s *Service) handleSetBlockedServices(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		IDs []string `json:"ids"`
-	}
-	if !router.DecodeJSONOrError(w, r, &req) {
-		return
-	}
-
-	// AdGuard expects: {"ids": [...], "schedule": {"time_zone": "UTC"}}
-	payload := map[string]interface{}{
-		"ids": req.IDs,
-		"schedule": map[string]string{
-			"time_zone": "UTC",
-		},
-	}
-	body, _ := json.Marshal(payload)
-
-	resp, err := s.doRequest("PUT", "/control/blocked_services/update", newBytesReader(body))
-	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	if proxyError(w, resp) {
-		return
-	}
-
-	router.JSON(w, map[string][]string{"ids": req.IDs})
-}
-
-func (s *Service) handleGetAllBlockedServices(w http.ResponseWriter, r *http.Request) {
-	s.proxyGet(w, "/control/blocked_services/all")
-}
-
-func (s *Service) handleGetSafeBrowsing(w http.ResponseWriter, r *http.Request) {
-	s.proxyGet(w, "/control/safebrowsing/status")
-}
-
-func (s *Service) handleSetSafeBrowsing(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Enabled bool `json:"enabled"`
-	}
-	if !router.DecodeJSONOrError(w, r, &req) {
-		return
-	}
-
-	path := "/control/safebrowsing/"
-	if req.Enabled {
-		path += "enable"
-	} else {
-		path += "disable"
-	}
-
-	resp, err := s.doRequest("POST", path, nil)
-	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	if proxyError(w, resp) {
-		return
-	}
-
-	router.JSON(w, map[string]bool{"enabled": req.Enabled})
-}
-
-func (s *Service) handleGetParental(w http.ResponseWriter, r *http.Request) {
-	s.proxyGet(w, "/control/parental/status")
-}
-
-func (s *Service) handleSetParental(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Enabled bool `json:"enabled"`
-	}
-	if !router.DecodeJSONOrError(w, r, &req) {
-		return
-	}
-
-	path := "/control/parental/"
-	if req.Enabled {
-		path += "enable"
-	} else {
-		path += "disable"
-	}
-
-	resp, err := s.doRequest("POST", path, nil)
-	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	if proxyError(w, resp) {
-		return
-	}
-
-	router.JSON(w, map[string]bool{"enabled": req.Enabled})
-}
-
-func (s *Service) handleGetSafeSearch(w http.ResponseWriter, r *http.Request) {
-	s.proxyGet(w, "/control/safesearch/status")
-}
-
-func (s *Service) handleSetSafeSearch(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Enabled bool `json:"enabled"`
-	}
-	if !router.DecodeJSONOrError(w, r, &req) {
-		return
-	}
-
-	// SafeSearch requires specifying which services to enable
-	body := `{"enabled":` + strconv.FormatBool(req.Enabled) + `}`
-
-	resp, err := s.doRequest("PUT", "/control/safesearch/settings", newStringReader(body))
-	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	if proxyError(w, resp) {
-		return
-	}
-
-	router.JSON(w, map[string]bool{"enabled": req.Enabled})
-}
-
-func (s *Service) handleGetClients(w http.ResponseWriter, r *http.Request) {
-	s.proxyGet(w, "/control/clients")
-}
-
 func (s *Service) handleGetRewrites(w http.ResponseWriter, r *http.Request) {
 	s.proxyGet(w, "/control/rewrite/list")
 }
@@ -910,60 +605,6 @@ func (s *Service) handleRewriteAction(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Service) handleAddRewrite(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Domain string `json:"domain"`
-		Answer string `json:"answer"`
-	}
-	if !router.DecodeJSONOrError(w, r, &req) {
-		return
-	}
-
-	body, _ := json.Marshal(req)
-
-	resp, err := s.doRequest("POST", "/control/rewrite/add", newBytesReader(body))
-	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	if proxyError(w, resp) {
-		return
-	}
-
-	router.JSON(w, req)
-}
-
-func (s *Service) handleDeleteRewrite(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Domain string `json:"domain"`
-		Answer string `json:"answer"`
-	}
-	if !router.DecodeJSONOrError(w, r, &req) {
-		return
-	}
-
-	body, _ := json.Marshal(req)
-
-	resp, err := s.doRequest("POST", "/control/rewrite/delete", newBytesReader(body))
-	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	if proxyError(w, resp) {
-		return
-	}
-
-	router.JSON(w, map[string]string{"status": "deleted"})
-}
-
-func (s *Service) handleHealth(w http.ResponseWriter, r *http.Request) {
-	router.JSON(w, map[string]string{"status": "ok"})
-}
-
 // Helper functions using stdlib
 func newStringReader(s string) io.Reader {
 	return strings.NewReader(s)
@@ -981,7 +622,10 @@ type Rewrite struct {
 
 // GetRewrites returns all DNS rewrites
 func GetRewrites() ([]Rewrite, error) {
-	svc := New()
+	svc := GetService()
+	if svc == nil {
+		return nil, fmt.Errorf("adguard service not initialized")
+	}
 	resp, err := svc.doRequest("GET", "/control/rewrite/list", nil)
 	if err != nil {
 		return nil, err
@@ -997,7 +641,10 @@ func GetRewrites() ([]Rewrite, error) {
 
 // AddRewrite adds a DNS rewrite
 func AddRewrite(domain, answer string) error {
-	svc := New()
+	svc := GetService()
+	if svc == nil {
+		return fmt.Errorf("adguard service not initialized")
+	}
 	body, _ := json.Marshal(Rewrite{Domain: domain, Answer: answer})
 	resp, err := svc.doRequest("POST", "/control/rewrite/add", newBytesReader(body))
 	if err != nil {
@@ -1009,7 +656,10 @@ func AddRewrite(domain, answer string) error {
 
 // DeleteRewrite removes a DNS rewrite
 func DeleteRewrite(domain, answer string) error {
-	svc := New()
+	svc := GetService()
+	if svc == nil {
+		return fmt.Errorf("adguard service not initialized")
+	}
 	body, _ := json.Marshal(Rewrite{Domain: domain, Answer: answer})
 	resp, err := svc.doRequest("POST", "/control/rewrite/delete", newBytesReader(body))
 	if err != nil {
@@ -1017,5 +667,64 @@ func DeleteRewrite(domain, answer string) error {
 	}
 	resp.Body.Close()
 	return nil
+}
+
+// DomainRoute represents a domain route for DNS sync
+type DomainRoute struct {
+	Domain string
+}
+
+// SyncDomainRewrites ensures DNS rewrites exist for all domains pointing to targetIP
+// It also cleans up orphaned rewrites (those pointing to targetIP that are no longer needed)
+// Returns a list of errors for domains that failed
+func SyncDomainRewrites(domains []DomainRoute, targetIP string) []string {
+	errors := []string{}
+
+	// Get existing rewrites
+	existing, err := GetRewrites()
+	if err != nil {
+		errors = append(errors, "failed to get existing rewrites: "+err.Error())
+		return errors
+	}
+
+	// Build map of existing rewrites
+	existingMap := make(map[string]string)
+	for _, rw := range existing {
+		existingMap[rw.Domain] = rw.Answer
+	}
+
+	// Build set of domains we want to keep
+	wantDomains := make(map[string]bool)
+	for _, route := range domains {
+		wantDomains[route.Domain] = true
+	}
+
+	// Delete orphaned rewrites (those pointing to our targetIP but not in our domains list)
+	for _, rw := range existing {
+		if rw.Answer == targetIP && !wantDomains[rw.Domain] {
+			if err := DeleteRewrite(rw.Domain, rw.Answer); err != nil {
+				errors = append(errors, rw.Domain+": failed to delete orphaned rewrite: "+err.Error())
+			}
+		}
+	}
+
+	// Add/update rewrites for each domain (all point to targetIP)
+	for _, route := range domains {
+		if current, exists := existingMap[route.Domain]; exists {
+			if current == targetIP {
+				continue // Already correct
+			}
+			// Delete wrong rewrite first
+			if err := DeleteRewrite(route.Domain, current); err != nil {
+				errors = append(errors, route.Domain+": failed to delete old rewrite: "+err.Error())
+			}
+		}
+		// Add correct rewrite
+		if err := AddRewrite(route.Domain, targetIP); err != nil {
+			errors = append(errors, route.Domain+": failed to add rewrite: "+err.Error())
+		}
+	}
+
+	return errors
 }
 

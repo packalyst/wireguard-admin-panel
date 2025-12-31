@@ -2,7 +2,6 @@ package firewall
 
 import (
 	"context"
-	"fmt"
 	"log"
 
 	"api/internal/config"
@@ -17,9 +16,9 @@ func init() {
 
 // New creates a new firewall service
 func New(dataDir string) (*Service, error) {
-	db := database.Get()
-	if db == nil {
-		return nil, fmt.Errorf("database not initialized")
+	db, err := database.GetDB()
+	if err != nil {
+		return nil, err
 	}
 
 	fwCfg := config.GetFirewallConfig()
@@ -88,7 +87,6 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"ApplyRules":          s.handleApplyRules,
 		"GetSSHPort":          s.handleGetSSHPort,
 		"ChangeSSHPort":       s.handleChangeSSHPort,
-		"Health":              s.handleHealth,
 		"GetBlocklists":       s.handleGetBlocklists,
 		"ImportBlocklist":     s.handleImportBlocklist,
 		"DeleteBlockedSource": s.handleDeleteBlockedSource,

@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte'
-  import { theme, apiGet, apiPost, currentView, validViews } from './stores/app.js'
+  import { theme, apiGet, apiPost, currentView, validViews, setGlobalLogoutHandler, clearSessionTokens } from './stores/app.js'
+  import { connect as wsConnect, disconnect as wsDisconnect, wsUserStore, wsConnected, stopReconnect } from './stores/websocket.js'
   import Dashboard from './views/Dashboard.svelte'
   import Login from './views/Login.svelte'
   import SetupWizard from './views/SetupWizard.svelte'
@@ -9,6 +10,45 @@
   let checking = $state(true)
   let needsSetup = $state(false)
   let showAdguardBanner = $state(false)
+
+  // Set global logout handler for API 401 errors
+  setGlobalLogoutHandler(() => {
+    wsDisconnect()
+    user = null
+  })
+
+  // React to WebSocket user info
+  $effect(() => {
+    if ($wsUserStore) {
+      user = $wsUserStore
+      checking = false
+    }
+  })
+
+  // Handle WebSocket connection failure (invalid token)
+  let wsConnectAttempted = false
+  $effect(() => {
+    // If we attempted to connect and it failed (not connected, not reconnecting)
+    if (wsConnectAttempted && !$wsConnected && !checking) {
+      // WebSocket failed to connect - token might be invalid
+      const token = localStorage.getItem('session_token')
+      if (token && !user) {
+        // Clear invalid session and stop reconnect attempts
+        clearSessionTokens()
+        stopReconnect()
+        checking = false
+      }
+    }
+  })
+
+  // Clear stale tokens when showing login page
+  $effect(() => {
+    if (!checking && !user && !needsSetup) {
+      // About to show login page - ensure no stale tokens
+      clearSessionTokens()
+      stopReconnect()
+    }
+  })
 
   // Global click handler to intercept internal links
   function handleLinkClick(e) {
@@ -40,16 +80,18 @@
     // Setup is complete, check for existing session
     const token = localStorage.getItem('session_token')
     if (token) {
-      try {
-        const data = await apiGet('/api/auth/validate')
-        user = data.user
-      } catch (e) {
-        // Invalid session, clear it
-        localStorage.removeItem('session_token')
-        localStorage.removeItem('session_expires')
-      }
+      // Connect WebSocket - it will validate token and send user info via 'init' message
+      wsConnectAttempted = true
+      wsConnect()
+      // Give WebSocket time to connect, then show login if no user
+      setTimeout(() => {
+        if (!user) {
+          checking = false
+        }
+      }, 2000)
+    } else {
+      checking = false
     }
-    checking = false
   })
 
   function handleSetupComplete(loggedInUser) {
@@ -57,13 +99,19 @@
     user = loggedInUser
     // After setup, AdGuard is not configured yet
     showAdguardBanner = true
+    // Connect WebSocket
+    wsConnect()
   }
 
   function handleLogin(loggedInUser) {
     user = loggedInUser
+    // Connect WebSocket
+    wsConnect()
   }
 
   function handleLogout() {
+    // Disconnect WebSocket first
+    wsDisconnect()
     apiPost('/api/auth/logout').catch(() => {})
     localStorage.removeItem('session_token')
     localStorage.removeItem('session_expires')

@@ -39,6 +39,13 @@ const (
 	PreAuthKeyExpiration      = 1 * time.Hour
 	PeerOnlineThreshold       = 3 * time.Minute
 	DockerRequestTimeout      = 60 * time.Second
+	DockerQuickTimeout        = 5 * time.Second
+	HTTPClientTimeout         = 10 * time.Second
+	WebSocketReadTimeout      = 10 * time.Second
+	PortScanTimeout           = 5 * time.Minute
+	GeoDBDownloadTimeout      = 5 * time.Minute
+	LoginLockoutWindow        = 15 * time.Minute
+	LoginLockoutDuration      = 15 * time.Minute
 )
 
 // Path constants
@@ -46,6 +53,25 @@ const (
 	DefaultNFTablesACLPath  = "/etc/nftables.d/vpn-acl.nft"
 	DefaultHeadscaleACLPath = "/etc/headscale/acl.json"
 	DefaultOutputInterface  = "eth0"
+	ConfigsDir              = "/app/configs"
+	CommonPortsConfigPath   = "/app/configs/common-ports.json"
+	BlocklistSourcesPath    = "/app/configs/blocklist-sources.json"
+	CountriesConfigPath     = "/app/configs/countries.json"
+	GeolocationConfigPath   = "/app/configs/geolocation.json"
+)
+
+// SSH config paths (in order of preference)
+var SSHConfigPaths = []string{"/etc/ssh/sshd_config", "/etc/sshd_config"}
+
+// Pagination constants
+const (
+	DefaultPaginationLimit = 25
+	LargePaginationLimit   = 100
+)
+
+// Authentication constants
+const (
+	TOTPIssuer = "Wireguard"
 )
 
 // GetRouterName returns the configured router container name

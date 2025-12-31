@@ -1,5 +1,7 @@
 <script>
   import Icon from './Icon.svelte';
+  import Checkbox from './Checkbox.svelte';
+  import Button from './Button.svelte';
 
   let {
     type = 'text',
@@ -22,15 +24,26 @@
     prefixIcon = undefined,
     suffixIcon = undefined,
 
-    // Button support (use snippet for full control)
-    prefixButton = undefined,
-    suffixButton = undefined,
+    // Icon button support - renders Button INSIDE input, pass object with Button props
+    prefixIconBtn = undefined,
+    suffixIconBtn = undefined,
 
     // Addon support
     prefixAddon = undefined,
     suffixAddon = undefined,
     prefixAddonIcon = undefined,
     suffixAddonIcon = undefined,
+    // Addon button support - pass object with Button props: { icon, label, variant, onclick, ... }
+    prefixAddonBtn = undefined,
+    suffixAddonBtn = undefined,
+
+    // Checkbox addon support
+    prefixCheckbox = undefined,  // { icon, label, color, variant } or true
+    suffixCheckbox = undefined,  // { icon, label, color, variant } or true
+    prefixCheckboxChecked = $bindable(false),
+    suffixCheckboxChecked = $bindable(false),
+    onPrefixCheckboxChange = undefined,
+    onSuffixCheckboxChange = undefined,
 
     onkeydown = undefined,
     onclick = undefined,
@@ -42,193 +55,152 @@
 
   // Size classes mapping (sm is default)
   const sizeClasses = {
-    sm: { input: 'kt-input-sm', addon: 'kt-input-addon-sm' },
-    lg: { input: 'kt-input-lg', addon: 'kt-input-addon-lg' },
-    default: { input: '', addon: '' }
+    sm: { input: 'kt-input-sm', addon: 'kt-input-addon-sm', btn: 'sm' },
+    lg: { input: 'kt-input-lg', addon: 'kt-input-addon-lg', btn: 'lg' },
+    default: { input: '', addon: '', btn: 'sm' }
   };
   const sizeConfig = sizeClasses[size] || sizeClasses.sm;
   const sizeClass = sizeConfig.input;
   const addonSizeClass = sizeConfig.addon;
+  const btnSize = sizeConfig.btn;
 
-  // Determine wrapper type
-  const hasInputGroup = prefixAddon || suffixAddon || prefixAddonIcon || suffixAddonIcon;
-  const hasWrapper = prefixIcon || suffixIcon || prefixButton || suffixButton || hasInputGroup;
+  // Normalize checkbox props
+  const prefixCheckboxProps = prefixCheckbox === true ? {} : prefixCheckbox;
+  const suffixCheckboxProps = suffixCheckbox === true ? {} : suffixCheckbox;
+
+  // Determine wrapper type - any prefix/suffix uses input-group
+  const hasInputGroup = prefixAddon || suffixAddon || prefixAddonIcon || suffixAddonIcon || prefixAddonBtn || suffixAddonBtn || prefixCheckbox || suffixCheckbox || prefixIconBtn || suffixIconBtn || prefixIcon || suffixIcon;
+
+  // Whether input needs inner wrapper (has icons or icon buttons inside)
+  const hasInnerWrapper = prefixIcon || suffixIcon || suffixIconBtn || prefixIconBtn;
 </script>
 
+<!-- Reusable snippet for the input element -->
+{#snippet inputElement(inputClass, showTooltip = false)}
+  <input
+    bind:value
+    {type}
+    {placeholder}
+    {disabled}
+    {readonly}
+    {required}
+    {autocomplete}
+    class={inputClass}
+    data-kt-tooltip={showTooltip ? tooltip : undefined}
+    {onkeydown}
+    {onclick}
+    {oninput}
+    {onchange}
+    {...restProps}
+  />
+{/snippet}
+
+<!-- Reusable snippet for prefix addons (outside input) -->
+{#snippet prefixAddons()}
+  {#if prefixAddon}
+    <span class="kt-input-addon {addonSizeClass}">{prefixAddon}</span>
+  {/if}
+  {#if prefixAddonIcon}
+    <span class="kt-input-addon kt-input-addon-icon {addonSizeClass}">
+      <Icon name={prefixAddonIcon} size={14} />
+    </span>
+  {/if}
+  {#if prefixAddonBtn}
+    <Button {...prefixAddonBtn} size={btnSize} class="kt-input-addon {addonSizeClass} kt-btn-outline" />
+  {/if}
+  {#if prefixCheckbox}
+    <Checkbox
+      variant={prefixCheckboxProps?.variant || 'chip'}
+      color={prefixCheckboxProps?.color || 'primary'}
+      borderless={true}
+      icon={prefixCheckboxProps?.icon}
+      label={prefixCheckboxProps?.label}
+      bind:checked={prefixCheckboxChecked}
+      onchange={onPrefixCheckboxChange}
+      class="kt-input-addon {addonSizeClass}"
+    />
+  {/if}
+{/snippet}
+
+<!-- Reusable snippet for suffix addons (outside input) -->
+{#snippet suffixAddons()}
+  {#if suffixCheckbox}
+    <Checkbox
+      variant={suffixCheckboxProps?.variant || 'chip'}
+      color={suffixCheckboxProps?.color || 'primary'}
+      borderless={true}
+      icon={suffixCheckboxProps?.icon}
+      label={suffixCheckboxProps?.label}
+      bind:checked={suffixCheckboxChecked}
+      onchange={onSuffixCheckboxChange}
+      class="kt-input-addon {addonSizeClass}"
+    />
+  {/if}
+  {#if suffixAddonBtn}
+    <Button {...suffixAddonBtn} size={btnSize} class="kt-input-addon {addonSizeClass} kt-btn-outline" />
+  {/if}
+  {#if suffixAddonIcon}
+    <span class="kt-input-addon kt-input-addon-icon {addonSizeClass}">
+      <Icon name={suffixAddonIcon} size={14} />
+    </span>
+  {/if}
+  {#if suffixAddon}
+    <span class="kt-input-addon {addonSizeClass}">{suffixAddon}</span>
+  {/if}
+{/snippet}
+
+<!-- Reusable snippet for input with inner icons/buttons -->
+{#snippet inputWithInner()}
+  <div class="kt-input {sizeClass} flex-1">
+    {#if prefixIconBtn}
+      <Button {...prefixIconBtn} size="xs" variant="ghost" iconOnly class="-ms-1" />
+    {/if}
+    {#if prefixIcon}
+      <Icon name={prefixIcon} size={14} />
+    {/if}
+    {@render inputElement("w-full")}
+    {#if suffixIcon}
+      <Icon name={suffixIcon} size={14} />
+    {/if}
+    {#if suffixIconBtn}
+      <Button {...suffixIconBtn} size="xs" variant="ghost" iconOnly class="-me-1" />
+    {/if}
+  </div>
+{/snippet}
+
+<!-- Reusable snippet for the full input group -->
+{#snippet inputGroup()}
+  <div class="kt-input-group {className}">
+    {@render prefixAddons()}
+    {#if hasInnerWrapper}
+      {@render inputWithInner()}
+    {:else}
+      {@render inputElement(`kt-input ${sizeClass} w-full`)}
+    {/if}
+    {@render suffixAddons()}
+  </div>
+{/snippet}
+
+<!-- Reusable snippet for the main input content -->
+{#snippet inputContent()}
+  {#if hasInputGroup}
+    {@render inputGroup()}
+  {:else}
+    {@render inputElement(`kt-input ${sizeClass} ${className}`, true)}
+  {/if}
+{/snippet}
+
+<!-- Main template -->
 {#if label || helperText}
   <div>
     {#if label}
       <label for={restProps.id} class={labelClass}>{label}</label>
     {/if}
-
-    {#if hasInputGroup}
-      <div class="kt-input-group {className}">
-        {#if prefixAddon}
-          <span class="kt-input-addon {addonSizeClass}">{prefixAddon}</span>
-        {/if}
-        {#if prefixAddonIcon}
-          <span class="kt-input-addon kt-input-addon-icon {addonSizeClass}">
-            <Icon name={prefixAddonIcon} size={14} />
-          </span>
-        {/if}
-        <input
-          bind:value
-          {type}
-          {placeholder}
-          {disabled}
-          {readonly}
-          {required}
-          {autocomplete}
-          class="kt-input {sizeClass} w-full"
-          {onkeydown}
-          {onclick}
-          {oninput}
-          {onchange}
-          {...restProps}
-        />
-        {#if suffixAddonIcon}
-          <span class="kt-input-addon kt-input-addon-icon {addonSizeClass}">
-            <Icon name={suffixAddonIcon} size={14} />
-          </span>
-        {/if}
-        {#if suffixAddon}
-          <span class="kt-input-addon {addonSizeClass}">{suffixAddon}</span>
-        {/if}
-      </div>
-    {:else if hasWrapper}
-      <div class="kt-input {sizeClass} {className}" data-kt-tooltip={tooltip}>
-        {#if prefixIcon}
-          <Icon name={prefixIcon} size={14} />
-        {/if}
-        {#if prefixButton}
-          {@render prefixButton()}
-        {/if}
-        <input
-          bind:value
-          {type}
-          {placeholder}
-          {disabled}
-          {readonly}
-          {required}
-          {autocomplete}
-          class="w-full"
-          {onkeydown}
-          {onclick}
-          {oninput}
-          {onchange}
-          {...restProps}
-        />
-        {#if suffixIcon}
-          <Icon name={suffixIcon} size={14} />
-        {/if}
-        {#if suffixButton}
-          {@render suffixButton()}
-        {/if}
-      </div>
-    {:else}
-      <input
-        bind:value
-        {type}
-        {placeholder}
-        {disabled}
-        {readonly}
-        {required}
-        {autocomplete}
-        class="kt-input {sizeClass} {className}"
-        data-kt-tooltip={tooltip}
-        {onkeydown}
-        {onclick}
-        {oninput}
-        {onchange}
-        {...restProps}
-      />
-    {/if}
-
+    {@render inputContent()}
     {#if helperText}
       <p class={helperClass}>{helperText}</p>
     {/if}
   </div>
 {:else}
-  {#if hasInputGroup}
-    <div class="kt-input-group {className}">
-      {#if prefixAddon}
-        <span class="kt-input-addon {addonSizeClass}">{prefixAddon}</span>
-      {/if}
-      {#if prefixAddonIcon}
-        <span class="kt-input-addon kt-input-addon-icon {addonSizeClass}">
-          <Icon name={prefixAddonIcon} size={14} />
-        </span>
-      {/if}
-      <input
-        bind:value
-        {type}
-        {placeholder}
-        {disabled}
-        {readonly}
-        {required}
-        {autocomplete}
-        class="kt-input {sizeClass} w-full"
-        {onkeydown}
-        {onclick}
-        {oninput}
-        {onchange}
-        {...restProps}
-      />
-      {#if suffixAddonIcon}
-        <span class="kt-input-addon kt-input-addon-icon {addonSizeClass}">
-          <Icon name={suffixAddonIcon} size={14} />
-        </span>
-      {/if}
-      {#if suffixAddon}
-        <span class="kt-input-addon {addonSizeClass}">{suffixAddon}</span>
-      {/if}
-    </div>
-  {:else if hasWrapper}
-    <div class="kt-input {sizeClass} {className}" data-kt-tooltip={tooltip}>
-      {#if prefixIcon}
-        <Icon name={prefixIcon} size={14} />
-      {/if}
-      {#if prefixButton}
-        {@render prefixButton()}
-      {/if}
-      <input
-        bind:value
-        {type}
-        {placeholder}
-        {disabled}
-        {readonly}
-        {required}
-        {autocomplete}
-        class="w-full"
-        {onkeydown}
-        {onclick}
-        {oninput}
-        {onchange}
-        {...restProps}
-      />
-      {#if suffixIcon}
-        <Icon name={suffixIcon} size={14} />
-      {/if}
-      {#if suffixButton}
-        {@render suffixButton()}
-      {/if}
-    </div>
-  {:else}
-    <input
-      bind:value
-      {type}
-      {placeholder}
-      {disabled}
-      {readonly}
-      {required}
-      {autocomplete}
-      class="kt-input {sizeClass} {className}"
-      data-kt-tooltip={tooltip}
-      {onkeydown}
-      {onclick}
-      {oninput}
-      {onchange}
-      {...restProps}
-    />
-  {/if}
+  {@render inputContent()}
 {/if}

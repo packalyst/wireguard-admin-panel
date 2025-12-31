@@ -15,6 +15,7 @@
   import Input from '../components/Input.svelte'
   import Select from '../components/Select.svelte'
   import Button from '../components/Button.svelte'
+  import CountryFlag from '../components/CountryFlag.svelte'
 
   let { loading = $bindable(true) } = $props()
 
@@ -336,7 +337,7 @@
                       <td class="text-right">
                         {#if country}
                           <div class="flex items-center justify-end gap-2">
-                            <img src="https://flagcdn.com/20x15/{country.toLowerCase()}.png" alt={country} class="w-5 h-4 rounded-sm shadow-sm" />
+                            <CountryFlag code={country} />
                             <div class="hidden sm:flex items-center gap-2">
                               <div class="border-l border-dashed border-border h-6"></div>
                               <div class="text-right">

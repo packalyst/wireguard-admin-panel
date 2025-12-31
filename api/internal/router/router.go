@@ -1,14 +1,18 @@
 package router
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"api/internal/config"
+	"api/internal/database"
 	"api/internal/helper"
 )
 
@@ -90,9 +94,8 @@ func (r *Router) Build() http.Handler {
 		r.registerCombinedEndpointV2(actualPattern, handlers)
 	}
 
-	// Add API info endpoint
-	r.mux.HandleFunc("/api", r.handleAPIInfo)
-	r.mux.HandleFunc("/api/", r.handleAPIInfo)
+	// Add API schema endpoint
+	r.mux.HandleFunc("/api/schema", r.handleAPIInfo)
 	r.mux.HandleFunc("/health", r.handleHealth)
 
 	return r.applyMiddleware(r.mux)
@@ -131,7 +134,7 @@ func (r *Router) registerCombinedEndpointV2(actualPattern string, handlers []rou
 			}
 		}
 
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		JSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
 	})
 }
 
@@ -192,10 +195,18 @@ func (r *Router) applyMiddleware(handler http.Handler) http.Handler {
 	// Apply auth middleware (must be before logging to reject early)
 	h = r.authMiddleware(h)
 
-	// Apply logging middleware
+	// Apply rate limiting middleware
+	if r.config.Middleware.RateLimit.Enabled {
+		h = r.rateLimitMiddleware(h)
+	}
+
+	// Apply logging middleware with request IDs
 	if r.config.Middleware.Logging.Enabled {
 		h = r.loggingMiddleware(h)
 	}
+
+	// Apply security headers middleware (CSP, etc.)
+	h = r.securityHeadersMiddleware(h)
 
 	// Apply CORS middleware
 	if r.config.Middleware.CORS.Enabled {
@@ -211,7 +222,6 @@ func (r *Router) authMiddleware(next http.Handler) http.Handler {
 	publicPrefixes := []string{
 		"/api/setup/",
 		"/api/auth/login",
-		"/api/auth/health",
 	}
 
 	// Exact public paths
@@ -255,13 +265,13 @@ func (r *Router) authMiddleware(next http.Handler) http.Handler {
 		// Extract token from Authorization header or cookie
 		token := helper.ExtractBearerToken(req)
 		if token == "" {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			JSONError(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 
 		// Validate token
 		if !authValidator(token) {
-			http.Error(w, "Invalid or expired session", http.StatusUnauthorized)
+			JSONError(w, "Invalid or expired session", http.StatusUnauthorized)
 			return
 		}
 
@@ -291,20 +301,141 @@ func (r *Router) corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// loggingMiddleware logs requests
+// generateRequestID creates a unique request identifier
+func generateRequestID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback to timestamp-based ID
+		return strconv.FormatInt(time.Now().UnixNano(), 36)
+	}
+	return hex.EncodeToString(b)
+}
+
+// loggingMiddleware logs requests with request IDs
 func (r *Router) loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		start := time.Now()
-		wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+		requestID := generateRequestID()
 
+		// Add request ID to response headers
+		w.Header().Set("X-Request-ID", requestID)
+
+		wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 		next.ServeHTTP(wrapped, req)
 
+		clientIP := getClientIPFromRequest(req)
+
 		if r.config.Middleware.Logging.Format == "json" {
-			log.Printf(`{"method":"%s","path":"%s","status":%d,"duration":"%s"}`,
-				req.Method, req.URL.Path, wrapped.statusCode, time.Since(start))
+			log.Printf(`{"request_id":"%s","method":"%s","path":"%s","status":%d,"duration":"%s","client_ip":"%s"}`,
+				requestID, req.Method, req.URL.Path, wrapped.statusCode, time.Since(start), clientIP)
 		} else {
-			log.Printf("%s %s %d %s", req.Method, req.URL.Path, wrapped.statusCode, time.Since(start))
+			log.Printf("[%s] %s %s %s %d %s", requestID, clientIP, req.Method, req.URL.Path, wrapped.statusCode, time.Since(start))
 		}
+	})
+}
+
+// getClientIPFromRequest extracts client IP from request
+func getClientIPFromRequest(req *http.Request) string {
+	// Check X-Forwarded-For header
+	if xff := req.Header.Get("X-Forwarded-For"); xff != "" {
+		if idx := strings.Index(xff, ","); idx != -1 {
+			return strings.TrimSpace(xff[:idx])
+		}
+		return strings.TrimSpace(xff)
+	}
+	// Check X-Real-IP header
+	if xri := req.Header.Get("X-Real-IP"); xri != "" {
+		return xri
+	}
+	// Fall back to RemoteAddr
+	if idx := strings.LastIndex(req.RemoteAddr, ":"); idx != -1 {
+		return req.RemoteAddr[:idx]
+	}
+	return req.RemoteAddr
+}
+
+// securityHeadersMiddleware adds security headers including CSP
+func (r *Router) securityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		// Content Security Policy - restrictive by default for API
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+
+		// Prevent MIME type sniffing
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+
+		// Prevent clickjacking
+		w.Header().Set("X-Frame-Options", "DENY")
+
+		// XSS protection (legacy but still useful)
+		w.Header().Set("X-XSS-Protection", "1; mode=block")
+
+		// Referrer policy
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+
+		// Permissions policy (disable unnecessary browser features)
+		w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+
+		next.ServeHTTP(w, req)
+	})
+}
+
+// Rate limiter state
+var (
+	rateLimitBuckets = make(map[string]*rateLimitBucket)
+	rateLimitMu      sync.RWMutex
+)
+
+type rateLimitBucket struct {
+	tokens     float64
+	lastUpdate time.Time
+}
+
+// rateLimitMiddleware implements token bucket rate limiting per IP
+func (r *Router) rateLimitMiddleware(next http.Handler) http.Handler {
+	rps := r.config.Middleware.RateLimit.RequestsPerSecond
+	if rps <= 0 {
+		rps = 100 // Default: 100 requests per second
+	}
+	burstSize := float64(rps * 2) // Allow burst of 2x rate
+
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		clientIP := getClientIPFromRequest(req)
+
+		// Skip rate limiting for health checks
+		if req.URL.Path == "/health" {
+			next.ServeHTTP(w, req)
+			return
+		}
+
+		now := time.Now()
+
+		rateLimitMu.Lock()
+		bucket, exists := rateLimitBuckets[clientIP]
+		if !exists {
+			bucket = &rateLimitBucket{tokens: burstSize, lastUpdate: now}
+			rateLimitBuckets[clientIP] = bucket
+		}
+
+		// Refill tokens based on elapsed time
+		elapsed := now.Sub(bucket.lastUpdate).Seconds()
+		bucket.tokens += elapsed * float64(rps)
+		if bucket.tokens > burstSize {
+			bucket.tokens = burstSize
+		}
+		bucket.lastUpdate = now
+
+		// Check if request can proceed
+		if bucket.tokens < 1 {
+			rateLimitMu.Unlock()
+			w.Header().Set("Retry-After", "1")
+			JSONError(w, "Rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+
+		bucket.tokens--
+		rateLimitMu.Unlock()
+
+		next.ServeHTTP(w, req)
 	})
 }
 
@@ -353,12 +484,98 @@ func (r *Router) handleAPIInfo(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-// handleHealth returns health status
+// HealthCheck represents a single health check result
+type HealthCheck struct {
+	Status  string `json:"status"`
+	Message string `json:"message,omitempty"`
+	Latency string `json:"latency,omitempty"`
+}
+
+// HealthResponse represents the complete health status
+type HealthResponse struct {
+	Status    string                 `json:"status"`
+	Timestamp string                 `json:"timestamp"`
+	Checks    map[string]HealthCheck `json:"checks"`
+}
+
+// handleHealth returns comprehensive health status
 func (r *Router) handleHealth(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
+
+	response := HealthResponse{
+		Status:    "ok",
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Checks:    make(map[string]HealthCheck),
+	}
+
+	// Check database
+	dbCheck := checkDatabase()
+	response.Checks["database"] = dbCheck
+	if dbCheck.Status != "ok" {
+		response.Status = "degraded"
+	}
+
+	// Check Headscale connectivity (if configured)
+	hsCheck := checkHeadscale()
+	response.Checks["headscale"] = hsCheck
+	if hsCheck.Status == "error" && response.Status == "ok" {
+		response.Status = "degraded"
+	}
+
+	// Set appropriate HTTP status
+	statusCode := http.StatusOK
+	if response.Status != "ok" {
+		statusCode = http.StatusServiceUnavailable
+	}
+
+	w.WriteHeader(statusCode)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
 		log.Printf("Error encoding health response: %v", err)
 	}
+}
+
+// checkDatabase verifies database connectivity
+func checkDatabase() HealthCheck {
+	start := time.Now()
+	db, err := database.GetDB()
+	if err != nil {
+		return HealthCheck{Status: "error", Message: "database not initialized"}
+	}
+
+	// Simple ping query
+	var result int
+	err = db.QueryRow("SELECT 1").Scan(&result)
+	latency := time.Since(start)
+
+	if err != nil {
+		return HealthCheck{Status: "error", Message: err.Error(), Latency: latency.String()}
+	}
+
+	return HealthCheck{Status: "ok", Latency: latency.String()}
+}
+
+// checkHeadscale verifies Headscale API connectivity
+func checkHeadscale() HealthCheck {
+	start := time.Now()
+
+	// Try to get Headscale config
+	resp, err := helper.HeadscaleGet("/user")
+	latency := time.Since(start)
+
+	if err != nil {
+		// Not configured is not an error - it's expected during setup
+		if strings.Contains(err.Error(), "not configured") {
+			return HealthCheck{Status: "unconfigured", Message: "headscale not configured yet"}
+		}
+		return HealthCheck{Status: "error", Message: err.Error(), Latency: latency.String()}
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return HealthCheck{Status: "error", Message: "API returned " + resp.Status, Latency: latency.String()}
+	}
+
+	return HealthCheck{Status: "ok", Latency: latency.String()}
 }
 
 // ExtractPathParam extracts a path parameter from the URL
@@ -371,9 +588,18 @@ func ExtractPathParam(r *http.Request, prefix string) string {
 	return ""
 }
 
-// JSON sends a JSON response
+// JSON sends a JSON response with 200 OK status
 func JSON(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		log.Printf("Error encoding JSON response: %v", err)
+	}
+}
+
+// JSONWithStatus sends a JSON response with a custom status code
+func JSONWithStatus(w http.ResponseWriter, data interface{}, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
 		log.Printf("Error encoding JSON response: %v", err)
 	}
@@ -473,4 +699,19 @@ func QueryParamInt(r *http.Request, name string, defaultValue int) int {
 		}
 	}
 	return defaultValue
+}
+
+// ParseIDOrError parses a string ID and sends JSON error response if invalid
+// Returns the parsed ID and true if successful, or 0 and false if error was sent
+func ParseIDOrError(w http.ResponseWriter, idStr string) (int, bool) {
+	if idStr == "" {
+		JSONError(w, "id required", http.StatusBadRequest)
+		return 0, false
+	}
+	id, err := strconv.Atoi(idStr)
+	if err != nil || id <= 0 {
+		JSONError(w, "invalid id", http.StatusBadRequest)
+		return 0, false
+	}
+	return id, true
 }
