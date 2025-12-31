@@ -5,12 +5,20 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"api/internal/database"
+	"api/internal/domains"
 	"api/internal/helper"
 	"api/internal/router"
 )
+
+// validName matches valid Headscale user/node names (alphanumeric, underscore, dash)
+var validName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
+
+// validNodeID matches valid Headscale node IDs (numeric only)
+var validNodeID = regexp.MustCompile(`^[0-9]+$`)
 
 // Service handles Headscale operations
 type Service struct{}
@@ -44,7 +52,6 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"GetAPIKeys":        s.handleGetAPIKeys,
 		"CreateAPIKey":      s.handleCreateAPIKey,
 		"DeleteAPIKey":      s.handleDeleteAPIKey,
-		"Health":            s.handleHealth,
 	}
 }
 
@@ -88,17 +95,6 @@ func (s *Service) proxyDelete(w http.ResponseWriter, path string) {
 	s.proxyResponse(w, resp)
 }
 
-// extractPathSegment extracts a segment from URL path after prefix
-// e.g., extractPathSegment("/api/hs/nodes/123/routes", "/api/hs/nodes/", 0) returns "123"
-func extractPathSegment(urlPath, prefix string, index int) string {
-	path := strings.TrimPrefix(urlPath, prefix)
-	parts := strings.Split(path, "/")
-	if index < len(parts) {
-		return parts[index]
-	}
-	return ""
-}
-
 // --- Users ---
 
 func (s *Service) handleGetUsers(w http.ResponseWriter, r *http.Request) {
@@ -118,6 +114,10 @@ func (s *Service) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	name := router.ExtractPathParam(r, "/api/hs/users/")
+	if !validName.MatchString(name) {
+		router.JSONError(w, "invalid user name", http.StatusBadRequest)
+		return
+	}
 	s.proxyDelete(w, "/user/"+name)
 }
 
@@ -128,6 +128,10 @@ func (s *Service) handleRenameUser(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "invalid path", http.StatusBadRequest)
 		return
 	}
+	if !validName.MatchString(parts[0]) || !validName.MatchString(parts[1]) {
+		router.JSONError(w, "invalid user name", http.StatusBadRequest)
+		return
+	}
 	s.proxyPost(w, "/user/"+parts[0]+"/rename/"+parts[1], "")
 }
 
@@ -136,6 +140,10 @@ func (s *Service) handleRenameUser(w http.ResponseWriter, r *http.Request) {
 func (s *Service) handleGetNodes(w http.ResponseWriter, r *http.Request) {
 	path := "/node"
 	if user := r.URL.Query().Get("user"); user != "" {
+		if !validName.MatchString(user) {
+			router.JSONError(w, "invalid user name", http.StatusBadRequest)
+			return
+		}
 		path += "?user=" + user
 	}
 	s.proxyGet(w, path)
@@ -143,10 +151,19 @@ func (s *Service) handleGetNodes(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 	id := router.ExtractPathParam(r, "/api/hs/nodes/")
+	if !validNodeID.MatchString(id) {
+		router.JSONError(w, "invalid node id", http.StatusBadRequest)
+		return
+	}
 
 	// Auto-delete from vpn_clients for unified view
-	db := database.Get()
-	if db != nil {
+	if db, err := database.GetDB(); err == nil {
+		// Get client ID and delete associated domain routes first
+		var clientID int
+		err := db.QueryRow(`SELECT id FROM vpn_clients WHERE external_id = ? AND type = 'headscale'`, id).Scan(&clientID)
+		if err == nil && clientID > 0 {
+			domains.DeleteClientRoutes(clientID)
+		}
 		db.Exec(`DELETE FROM vpn_clients WHERE external_id = ? AND type = 'headscale'`, id)
 	}
 
@@ -160,21 +177,37 @@ func (s *Service) handleRenameNode(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "invalid path", http.StatusBadRequest)
 		return
 	}
+	if !validNodeID.MatchString(parts[0]) || !validName.MatchString(parts[1]) {
+		router.JSONError(w, "invalid node id or name", http.StatusBadRequest)
+		return
+	}
 	s.proxyPost(w, "/node/"+parts[0]+"/rename/"+parts[1], "")
 }
 
 func (s *Service) handleExpireNode(w http.ResponseWriter, r *http.Request) {
-	id := extractPathSegment(r.URL.Path, "/api/hs/nodes/", 0)
+	id := router.ExtractPathParam(r, "/api/hs/nodes/")
+	if !validNodeID.MatchString(id) {
+		router.JSONError(w, "invalid node id", http.StatusBadRequest)
+		return
+	}
 	s.proxyPost(w, "/node/"+id+"/expire", "")
 }
 
 func (s *Service) handleGetNodeRoutes(w http.ResponseWriter, r *http.Request) {
-	id := extractPathSegment(r.URL.Path, "/api/hs/nodes/", 0)
+	id := router.ExtractPathParam(r, "/api/hs/nodes/")
+	if !validNodeID.MatchString(id) {
+		router.JSONError(w, "invalid node id", http.StatusBadRequest)
+		return
+	}
 	s.proxyGet(w, "/node/"+id+"/routes")
 }
 
 func (s *Service) handleUpdateNodeTags(w http.ResponseWriter, r *http.Request) {
-	id := extractPathSegment(r.URL.Path, "/api/hs/nodes/", 0)
+	id := router.ExtractPathParam(r, "/api/hs/nodes/")
+	if !validNodeID.MatchString(id) {
+		router.JSONError(w, "invalid node id", http.StatusBadRequest)
+		return
+	}
 
 	var req struct {
 		Tags []string `json:"tags"`
@@ -194,17 +227,29 @@ func (s *Service) handleGetRoutes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleEnableRoute(w http.ResponseWriter, r *http.Request) {
-	id := extractPathSegment(r.URL.Path, "/api/hs/routes/", 0)
+	id := router.ExtractPathParam(r, "/api/hs/routes/")
+	if !validNodeID.MatchString(id) {
+		router.JSONError(w, "invalid route id", http.StatusBadRequest)
+		return
+	}
 	s.proxyPost(w, "/routes/"+id+"/enable", "")
 }
 
 func (s *Service) handleDisableRoute(w http.ResponseWriter, r *http.Request) {
-	id := extractPathSegment(r.URL.Path, "/api/hs/routes/", 0)
+	id := router.ExtractPathParam(r, "/api/hs/routes/")
+	if !validNodeID.MatchString(id) {
+		router.JSONError(w, "invalid route id", http.StatusBadRequest)
+		return
+	}
 	s.proxyPost(w, "/routes/"+id+"/disable", "")
 }
 
 func (s *Service) handleDeleteRoute(w http.ResponseWriter, r *http.Request) {
 	id := router.ExtractPathParam(r, "/api/hs/routes/")
+	if !validNodeID.MatchString(id) {
+		router.JSONError(w, "invalid route id", http.StatusBadRequest)
+		return
+	}
 	s.proxyDelete(w, "/routes/"+id)
 }
 
@@ -214,6 +259,10 @@ func (s *Service) handleGetPreAuthKeys(w http.ResponseWriter, r *http.Request) {
 	user := r.URL.Query().Get("user")
 	if user == "" {
 		router.JSONError(w, "user parameter required", http.StatusBadRequest)
+		return
+	}
+	if !validName.MatchString(user) {
+		router.JSONError(w, "invalid user name", http.StatusBadRequest)
 		return
 	}
 	s.proxyGet(w, "/preauthkey?user="+user)
@@ -269,8 +318,3 @@ func (s *Service) handleDeleteAPIKey(w http.ResponseWriter, r *http.Request) {
 	s.proxyPost(w, "/apikey/expire", string(body))
 }
 
-// --- Health ---
-
-func (s *Service) handleHealth(w http.ResponseWriter, r *http.Request) {
-	router.JSON(w, map[string]string{"status": "ok"})
-}

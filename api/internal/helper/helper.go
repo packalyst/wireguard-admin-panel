@@ -212,31 +212,12 @@ func GetSSHPort() int {
 // detectSSHPort reads the SSH port from sshd_config
 func detectSSHPort() int {
 	// Try common sshd_config locations
-	paths := []string{"/etc/ssh/sshd_config", "/etc/sshd_config"}
+	paths := SSHConfigPaths
 
 	for _, path := range paths {
-		file, err := os.Open(path)
-		if err != nil {
-			continue
-		}
-		defer file.Close()
-
-		scanner := bufio.NewScanner(file)
-		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			// Skip comments
-			if strings.HasPrefix(line, "#") {
-				continue
-			}
-			// Look for Port directive
-			if strings.HasPrefix(line, "Port ") {
-				parts := strings.Fields(line)
-				if len(parts) >= 2 {
-					if port, err := strconv.Atoi(parts[1]); err == nil {
-						return port
-					}
-				}
-			}
+		port := readSSHPortFromFile(path)
+		if port > 0 {
+			return port
 		}
 	}
 
@@ -244,10 +225,38 @@ func detectSSHPort() int {
 	return 22
 }
 
+// readSSHPortFromFile reads SSH port from a single config file
+func readSSHPortFromFile(path string) int {
+	file, err := os.Open(path)
+	if err != nil {
+		return 0
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		// Skip comments
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		// Look for Port directive
+		if strings.HasPrefix(line, "Port ") {
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				if port, err := strconv.Atoi(parts[1]); err == nil {
+					return port
+				}
+			}
+		}
+	}
+	return 0
+}
+
 // SetSSHPort updates the SSH port in sshd_config
 // Returns the old port that was configured
 func SetSSHPort(newPort int) (int, error) {
-	configPath := "/etc/ssh/sshd_config"
+	configPath := SSHConfigPaths[0] // Use primary SSH config path
 
 	// Read current config
 	content, err := os.ReadFile(configPath)

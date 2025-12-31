@@ -225,7 +225,8 @@ func (s *Service) handleTriggerUpdate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Services string `json:"services"` // all, lookup, blocking
 	}
-	router.DecodeJSON(r, &req)
+	// Optional JSON body - defaults to "all" if not provided or invalid
+	_ = router.DecodeJSON(r, &req)
 
 	if req.Services == "" {
 		req.Services = "all"

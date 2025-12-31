@@ -6,12 +6,16 @@ import (
 	"io"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"api/internal/database"
 	"api/internal/helper"
 	"api/internal/settings"
 )
+
+// Mutex to prevent concurrent router setup/removal operations
+var routerMu sync.Mutex
 
 // RouterStatus represents the status of the VPN router
 type RouterStatus struct {
@@ -37,14 +41,18 @@ func GetRouterStatus() RouterStatus {
 		HeadscaleIPRange: helper.GetEnv("HEADSCALE_IP_RANGE"),
 	}
 
-	db := database.Get()
+	db, err := database.GetDB()
+	if err != nil {
+		status.Error = err.Error()
+		return status
+	}
 	routerName := helper.GetRouterName()
 
 	// Check if router is configured in database
 	var enabled bool
 	var dbStatus string
 	var hsUser string
-	err := db.QueryRow(`SELECT enabled, status, headscale_user FROM vpn_router_config WHERE id = 1`).Scan(&enabled, &dbStatus, &hsUser)
+	err = db.QueryRow(`SELECT enabled, status, headscale_user FROM vpn_router_config WHERE id = 1`).Scan(&enabled, &dbStatus, &hsUser)
 	if err != nil {
 		// No config yet
 		return status
@@ -168,7 +176,13 @@ func checkRouteEnabledWithInfo() (enabled bool, routerIP string, advertisedRoute
 
 // SetupRouter initializes the VPN router
 func SetupRouter() error {
-	db := database.Get()
+	routerMu.Lock()
+	defer routerMu.Unlock()
+
+	db, err := database.GetDB()
+	if err != nil {
+		return err
+	}
 	routerName := helper.GetRouterName()
 	routerImage := helper.GetRouterImage()
 	routerDataPath := helper.GetRouterDataPath()
@@ -443,7 +457,13 @@ func RestartRouter() error {
 
 // RemoveRouter removes the VPN router
 func RemoveRouter() error {
-	db := database.Get()
+	routerMu.Lock()
+	defer routerMu.Unlock()
+
+	db, err := database.GetDB()
+	if err != nil {
+		return err
+	}
 	routerName := helper.GetRouterName()
 
 	// Stop and remove container via Docker API
@@ -461,14 +481,28 @@ func RemoveRouter() error {
 	// Delete user from Headscale
 	deleteHeadscaleUser(routerName)
 
-	// Clear all ACL rules and VPN clients when disabling cross-network routing
-	db.Exec(`DELETE FROM vpn_acl_rules`)
-	db.Exec(`DELETE FROM vpn_clients`)
+	// Clear all ACL rules and VPN clients in a transaction
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %v", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`DELETE FROM vpn_acl_rules`); err != nil {
+		return fmt.Errorf("failed to delete ACL rules: %v", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM vpn_clients`); err != nil {
+		return fmt.Errorf("failed to delete VPN clients: %v", err)
+	}
+	if _, err := tx.Exec(`UPDATE vpn_router_config SET enabled = 0, status = 'disabled' WHERE id = 1`); err != nil {
+		return fmt.Errorf("failed to update router config: %v", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %v", err)
+	}
+
 	log.Printf("Cleared all VPN ACL rules and clients")
-
-	// Update database
-	db.Exec(`UPDATE vpn_router_config SET enabled = 0, status = 'disabled' WHERE id = 1`)
-
 	return nil
 }
 

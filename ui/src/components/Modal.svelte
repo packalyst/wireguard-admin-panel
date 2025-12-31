@@ -6,6 +6,7 @@
 
   let {
     open = $bindable(false),
+    onclose,
     title = '',
     size = 'md',
     headerClass = '',
@@ -37,7 +38,11 @@
 
   function handleHideEvent() {
     if (open) {
-      open = false
+      if (onclose) {
+        onclose()
+      } else {
+        open = false
+      }
     }
   }
 
@@ -72,7 +77,11 @@
   })
 
   function handleClose() {
-    open = false
+    if (onclose) {
+      onclose()
+    } else {
+      open = false
+    }
   }
 </script>
 

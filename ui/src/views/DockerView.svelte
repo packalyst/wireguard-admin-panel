@@ -1,46 +1,50 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { toast, apiGet, apiPost } from '../stores/app.js'
+  import { toast, apiPost, apiGet } from '../stores/app.js'
+  import { subscribe, unsubscribe, subscribeToLogs, unsubscribeFromLogs, dockerStore, dockerLogsStore } from '../stores/websocket.js'
   import Icon from '../components/Icon.svelte'
   import Badge from '../components/Badge.svelte'
   import Button from '../components/Button.svelte'
   import Modal from '../components/Modal.svelte'
+  import Checkbox from '../components/Checkbox.svelte'
   import LoadingSpinner from '../components/LoadingSpinner.svelte'
   import EmptyState from '../components/EmptyState.svelte'
+  import InfoCard from '../components/InfoCard.svelte'
 
   let { loading = $bindable(true) } = $props()
 
   let containers = $state([])
-  let pollInterval = null
 
   // Logs modal state
   let showLogsModal = $state(false)
   let logsContainer = $state(null)
-  let logs = $state([])
-  let loadingLogs = $state(false)
   let logsAutoScroll = $state(true)
+  let logsElement = $state(null)
+
+  // Image analysis modal state
+  let showAnalyzeModal = $state(false)
+  let analyzeContainer = $state(null)
+  let imageAnalysis = $state(null)
+  let analyzingImage = $state(false)
 
   // Action states
   let actionInProgress = $state(null)
 
-  async function loadData() {
-    try {
-      const res = await apiGet('/api/docker/containers')
-      containers = res.containers || []
-    } catch (e) {
-      toast('Failed to load containers: ' + e.message, 'error')
-    } finally {
+  // React to WebSocket docker updates
+  $effect(() => {
+    const data = $dockerStore
+    if (data?.containers) {
+      containers = data.containers
       loading = false
     }
-  }
+  })
 
   onMount(() => {
-    loadData()
-    pollInterval = setInterval(loadData, 10000)
+    subscribe('docker')
   })
 
   onDestroy(() => {
-    if (pollInterval) clearInterval(pollInterval)
+    unsubscribe('docker')
   })
 
   // Get state color
@@ -68,13 +72,12 @@
     return status || 'Unknown'
   }
 
-  // Actions
+  // Actions - WebSocket will push updates when container state changes
   async function restartContainer(name) {
     actionInProgress = name + '-restart'
     try {
       await apiPost(`/api/docker/containers/${name}/restart`)
       toast(`Container ${name} restarted`, 'success')
-      loadData()
     } catch (e) {
       toast('Failed to restart: ' + e.message, 'error')
     } finally {
@@ -87,7 +90,6 @@
     try {
       await apiPost(`/api/docker/containers/${name}/stop`)
       toast(`Container ${name} stopped`, 'success')
-      loadData()
     } catch (e) {
       toast('Failed to stop: ' + e.message, 'error')
     } finally {
@@ -100,7 +102,6 @@
     try {
       await apiPost(`/api/docker/containers/${name}/start`)
       toast(`Container ${name} started`, 'success')
-      loadData()
     } catch (e) {
       toast('Failed to start: ' + e.message, 'error')
     } finally {
@@ -108,32 +109,82 @@
     }
   }
 
-  async function viewLogs(container) {
+  function viewLogs(container) {
     logsContainer = container
     showLogsModal = true
-    loadingLogs = true
-    logs = []
+    subscribeToLogs(container.name)
+  }
+
+  function closeLogs() {
+    showLogsModal = false
+    unsubscribeFromLogs()
+    logsContainer = null
+  }
+
+  // Image analysis
+  async function analyzeImage(container) {
+    analyzeContainer = container
+    showAnalyzeModal = true
+    analyzingImage = true
+    imageAnalysis = null
 
     try {
-      const res = await apiGet(`/api/docker/containers/${container.name}/logs?tail=200`)
-      logs = res.logs || []
+      // Extract image name (handle full image paths like library/nginx:alpine)
+      const imageName = container.image.replace(/^docker\.io\//, '').replace(/^library\//, '')
+      imageAnalysis = await apiGet(`/api/docker/images/${encodeURIComponent(imageName)}/analyze`)
     } catch (e) {
-      toast('Failed to load logs: ' + e.message, 'error')
+      toast('Failed to analyze image: ' + e.message, 'error')
     } finally {
-      loadingLogs = false
+      analyzingImage = false
     }
   }
 
-  async function refreshLogs() {
-    if (!logsContainer) return
-    loadingLogs = true
+  function closeAnalyze() {
+    showAnalyzeModal = false
+    analyzeContainer = null
+    imageAnalysis = null
+  }
+
+  // Auto-scroll logs when new entries arrive
+  $effect(() => {
+    const logs = $dockerLogsStore
+    if (logsAutoScroll && logsElement && logs.length > 0) {
+      logsElement.scrollTop = logsElement.scrollHeight
+    }
+  })
+
+  // Get log level from message for styling
+  function getLogLevel(message) {
+    const lower = message.toLowerCase()
+    if (lower.includes('error') || lower.includes('fatal') || lower.includes('panic')) return 'error'
+    if (lower.includes('warn')) return 'warn'
+    if (lower.includes('debug') || lower.includes('trace')) return 'debug'
+    if (lower.includes('info')) return 'info'
+    return 'default'
+  }
+
+  function getLogClass(log) {
+    if (log.stream === 'stderr') return 'text-destructive'
+    const level = getLogLevel(log.message)
+    if (level === 'error') return 'text-destructive'
+    if (level === 'warn') return 'text-warning'
+    if (level === 'debug') return 'text-muted-foreground'
+    if (level === 'info') return 'text-info'
+    return 'text-foreground'
+  }
+
+  // Format timestamp: "2024-01-02T15:04:05.123Z" -> "Jan 02 15:04:05"
+  function formatTimestamp(ts) {
+    if (!ts) return ''
     try {
-      const res = await apiGet(`/api/docker/containers/${logsContainer.name}/logs?tail=200`)
-      logs = res.logs || []
-    } catch (e) {
-      toast('Failed to refresh logs: ' + e.message, 'error')
-    } finally {
-      loadingLogs = false
+      const d = new Date(ts)
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+      const month = months[d.getMonth()]
+      const day = String(d.getDate()).padStart(2, '0')
+      const time = ts.substring(11, 19)
+      return `${month} ${day} ${time}`
+    } catch {
+      return ts.substring(11, 19)
     }
   }
 
@@ -143,20 +194,11 @@
 </script>
 
 <div class="space-y-4">
-  <!-- Info Card -->
-  <div class="bg-gradient-to-r from-primary/5 to-info/5 border border-primary/20 rounded-lg p-4">
-    <div class="flex items-start gap-3">
-      <div class="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-        <Icon name="box" size={18} class="text-primary" />
-      </div>
-      <div class="flex-1 min-w-0">
-        <h3 class="text-sm font-medium text-foreground mb-1">Container Management</h3>
-        <p class="text-xs text-muted-foreground leading-relaxed">
-          Monitor and manage Docker containers. Restart services, view logs, and check container health.
-        </p>
-      </div>
-    </div>
-  </div>
+  <InfoCard
+    icon="box"
+    title="Container Management"
+    description="Monitor and manage Docker containers. Restart services, view logs, and check container health."
+  />
 
   {#if loading}
     <LoadingSpinner centered size="lg" />
@@ -218,6 +260,10 @@
                   <button onclick={() => viewLogs(container)} class="custom_btns" data-kt-tooltip>
                     <Icon name="file-text" size={14} />
                     <span data-kt-tooltip-content class="kt-tooltip hidden">Logs</span>
+                  </button>
+                  <button onclick={() => analyzeImage(container)} class="custom_btns" data-kt-tooltip>
+                    <Icon name="chart-pie" size={14} />
+                    <span data-kt-tooltip-content class="kt-tooltip hidden">Analyze Size</span>
                   </button>
                   {#if container.state === 'running'}
                     <button onclick={() => restartContainer(container.name)} disabled={actionInProgress === container.name + '-restart'} class="custom_btns" data-kt-tooltip>
@@ -290,6 +336,10 @@
                     <Icon name="file-text" size={14} />
                     <span data-kt-tooltip-content class="kt-tooltip hidden">Logs</span>
                   </button>
+                  <button onclick={() => analyzeImage(container)} class="custom_btns" data-kt-tooltip>
+                    <Icon name="chart-pie" size={14} />
+                    <span data-kt-tooltip-content class="kt-tooltip hidden">Analyze Size</span>
+                  </button>
                   {#if container.state === 'running'}
                     <button onclick={() => restartContainer(container.name)} disabled={actionInProgress === container.name + '-restart'} class="custom_btns" data-kt-tooltip>
                       {#if actionInProgress === container.name + '-restart'}
@@ -324,49 +374,156 @@
         {/each}
       </div>
     {:else}
-      <div class="flex flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 py-12 text-center dark:border-zinc-700 dark:bg-zinc-900/70">
-        <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-200/80 text-slate-500 dark:bg-zinc-700 dark:text-zinc-400">
-          <Icon name="box" size={20} />
-        </div>
-        <h4 class="mt-3 text-sm font-medium text-slate-700 dark:text-zinc-200">No containers</h4>
-        <p class="mt-1 text-xs text-slate-500 dark:text-zinc-500">No project containers found</p>
-      </div>
+      <EmptyState
+        icon="box"
+        title="No containers"
+        description="No project containers found"
+      />
     {/if}
   {/if}
 </div>
 
 <!-- Logs Modal -->
-<Modal bind:open={showLogsModal} title="{logsContainer?.name} Logs" size="lg">
+<Modal bind:open={showLogsModal} title="{logsContainer?.name} Logs" size="lg" onclose={closeLogs}>
   <div class="space-y-3">
     <div class="flex items-center justify-between">
-      <div class="text-sm text-muted-foreground">Last 200 lines</div>
-      <Button onclick={refreshLogs} variant="secondary" size="sm" icon="refresh" disabled={loadingLogs}>
-        Refresh
-      </Button>
+      <div class="flex items-center gap-2">
+        <div class="w-2 h-2 rounded-full bg-success animate-pulse"></div>
+        <span class="text-sm text-muted-foreground">Live streaming</span>
+        <Badge variant="muted" size="sm">{$dockerLogsStore.length} lines</Badge>
+      </div>
+      <Checkbox bind:checked={logsAutoScroll} label="Auto-scroll" />
     </div>
 
-    <div class="bg-zinc-900 rounded-lg p-3 max-h-[400px] overflow-auto font-mono text-xs">
-      {#if loadingLogs && logs.length === 0}
-        <div class="flex items-center justify-center py-8 text-zinc-500">
-          <div class="w-5 h-5 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin mr-2"></div>
-          Loading logs...
+    <div bind:this={logsElement} class="bg-secondary border border-border rounded-lg max-h-[400px] overflow-auto">
+      {#if $dockerLogsStore.length === 0}
+        <div class="flex items-center justify-center py-12 text-muted-foreground">
+          <div class="w-5 h-5 border-2 border-muted-foreground border-t-transparent rounded-full animate-spin mr-2"></div>
+          Waiting for logs...
         </div>
-      {:else if logs.length === 0}
-        <div class="text-zinc-500 text-center py-8">No logs available</div>
       {:else}
-        {#each logs as log}
-          <div class="text-zinc-300 hover:bg-zinc-800 px-1 py-0.5 rounded">
-            {#if log.timestamp}
-              <span class="text-zinc-500">{log.timestamp.substring(11, 19)}</span>
-            {/if}
-            <span class="ml-2">{log.message}</span>
-          </div>
-        {/each}
+        <table class="w-full text-xs font-mono">
+          <thead class="sticky top-0 bg-secondary border-b border-border">
+            <tr class="text-muted-foreground text-left">
+              <th class="px-2 py-1.5 w-10 text-right">#</th>
+              <th class="px-2 py-1.5 w-32">Timestamp</th>
+              <th class="px-2 py-1.5">Message</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each $dockerLogsStore as log, i}
+              <tr class="hover:bg-muted/30 border-b border-border/20 last:border-0">
+                <td class="px-2 py-1 text-muted-foreground/40 text-right align-top select-none">{i + 1}</td>
+                <td class="px-2 py-1 text-muted-foreground/60 align-top whitespace-nowrap">{formatTimestamp(log.timestamp)}</td>
+                <td class="px-2 py-1 align-top break-all {getLogClass(log)}">{log.message}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
       {/if}
     </div>
   </div>
 
   {#snippet footer()}
-    <Button onclick={() => showLogsModal = false} variant="secondary">Close</Button>
+    <Button onclick={closeLogs} variant="secondary">Close</Button>
+  {/snippet}
+</Modal>
+
+<!-- Image Analysis Modal -->
+<Modal bind:open={showAnalyzeModal} title="Image Size Analysis" size="lg" onclose={closeAnalyze}>
+  <div class="space-y-4">
+    {#if analyzingImage}
+      <div class="flex items-center justify-center py-12">
+        <div class="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin mr-3"></div>
+        <span class="text-muted-foreground">Analyzing image layers...</span>
+      </div>
+    {:else if imageAnalysis}
+      <!-- Header with total size -->
+      <div class="flex items-center justify-between p-3 bg-muted/50 rounded-lg border border-border">
+        <div>
+          <div class="text-sm font-medium text-foreground">{analyzeContainer?.image}</div>
+          <div class="text-xs text-muted-foreground">Container: {analyzeContainer?.name}</div>
+        </div>
+        <div class="text-right">
+          <div class="text-2xl font-bold text-primary">{imageAnalysis.totalHR}</div>
+          <div class="text-[10px] text-muted-foreground">Total Size</div>
+        </div>
+      </div>
+
+      <!-- Layers table -->
+      <div class="bg-secondary border border-border rounded-lg overflow-hidden">
+        <table class="w-full text-sm">
+          <thead class="bg-muted/50 border-b border-border">
+            <tr class="text-muted-foreground text-left text-xs">
+              <th class="px-3 py-2 font-medium">Layer</th>
+              <th class="px-3 py-2 font-medium text-right w-24">Size</th>
+              <th class="px-3 py-2 font-medium">Purpose</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each imageAnalysis.layers as layer, i}
+              {@const percent = Math.round((layer.size / imageAnalysis.totalSize) * 100)}
+              <tr class="border-b border-border/50 last:border-0 hover:bg-muted/30">
+                <td class="px-3 py-2">
+                  <div class="flex items-center gap-2">
+                    <div class="w-2 h-2 rounded-full {
+                      layer.category === 'Base OS' ? 'bg-info' :
+                      layer.category === 'System packages' ? 'bg-warning' :
+                      layer.category === 'Binary' ? 'bg-success' :
+                      layer.category === 'Static files' ? 'bg-primary' :
+                      layer.category === 'Config' ? 'bg-muted-foreground' :
+                      layer.category === 'Nginx' ? 'bg-orange-500' :
+                      'bg-muted-foreground'
+                    }"></div>
+                    <span class="font-medium text-foreground">{layer.category}</span>
+                  </div>
+                </td>
+                <td class="px-3 py-2 text-right">
+                  <span class="font-mono text-foreground">{layer.sizeHR}</span>
+                  <span class="text-[10px] text-muted-foreground ml-1">({percent}%)</span>
+                </td>
+                <td class="px-3 py-2 text-muted-foreground text-xs">{layer.purpose}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Size visualization bar -->
+      <div class="space-y-2">
+        <div class="text-xs font-medium text-muted-foreground">Size Distribution</div>
+        <div class="h-4 rounded-full overflow-hidden flex bg-muted">
+          {#each imageAnalysis.layers as layer}
+            {@const percent = (layer.size / imageAnalysis.totalSize) * 100}
+            {#if percent > 1}
+              <div
+                class="h-full {
+                  layer.category === 'Base OS' ? 'bg-info' :
+                  layer.category === 'System packages' ? 'bg-warning' :
+                  layer.category === 'Binary' ? 'bg-success' :
+                  layer.category === 'Static files' ? 'bg-primary' :
+                  layer.category === 'Config' ? 'bg-muted-foreground' :
+                  layer.category === 'Nginx' ? 'bg-orange-500' :
+                  'bg-muted-foreground/50'
+                }"
+                style="width: {percent}%"
+                data-kt-tooltip
+              >
+                <span data-kt-tooltip-content class="kt-tooltip hidden">{layer.category}: {layer.sizeHR}</span>
+              </div>
+            {/if}
+          {/each}
+        </div>
+      </div>
+    {:else}
+      <div class="text-center py-8 text-muted-foreground">
+        <Icon name="alert-circle" size={24} class="mx-auto mb-2" />
+        <p>Failed to analyze image</p>
+      </div>
+    {/if}
+  </div>
+
+  {#snippet footer()}
+    <Button onclick={closeAnalyze} variant="secondary">Close</Button>
   {/snippet}
 </Modal>

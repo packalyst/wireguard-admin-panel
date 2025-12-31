@@ -1,6 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
   import { toast, apiGet, apiPost, apiPut, apiDelete, apiGetText, apiGetBlob } from '../stores/app.js'
+  import { subscribe, unsubscribe, nodesUpdatedStore } from '../stores/websocket.js'
   import { loadState, saveState, copyWithToast } from '../stores/helpers.js'
   import { formatDate, timeAgo } from '$lib/utils/format.js'
   import Icon from '../components/Icon.svelte'
@@ -9,6 +10,10 @@
   import Toolbar from '../components/Toolbar.svelte'
   import Input from '../components/Input.svelte'
   import Button from '../components/Button.svelte'
+  import InfoCard from '../components/InfoCard.svelte'
+  import ContentBlock from '../components/ContentBlock.svelte'
+  import EmptyState from '../components/EmptyState.svelte'
+  import Tabs from '../components/Tabs.svelte'
 
   let { loading = $bindable(true) } = $props()
 
@@ -26,7 +31,17 @@
   let hasDNS = $state(false)
 
   let routes = $state([])
-  let pollInterval = null
+
+  // React to WebSocket nodes_updated notifications
+  // The store is a counter that increments on each notification
+  let lastNodesUpdate = 0
+  $effect(() => {
+    const updateCount = $nodesUpdatedStore
+    if (updateCount > lastNodesUpdate) {
+      lastNodesUpdate = updateCount
+      loadData()
+    }
+  })
 
   async function loadData() {
     try {
@@ -144,14 +159,13 @@
   onMount(() => {
     loadData()
     checkRouterStatus()
-    pollInterval = setInterval(() => {
-      loadData()
-      checkRouterStatus()
-    }, 30000)
+    subscribe('nodes_updated')
   })
 
   onDestroy(() => {
-    if (pollInterval) clearInterval(pollInterval)
+    unsubscribe('nodes_updated')
+    // Clean up QR code object URL
+    if (qrUrl) URL.revokeObjectURL(qrUrl)
   })
 
   // Load saved filters from localStorage
@@ -168,6 +182,14 @@
     saveState('nodes', { status: statusFilter, type: typeFilter })
   })
   let activeTab = $state('overview')
+
+  // Dynamic tabs based on node type and router status
+  const detailTabs = $derived(
+    selectedNode?._type === 'wireguard'
+      ? [{id:'overview',label:'Overview'},{id:'qr',label:'QR & Config'},...(routerRunning ? [{id:'access',label:'Access'}] : []),{id:'actions',label:'Actions'}]
+      : [{id:'overview',label:'Overview'},{id:'network',label:'Network'},...(routerRunning ? [{id:'access',label:'Access'}] : []),{id:'security',label:'Actions'}]
+  )
+
   let showCreateModal = $state(false)
   let showNodeModal = $state(false)
 
@@ -205,7 +227,11 @@
 
   async function loadQrCode(peerId, mode) {
     qrLoading = true
-    qrUrl = null
+    // Revoke old URL to prevent memory leak
+    if (qrUrl) {
+      URL.revokeObjectURL(qrUrl)
+      qrUrl = null
+    }
     try {
       const blob = await apiGetBlob(`/api/wg/peers/${peerId}/qr?mode=${mode}`)
       qrUrl = URL.createObjectURL(blob)
@@ -453,22 +479,11 @@
 </script>
 
 <div class="space-y-4">
-  <!-- Toolbar -->
-  <!-- Info Card -->
-  <div class="bg-gradient-to-r from-primary/5 to-info/5 border border-primary/20 rounded-lg p-4">
-    <div class="flex items-start gap-3">
-      <div class="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-        <Icon name="server" size={18} class="text-primary" />
-      </div>
-      <div class="flex-1 min-w-0">
-        <h3 class="text-sm font-medium text-foreground mb-1">Network Nodes</h3>
-        <p class="text-xs text-muted-foreground leading-relaxed">
-          Manage all connected devices in your mesh network. Includes both Tailscale/Headscale nodes
-          and standalone WireGuard peers. Monitor status, configure routes, and control access.
-        </p>
-      </div>
-    </div>
-  </div>
+  <InfoCard
+    icon="server"
+    title="Network Nodes"
+    description="Manage all connected devices in your mesh network. Includes both Tailscale/Headscale nodes and standalone WireGuard peers. Monitor status, configure routes, and control access."
+  />
 
   <Toolbar bind:search placeholder="Search nodes by name, IP or user...">
     <!-- Mobile: Filter dropdown button -->
@@ -485,14 +500,14 @@
       </span>
 
       {#if showFiltersDropdown}
-        <div class="absolute right-0 top-full z-20 mt-2 w-48 rounded-lg border border-slate-200 bg-white p-2 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
-          <div class="mb-2 text-[10px] font-medium uppercase text-slate-400 dark:text-zinc-500">Status</div>
+        <div class="absolute right-0 top-full z-20 mt-2 w-48 rounded-lg border border-border bg-card p-2 shadow-lg">
+          <div class="mb-2 text-[10px] font-medium uppercase text-muted-foreground">Status</div>
           <span onclick={() => { statusFilter = 'all'; typeFilter = 'all' }} class="kt-badge kt-badge-outline {statusFilter === 'all' && typeFilter === 'all' ? 'kt-badge-primary' : 'kt-badge-secondary'} w-full justify-center mb-1 cursor-pointer">All ({allNodes.length})</span>
           <span onclick={() => statusFilter = 'online'} class="kt-badge kt-badge-outline {statusFilter === 'online' ? 'kt-badge-success' : 'kt-badge-secondary'} w-full justify-center mb-1 cursor-pointer">Online</span>
           <span onclick={() => statusFilter = 'offline'} class="kt-badge kt-badge-outline {statusFilter === 'offline' ? 'kt-badge-warning' : 'kt-badge-secondary'} w-full justify-center mb-1 cursor-pointer">Offline</span>
 
-          <div class="my-2 border-t border-slate-200 dark:border-zinc-700"></div>
-          <div class="mb-2 text-[10px] font-medium uppercase text-slate-400 dark:text-zinc-500">Type</div>
+          <div class="my-2 border-t border-border"></div>
+          <div class="mb-2 text-[10px] font-medium uppercase text-muted-foreground">Type</div>
           <span onclick={() => typeFilter = 'tailscale'} class="kt-badge kt-badge-outline {typeFilter === 'tailscale' ? 'kt-badge-info' : 'kt-badge-secondary'} w-full justify-center mb-1 cursor-pointer"><Icon name="cloud" size={12} /> Tailscale ({vpnClients.filter(c => c.type === 'headscale').length})</span>
           <span onclick={() => typeFilter = 'wireguard'} class="kt-badge kt-badge-outline {typeFilter === 'wireguard' ? 'kt-badge-success' : 'kt-badge-secondary'} w-full justify-center cursor-pointer"><Icon name="shield" size={12} /> WireGuard ({vpnClients.filter(c => c.type === 'wireguard').length})</span>
         </div>
@@ -524,7 +539,7 @@
         Offline
       </span>
 
-      <span class="mx-1 h-4 w-px bg-slate-200 dark:bg-zinc-700"></span>
+      <span class="mx-1 h-4 w-px bg-border"></span>
 
       <!-- Type filters -->
       <span
@@ -552,10 +567,10 @@
       {@const isKeyExpired = node._type === 'tailscale' && node.expiry && !node.expiry.startsWith('0001') && new Date(node.expiry) < new Date()}
       <article
         onclick={() => selectNode(node)}
-        class="group flex cursor-pointer flex-col rounded-lg border shadow-sm transition hover:shadow-md
+        class="group flex cursor-pointer flex-col rounded-lg border shadow-sm transition hover:shadow-md bg-card
           {node._online
-            ? 'border-success/30 bg-white dark:border-success/20 dark:bg-zinc-900'
-            : 'border-slate-200 bg-white dark:border-zinc-800 dark:bg-zinc-900'}"
+            ? 'border-success/30'
+            : 'border-border'}"
       >
         <!-- Header: Icon + Name + Status -->
         <div class="flex items-center gap-2.5 p-3">
@@ -563,14 +578,14 @@
           <div class="flex h-9 w-9 items-center justify-center rounded-lg shrink-0
             {node._online
               ? 'bg-success/10 text-success'
-              : 'bg-slate-100 text-slate-500 dark:bg-zinc-800 dark:text-zinc-400'}">
+              : 'bg-muted text-muted-foreground'}">
             <Icon name={getDeviceIcon(node)} size={18} />
           </div>
 
           <!-- Name -->
           <div class="flex-1 min-w-0">
-            <h2 class="truncate text-sm font-semibold text-slate-900 dark:text-zinc-100">{node._displayName}</h2>
-            <div class="flex items-center gap-1 mt-0.5 text-[11px] text-slate-500 dark:text-zinc-500">
+            <h2 class="truncate text-sm font-semibold text-foreground">{node._displayName}</h2>
+            <div class="flex items-center gap-1 mt-0.5 text-[11px] text-muted-foreground">
               <Icon name="user" size={11} class="shrink-0" />
               <span class="truncate">{node.user?.name || 'Unassigned'}</span>
             </div>
@@ -581,7 +596,7 @@
             <span class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium
               {node._online
                 ? 'bg-success/10 text-success'
-                : 'bg-slate-100 text-slate-500 dark:bg-zinc-800 dark:text-zinc-400'}">
+                : 'bg-muted text-muted-foreground'}">
               <span class="status-dot {node._online ? 'status-dot-success' : 'status-dot-muted'}"></span>
               {node._online ? 'Online' : 'Offline'}
             </span>
@@ -598,27 +613,27 @@
         </div>
 
         <!-- Info grid: 2 columns -->
-        <div class="grid grid-cols-2 gap-x-3 gap-y-1.5 border-t border-slate-100 dark:border-zinc-800 px-3 py-2.5 text-[11px]">
+        <div class="grid grid-cols-2 gap-x-3 gap-y-1.5 border-t border-border/50 px-3 py-2.5 text-[11px]">
           <!-- IP -->
           <div class="flex items-center gap-1.5">
-            <Icon name="network" size={12} class="text-slate-400 dark:text-zinc-600 shrink-0" />
-            <code class="text-slate-700 dark:text-zinc-300 font-mono truncate">{node._ip || '—'}</code>
+            <Icon name="network" size={12} class="text-dim shrink-0" />
+            <code class="text-foreground font-mono truncate">{node._ip || '—'}</code>
           </div>
           <!-- Type -->
           <div class="flex items-center gap-1.5">
-            <Icon name={node._type === 'wireguard' ? 'shield' : 'cloud'} size={12} class="text-slate-400 dark:text-zinc-600 shrink-0" />
-            <span class="text-slate-600 dark:text-zinc-400">{node._type === 'wireguard' ? 'WireGuard' : 'Tailscale'}</span>
+            <Icon name={node._type === 'wireguard' ? 'shield' : 'cloud'} size={12} class="text-dim shrink-0" />
+            <span class="text-muted-foreground">{node._type === 'wireguard' ? 'WireGuard' : 'Tailscale'}</span>
           </div>
           <!-- Last seen -->
           <div class="flex items-center gap-1.5">
-            <Icon name="clock" size={12} class="text-slate-400 dark:text-zinc-600 shrink-0" />
-            <span class="text-slate-500 dark:text-zinc-500 truncate">{timeAgo(node.lastHandshake || node.lastSeen)}</span>
+            <Icon name="clock" size={12} class="text-dim shrink-0" />
+            <span class="text-muted-foreground truncate">{timeAgo(node.lastHandshake || node.lastSeen)}</span>
           </div>
           <!-- Key expiry or enabled status -->
           {#if node._type === 'tailscale' && node.expiry && !node.expiry.startsWith('0001')}
             <div class="flex items-center gap-1.5">
-              <Icon name="key" size={12} class="{isKeyExpired ? 'text-destructive' : 'text-slate-400 dark:text-zinc-600'} shrink-0" />
-              <span class="{isKeyExpired ? 'text-destructive' : 'text-slate-500 dark:text-zinc-500'} truncate">
+              <Icon name="key" size={12} class="{isKeyExpired ? 'text-destructive' : 'text-dim'} shrink-0" />
+              <span class="{isKeyExpired ? 'text-destructive' : 'text-muted-foreground'} truncate">
                 {isKeyExpired ? 'Expired' : timeAgo(node.expiry)}
               </span>
             </div>
@@ -635,20 +650,20 @@
         </div>
 
         <!-- Tags footer -->
-        <div class="flex flex-wrap gap-1 border-t border-slate-100 dark:border-zinc-800 px-3 py-2 min-h-[32px]">
+        <div class="flex flex-wrap gap-1 border-t border-border/50 px-3 py-2 min-h-[32px]">
           {#if node._type === 'tailscale' && (node.forcedTags?.length || node.validTags?.length)}
             {#each [...(node.forcedTags || []), ...(node.validTags || [])].slice(0, 3) as tag}
-              <span class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-zinc-800 dark:text-zinc-400">
+              <span class="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
                 {tag.replace('tag:', '')}
               </span>
             {/each}
             {#if [...(node.forcedTags || []), ...(node.validTags || [])].length > 3}
-              <span class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-zinc-800 dark:text-zinc-500">
+              <span class="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
                 +{[...(node.forcedTags || []), ...(node.validTags || [])].length - 3}
               </span>
             {/if}
           {:else}
-            <span class="text-[10px] text-slate-400 dark:text-zinc-600">No tags</span>
+            <span class="text-[10px] text-muted-foreground">No tags</span>
           {/if}
         </div>
       </article>
@@ -660,32 +675,30 @@
         onclick={() => { showCreateModal = true; newPeerName = ''; createdPeer = null }}
         class="add-item-card"
       >
-        <div class="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200/80 text-slate-600 dark:bg-zinc-700 dark:text-zinc-100">
+        <div class="flex h-8 w-8 items-center justify-center rounded-full bg-secondary text-foreground">
           <Icon name="plus" size={16} />
         </div>
-        <div class="font-medium text-slate-700 dark:text-zinc-100">Add your next node</div>
-        <p class="max-w-[200px] text-slate-400 dark:text-zinc-500">
-          Create new WireGuard peers or connect Tailscale devices
+        <div class="font-medium text-foreground">Add WireGuard peer</div>
+        <p class="max-w-[200px] text-muted-foreground">
+          Create new WireGuard peers. For Tailscale, <a href="/authkeys" onclick={(e) => e.stopPropagation()} class="text-primary hover:underline">create auth keys</a>
         </p>
       </article>
     {/if}
   </div>
 
   {#if filteredNodes.length === 0}
-    <div class="mt-4 flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 py-16 text-center dark:border-zinc-700 dark:bg-zinc-900/70">
-      <div class="flex h-12 w-12 items-center justify-center rounded-full bg-slate-200/80 text-slate-500 dark:bg-zinc-700 dark:text-zinc-300">
-        <Icon name="server" size={24} />
-      </div>
-      <h4 class="mt-4 text-base font-medium text-slate-700 dark:text-zinc-200">No nodes found</h4>
-      <p class="mt-1 text-sm text-slate-500 dark:text-zinc-400">
-        {search ? 'Try a different search term' : 'Add a device using the button below'}
-      </p>
+    <EmptyState
+      icon="server"
+      title="No nodes found"
+      description={search ? 'Try a different search term' : 'Add a device using the button below'}
+      large
+    >
       {#if !search}
-        <Button onclick={() => { showCreateModal = true; newPeerName = ''; createdPeer = null }} size="sm" icon="plus" class="mt-4">
+        <Button onclick={() => { showCreateModal = true; newPeerName = ''; createdPeer = null }} size="sm" icon="plus">
           Add Node
         </Button>
       {/if}
-    </div>
+    </EmptyState>
   {/if}
 </div>
 
@@ -725,73 +738,23 @@
   {/snippet}
   {#if selectedNode}
       <!-- Tabs -->
-      <div class="flex border-b border-border px-4 bg-muted/30">
-        {#if selectedNode._type === 'wireguard'}
-          {#each [{id:'overview',label:'Overview'},{id:'qr',label:'QR & Config'},...(routerRunning ? [{id:'access',label:'Access'}] : []),{id:'actions',label:'Actions'}] as tab}
-            <button
-              onclick={() => activeTab = tab.id}
-              class="px-3 py-2.5 text-xs font-medium border-b-2 -mb-px transition-colors
-                {activeTab === tab.id ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}"
-            >{tab.label}</button>
-          {/each}
-        {:else}
-          {#each [{id:'overview',label:'Overview'},{id:'network',label:'Network'},...(routerRunning ? [{id:'access',label:'Access'}] : []),{id:'security',label:'Actions'}] as tab}
-            <button
-              onclick={() => activeTab = tab.id}
-              class="px-3 py-2.5 text-xs font-medium border-b-2 -mb-px transition-colors
-                {activeTab === tab.id ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}"
-            >{tab.label}</button>
-          {/each}
-        {/if}
-      </div>
+      <Tabs tabs={detailTabs} bind:activeTab size="xs" background class="px-4" />
 
       <!-- Content -->
       <div class="p-4 max-h-[60vh] overflow-y-auto">
         {#if activeTab === 'overview'}
           <!-- Info Grid -->
           <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            <div class="p-3 bg-muted/50 rounded-lg">
-              <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">IP Address</div>
-              <div class="flex items-center gap-1">
-                <code class="text-sm font-mono text-foreground truncate">{selectedNode._ip || '—'}</code>
-                {#if selectedNode._ip}
-                  <button onclick={() => copyToClipboard(selectedNode._ip)} class="p-0.5 text-muted-foreground hover:text-foreground shrink-0"><Icon name="copy" size={12} /></button>
-                {/if}
-              </div>
-            </div>
-            <div class="p-3 bg-muted/50 rounded-lg">
-              <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Created</div>
-              <div class="text-sm text-foreground">{formatDate(selectedNode.createdAt)}</div>
-            </div>
-            <div class="p-3 bg-muted/50 rounded-lg">
-              <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Last Seen</div>
-              <div class="text-sm text-foreground">{timeAgo(selectedNode.lastHandshake || selectedNode.lastSeen)}</div>
-            </div>
+            <ContentBlock variant="data" label="IP Address" value={selectedNode._ip || '—'} copyable={!!selectedNode._ip} mono />
+            <ContentBlock variant="data" label="Created" value={formatDate(selectedNode.createdAt)} />
+            <ContentBlock variant="data" label="Last Seen" value={timeAgo(selectedNode.lastHandshake || selectedNode.lastSeen)} />
             {#if selectedNode._type === 'wireguard'}
-              <div class="p-3 bg-muted/50 rounded-lg col-span-2 sm:col-span-3">
-                <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Public Key</div>
-                <div class="flex items-center gap-1">
-                  <code class="text-xs font-mono text-foreground truncate">{selectedNode.publicKey}</code>
-                  <button onclick={() => copyToClipboard(selectedNode.publicKey)} class="p-0.5 text-muted-foreground hover:text-foreground shrink-0"><Icon name="copy" size={12} /></button>
-                </div>
-              </div>
+              <ContentBlock variant="data" label="Public Key" value={selectedNode.publicKey} copyable mono class="col-span-2 sm:col-span-3" />
             {:else}
-              <div class="p-3 bg-muted/50 rounded-lg">
-                <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">User</div>
-                <div class="text-sm text-foreground">{selectedNode.user?.name || '—'}</div>
-              </div>
-              <div class="p-3 bg-muted/50 rounded-lg">
-                <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Key Expiry</div>
-                <div class="text-sm text-foreground">{selectedNode.expiry && !selectedNode.expiry.startsWith('0001') ? formatDate(selectedNode.expiry) : 'Never'}</div>
-              </div>
+              <ContentBlock variant="data" label="User" value={selectedNode.user?.name || '—'} />
+              <ContentBlock variant="data" label="Key Expiry" value={selectedNode.expiry && !selectedNode.expiry.startsWith('0001') ? formatDate(selectedNode.expiry) : 'Never'} />
               {#if selectedNode.ipAddresses?.[1]}
-                <div class="p-3 bg-muted/50 rounded-lg">
-                  <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">IPv6</div>
-                  <div class="flex items-center gap-1">
-                    <code class="text-xs font-mono text-foreground truncate">{selectedNode.ipAddresses[1]}</code>
-                    <button onclick={() => copyToClipboard(selectedNode.ipAddresses[1])} class="p-0.5 text-muted-foreground hover:text-foreground shrink-0"><Icon name="copy" size={12} /></button>
-                  </div>
-                </div>
+                <ContentBlock variant="data" label="IPv6" value={selectedNode.ipAddresses[1]} copyable mono />
               {/if}
             {/if}
           </div>
@@ -841,24 +804,12 @@
         {:else if activeTab === 'network'}
           <!-- Tailscale Network Tab -->
           <div class="space-y-3">
-            <div class="p-3 bg-muted/50 rounded-lg">
-              <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Node ID</div>
-              <code class="text-sm font-mono text-foreground">{selectedNode.id}</code>
-            </div>
+            <ContentBlock variant="data" label="Node ID" value={selectedNode.id} mono />
             {#if selectedNode.registerMethod}
-              <div class="p-3 bg-muted/50 rounded-lg">
-                <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Registration</div>
-                <div class="text-sm text-foreground">{selectedNode.registerMethod.replace('REGISTER_METHOD_', '')}</div>
-              </div>
+              <ContentBlock variant="data" label="Registration" value={selectedNode.registerMethod.replace('REGISTER_METHOD_', '')} />
             {/if}
             {#each [['Machine Key', selectedNode.machineKey], ['Node Key', selectedNode.nodeKey], ['Disco Key', selectedNode.discoKey]].filter(([,v]) => v) as [label, key]}
-              <div class="p-3 bg-muted/50 rounded-lg">
-                <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">{label}</div>
-                <div class="flex items-center gap-1">
-                  <code class="text-[10px] font-mono text-foreground break-all">{key}</code>
-                  <button onclick={() => copyToClipboard(key)} class="p-0.5 text-muted-foreground hover:text-foreground shrink-0"><Icon name="copy" size={12} /></button>
-                </div>
-              </div>
+              <ContentBlock variant="data" label={label} value={key} copyable mono />
             {/each}
           </div>
 
@@ -1145,20 +1096,14 @@
       </div>
 
       <div class="grid grid-cols-2 gap-4">
-        <div class="p-3 bg-muted/50 rounded-lg">
-          <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Name</div>
-          <div class="flex items-center gap-2">
-            <Icon name="device-desktop" size={14} class="text-muted-foreground" />
-            <span class="text-sm font-medium text-foreground">{createdPeer.name}</span>
-          </div>
-        </div>
-        <div class="p-3 bg-muted/50 rounded-lg">
-          <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">IP Address</div>
-          <div class="flex items-center gap-2">
-            <Icon name="network" size={14} class="text-muted-foreground" />
-            <code class="text-sm font-mono text-foreground">{createdPeer.ipAddress}</code>
-          </div>
-        </div>
+        <ContentBlock variant="data" label="Name">
+          <Icon name="device-desktop" size={14} class="text-muted-foreground mr-2" />
+          <span class="text-sm font-medium text-foreground">{createdPeer.name}</span>
+        </ContentBlock>
+        <ContentBlock variant="data" label="IP Address">
+          <Icon name="network" size={14} class="text-muted-foreground mr-2" />
+          <code class="text-sm font-mono text-foreground">{createdPeer.ipAddress}</code>
+        </ContentBlock>
       </div>
     </div>
   {:else}

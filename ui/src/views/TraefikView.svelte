@@ -4,6 +4,9 @@
   import Icon from '../components/Icon.svelte'
   import Badge from '../components/Badge.svelte'
   import LoadingSpinner from '../components/LoadingSpinner.svelte'
+  import InfoCard from '../components/InfoCard.svelte'
+  import ContentBlock from '../components/ContentBlock.svelte'
+  import EmptyState from '../components/EmptyState.svelte'
 
   let { loading = $bindable(true) } = $props()
 
@@ -61,21 +64,11 @@
 </script>
 
 <div class="space-y-4">
-  <!-- Info Card -->
-  <div class="bg-gradient-to-r from-primary/5 to-info/5 border border-primary/20 rounded-lg p-4">
-    <div class="flex items-start gap-3">
-      <div class="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-        <Icon name="route" size={18} class="text-primary" />
-      </div>
-      <div class="flex-1 min-w-0">
-        <h3 class="text-sm font-medium text-foreground mb-1">Traefik Reverse Proxy</h3>
-        <p class="text-xs text-muted-foreground leading-relaxed">
-          Manage your reverse proxy configuration. Monitor routers, services, and middlewares.
-          Configure rate limiting, security headers, and IP allowlists for protection.
-        </p>
-      </div>
-    </div>
-  </div>
+  <InfoCard
+    icon="route"
+    title="Traefik Reverse Proxy"
+    description="Manage your reverse proxy configuration. Monitor routers, services, and middlewares. Configure rate limiting, security headers, and IP allowlists for protection."
+  />
 
   {#if loading}
     <LoadingSpinner centered size="lg" />
@@ -121,64 +114,39 @@
     </div>
 
     <!-- Active Protections -->
-    <div class="bg-card border border-border rounded-lg overflow-hidden">
-      <div class="px-4 py-3 border-b border-border bg-muted/30">
-        <div class="flex items-center gap-2">
-          <Icon name="shield-check" size={16} class="text-primary" />
-          <h3 class="text-sm font-semibold text-foreground">Active Protections</h3>
-        </div>
+    <div class="kt-panel">
+      <div class="kt-panel-header">
+        <h3 class="kt-panel-title">
+          <Icon name="shield-check" size={16} />
+          Active Protections
+        </h3>
       </div>
-      <div class="p-4">
+      <div class="kt-panel-body">
         <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div class="flex items-center gap-3 p-3 bg-success/10 border border-success/20 rounded-lg">
-          <Icon name="shield-check" size={18} class="text-success" />
-          <div>
-            <div class="text-xs font-medium text-foreground">Rate Limiting</div>
-            <div class="text-[10px] text-muted-foreground">Enabled</div>
-          </div>
-        </div>
-        <div class="flex items-center gap-3 p-3 bg-success/10 border border-success/20 rounded-lg">
-          <Icon name="file-text" size={18} class="text-success" />
-          <div>
-            <div class="text-xs font-medium text-foreground">Access Logging</div>
-            <div class="text-[10px] text-muted-foreground">JSON format</div>
-          </div>
-        </div>
-        <div class="flex items-center gap-3 p-3 bg-success/10 border border-success/20 rounded-lg">
-          <Icon name="lock" size={18} class="text-success" />
-          <div>
-            <div class="text-xs font-medium text-foreground">Security Headers</div>
-            <div class="text-[10px] text-muted-foreground">XSS protection</div>
-          </div>
-        </div>
-        <div class="flex items-center gap-3 p-3 bg-success/10 border border-success/20 rounded-lg">
-          <Icon name="globe" size={18} class="text-success" />
-          <div>
-            <div class="text-xs font-medium text-foreground">IP Allowlist</div>
-            <div class="text-[10px] text-muted-foreground">VPN only</div>
-          </div>
-        </div>
+          <ContentBlock variant="indicator" icon="shield-check" color="success" title="Rate Limiting" description="Enabled" />
+          <ContentBlock variant="indicator" icon="file-text" color="success" title="Access Logging" description="JSON format" />
+          <ContentBlock variant="indicator" icon="lock" color="success" title="Security Headers" description="XSS protection" />
+          <ContentBlock variant="indicator" icon="globe" color="success" title="IP Allowlist" description="VPN only" />
         </div>
       </div>
     </div>
 
     <!-- Routers -->
-    <div class="bg-card border border-border rounded-lg overflow-hidden">
-      <div class="px-4 py-3 border-b border-border bg-muted/30">
-        <div class="flex items-center gap-2">
-          <Icon name="git-branch" size={16} class="text-primary" />
-          <h3 class="text-sm font-semibold text-foreground">Routers</h3>
-        </div>
+    <div class="kt-panel">
+      <div class="kt-panel-header">
+        <h3 class="kt-panel-title">
+          <Icon name="git-branch" size={16} />
+          Routers
+        </h3>
       </div>
-      <div class="p-4">
+      <div class="kt-panel-body">
       {#if routers.length === 0}
-        <div class="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-muted/30 py-8 text-center">
-          <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-            <Icon name="git-branch" size={20} />
-          </div>
-          <h4 class="mt-3 text-sm font-medium text-foreground">No Routers</h4>
-          <p class="mt-1 text-xs text-muted-foreground">Routers will appear when configured</p>
-        </div>
+        <EmptyState
+          icon="git-branch"
+          title="No Routers"
+          description="Routers will appear when configured"
+          compact
+        />
       {:else}
         <div class="grid gap-3 md:grid-cols-2">
           {#each routers as router}
@@ -220,22 +188,21 @@
     </div>
 
     <!-- Services -->
-    <div class="bg-card border border-border rounded-lg overflow-hidden">
-      <div class="px-4 py-3 border-b border-border bg-muted/30">
-        <div class="flex items-center gap-2">
-          <Icon name="server" size={16} class="text-primary" />
-          <h3 class="text-sm font-semibold text-foreground">Services</h3>
-        </div>
+    <div class="kt-panel">
+      <div class="kt-panel-header">
+        <h3 class="kt-panel-title">
+          <Icon name="server" size={16} />
+          Services
+        </h3>
       </div>
-      <div class="p-4">
+      <div class="kt-panel-body">
       {#if services.length === 0}
-        <div class="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-muted/30 py-8 text-center">
-          <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-            <Icon name="server" size={20} />
-          </div>
-          <h4 class="mt-3 text-sm font-medium text-foreground">No Services</h4>
-          <p class="mt-1 text-xs text-muted-foreground">Services will appear when configured</p>
-        </div>
+        <EmptyState
+          icon="server"
+          title="No Services"
+          description="Services will appear when configured"
+          compact
+        />
       {:else}
         <div class="grid gap-3 md:grid-cols-3">
           {#each services as service}
@@ -266,22 +233,21 @@
     </div>
 
     <!-- Middlewares -->
-    <div class="bg-card border border-border rounded-lg overflow-hidden">
-      <div class="px-4 py-3 border-b border-border bg-muted/30">
-        <div class="flex items-center gap-2">
-          <Icon name="shield" size={16} class="text-primary" />
-          <h3 class="text-sm font-semibold text-foreground">Middlewares</h3>
-        </div>
+    <div class="kt-panel">
+      <div class="kt-panel-header">
+        <h3 class="kt-panel-title">
+          <Icon name="shield" size={16} />
+          Middlewares
+        </h3>
       </div>
-      <div class="p-4">
+      <div class="kt-panel-body">
       {#if middlewares.length === 0}
-        <div class="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-muted/30 py-8 text-center">
-          <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-            <Icon name="shield" size={20} />
-          </div>
-          <h4 class="mt-3 text-sm font-medium text-foreground">No Middlewares</h4>
-          <p class="mt-1 text-xs text-muted-foreground">Middlewares will appear when configured</p>
-        </div>
+        <EmptyState
+          icon="shield"
+          title="No Middlewares"
+          description="Middlewares will appear when configured"
+          compact
+        />
       {:else}
         <div class="grid gap-3 md:grid-cols-3">
           {#each middlewares as mw}

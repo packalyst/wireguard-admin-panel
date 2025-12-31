@@ -3,11 +3,15 @@
   import Icon from '../components/Icon.svelte'
   import Input from '../components/Input.svelte'
   import Button from '../components/Button.svelte'
+  import Checkbox from '../components/Checkbox.svelte'
+  import OtpInput from '../components/OtpInput.svelte'
 
   let { onLogin } = $props()
 
   let username = $state('')
   let password = $state('')
+  let totpCode = $state('')
+  let requires2FA = $state(false)
   let loading = $state(false)
   let error = $state('')
 
@@ -20,7 +24,30 @@
     loading = true
 
     try {
-      const data = await apiPost('/api/auth/login', { username, password })
+      const payload = { username, password }
+      if (requires2FA && totpCode) {
+        payload.totpCode = totpCode
+      }
+
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+
+      const data = await res.json().catch(() => ({}))
+
+      // Check if 2FA is required
+      if (res.status === 401 && data.requires2FA) {
+        requires2FA = true
+        error = ''
+        loading = false
+        return
+      }
+
+      if (!res.ok) {
+        throw new Error(data.error || data.message || 'Login failed')
+      }
 
       // Store session token
       localStorage.setItem('session_token', data.token)
@@ -35,6 +62,12 @@
     } finally {
       loading = false
     }
+  }
+
+  function backToLogin() {
+    requires2FA = false
+    totpCode = ''
+    error = ''
   }
 </script>
 
@@ -52,7 +85,7 @@
         </div>
       </div>
       <h1 class="text-2xl font-bold mb-2">Welcome Back</h1>
-      <p class="text-sm text-gray-400">Sign in to your VPN Admin Panel</p>
+      <p class="text-sm text-muted-foreground">Sign in to your VPN Admin Panel</p>
     </div>
   </div>
 
@@ -75,7 +108,7 @@
         <h2 class="text-4xl font-bold mb-3 leading-tight">
           Enterprise VPN<br/>Management Platform
         </h2>
-        <p class="text-gray-400 text-base leading-relaxed">
+        <p class="text-muted-foreground text-base leading-relaxed">
           Secure, scalable infrastructure for modern organizations
         </p>
       </div>
@@ -85,21 +118,21 @@
         <div class="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4 hover:bg-white/10 transition-all group">
           <div class="flex items-center gap-3 mb-2">
             <div class="w-9 h-9 bg-primary/20 rounded-lg flex items-center justify-center flex-shrink-0 group-hover:bg-primary/30 transition-colors">
-              <Icon name="server" size={18} class="text-primary" />
+              <Icon name="network" size={18} class="text-primary" />
             </div>
-            <h3 class="font-semibold text-sm">Multi-Server</h3>
+            <h3 class="font-semibold text-sm">Dual VPN</h3>
           </div>
-          <p class="text-xs text-gray-400 leading-relaxed">Deploy across multiple regions</p>
+          <p class="text-xs text-muted-foreground leading-relaxed">WireGuard + Headscale unified</p>
         </div>
 
         <div class="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4 hover:bg-white/10 transition-all group">
           <div class="flex items-center gap-3 mb-2">
             <div class="w-9 h-9 bg-primary/20 rounded-lg flex items-center justify-center flex-shrink-0 group-hover:bg-primary/30 transition-colors">
-              <Icon name="shield-check" size={18} class="text-primary" />
+              <Icon name="shield-lock" size={18} class="text-primary" />
             </div>
-            <h3 class="font-semibold text-sm">Enterprise Security</h3>
+            <h3 class="font-semibold text-sm">Firewall & Jails</h3>
           </div>
-          <p class="text-xs text-gray-400 leading-relaxed">Military-grade encryption</p>
+          <p class="text-xs text-muted-foreground leading-relaxed">nftables with auto-blocking</p>
         </div>
 
         <div class="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4 hover:bg-white/10 transition-all group">
@@ -107,46 +140,46 @@
             <div class="w-9 h-9 bg-primary/20 rounded-lg flex items-center justify-center flex-shrink-0 group-hover:bg-primary/30 transition-colors">
               <Icon name="activity" size={18} class="text-primary" />
             </div>
-            <h3 class="font-semibold text-sm">Live Monitoring</h3>
+            <h3 class="font-semibold text-sm">Real-time Status</h3>
           </div>
-          <p class="text-xs text-gray-400 leading-relaxed">Real-time analytics dashboard</p>
+          <p class="text-xs text-muted-foreground leading-relaxed">Live updates via WebSocket</p>
         </div>
 
         <div class="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4 hover:bg-white/10 transition-all group">
           <div class="flex items-center gap-3 mb-2">
             <div class="w-9 h-9 bg-primary/20 rounded-lg flex items-center justify-center flex-shrink-0 group-hover:bg-primary/30 transition-colors">
-              <Icon name="users" size={18} class="text-primary" />
+              <Icon name="layout" size={18} class="text-primary" />
             </div>
-            <h3 class="font-semibold text-sm">User Management</h3>
+            <h3 class="font-semibold text-sm">Unified Dashboard</h3>
           </div>
-          <p class="text-xs text-gray-400 leading-relaxed">Centralized access control</p>
+          <p class="text-xs text-muted-foreground leading-relaxed">VPN, DNS, Proxy, Containers</p>
         </div>
       </div>
 
       <!-- Footer -->
-      <div class="flex flex-wrap gap-6 text-xs text-gray-400">
+      <div class="flex flex-wrap gap-6 text-xs text-muted-foreground">
         <div class="flex items-center gap-2">
-          <div class="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></div>
-          <span>99.9% Uptime</span>
+          <Icon name="lock" size={12} />
+          <span>AES-256 Encryption</span>
         </div>
         <div class="flex items-center gap-2">
-          <div class="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></div>
-          <span>SOC 2 Certified</span>
+          <Icon name="server" size={12} />
+          <span>Self-hosted</span>
         </div>
         <div class="flex items-center gap-2">
-          <div class="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></div>
-          <span>GDPR Compliant</span>
+          <Icon name="code" size={12} />
+          <span>Open Source</span>
         </div>
       </div>
     </div>
   </div>
 
   <!-- Right Panel / Form Section -->
-  <div class="flex-1 bg-card flex items-center justify-center p-6 lg:p-8 relative -mt-8 lg:mt-0 rounded-t-3xl lg:rounded-none">
+  <div class="flex-1 bg-background flex items-center justify-center p-6 lg:p-12 relative -mt-8 lg:mt-0 rounded-t-3xl lg:rounded-none">
     <!-- Theme toggle -->
     <button
       onclick={toggleTheme}
-      class="absolute top-4 right-4 lg:top-6 lg:right-6 w-9 h-9 rounded-lg flex items-center justify-center hover:bg-muted transition-colors"
+      class="absolute top-4 right-4 lg:top-6 lg:right-6 w-9 h-9 rounded-lg flex items-center justify-center hover:bg-muted transition-colors text-muted-foreground"
     >
       {#if $theme === 'dark'}
         <Icon name="sun" size={18} />
@@ -155,80 +188,101 @@
       {/if}
     </button>
 
-    <div class="w-full max-w-md">
-      <!-- Header - Hidden on mobile since we have header above -->
-      <div class="hidden lg:block mb-8">
-        <h1 class="text-2xl font-semibold mb-2">Welcome Back</h1>
-        <p class="text-sm text-muted-foreground">Sign in to manage your VPN infrastructure</p>
+    <div class="w-full max-w-lg">
+      <!-- Header -->
+      <div class="hidden lg:block mb-4">
+        <p class="text-sm font-medium text-primary mb-2">Sign in to your account</p>
+        <h1 class="text-3xl font-bold text-foreground">Welcome back</h1>
       </div>
 
-      {#if error}
-        <div class="flex items-center gap-2 px-3 py-2.5 bg-destructive/10 border border-destructive/20 rounded-lg text-sm text-destructive mb-4 lg:mb-6">
-          <Icon name="alert-circle" size={16} />
-          <span>{error}</span>
-        </div>
-      {/if}
+      <!-- Login Card -->
+      <div class="bg-card border border-border rounded-2xl p-6 ">
+        {#if error}
+          <div class="flex items-center gap-2.5 px-3.5 py-3 bg-destructive/10 border border-destructive/20 rounded-xl text-sm text-destructive mb-5">
+            <Icon name="alert-circle" size={18} class="flex-shrink-0" />
+            <span>{error}</span>
+          </div>
+        {/if}
 
-      <form onsubmit={(e) => { e.preventDefault(); handleLogin() }} class="space-y-3.5 lg:space-y-4">
-        <!-- Username Field -->
-        <Input
-          id="username"
-          label="Username"
-          labelClass="block text-xs lg:text-sm font-medium mb-1 lg:mb-1.5"
-          type="text"
-          bind:value={username}
-          placeholder="Enter your username"
-          autocomplete="username"
-          prefixIcon="user"
-          class="w-full"
-          required
-        />
+        <form onsubmit={(e) => { e.preventDefault(); handleLogin() }} class="space-y-6">
+          {#if requires2FA}
+            <!-- 2FA Step -->
+            <div class="text-center mb-6">
+              <div class="w-16 h-16 bg-gradient-to-br from-primary/20 to-primary/10 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-primary/10">
+                <Icon name="shield-check" size={32} class="text-primary" />
+              </div>
+              <h3 class="text-xl font-semibold text-foreground">Two-Factor Authentication</h3>
+              <p class="text-sm text-muted-foreground mt-2">Enter the 6-digit code from your authenticator app</p>
+            </div>
 
-        <!-- Password Field -->
-        <Input
-          id="password"
-          label="Password"
-          labelClass="block text-xs lg:text-sm font-medium mb-1 lg:mb-1.5"
-          type="password"
-          bind:value={password}
-          placeholder="Enter your password"
-          autocomplete="current-password"
-          prefixIcon="lock"
-          class="w-full"
-          required
-        />
+            <div class="mb-6">
+              <OtpInput bind:value={totpCode} onComplete={handleLogin} size="lg" disabled={loading} />
+            </div>
 
-        <!-- Remember me & Forgot password -->
-        <div class="flex items-center justify-between text-xs lg:text-sm pt-0.5 lg:pt-1">
-          <label class="flex items-center gap-1.5 lg:gap-2 cursor-pointer">
-            <input type="checkbox" class="w-3.5 lg:w-4 h-3.5 lg:h-4 rounded" />
-            <span>Remember me</span>
-          </label>
-          <a href="#" class="text-primary hover:underline">Forgot password?</a>
-        </div>
+            {#if loading}
+              <div class="flex justify-center py-2">
+                <span class="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
+              </div>
+            {/if}
 
-        <!-- Submit Button -->
-        <Button
-          type="submit"
-          disabled={loading}
-          class="w-full justify-center mt-4 lg:mt-6"
-        >
-          {#if loading}
-            <span class="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2"></span>
-            <span>Signing in...</span>
+            <div class="flex items-center justify-center pt-2">
+              <Button variant="secondary" size="sm" icon="arrow-left" onclick={backToLogin}>
+                Back to login
+              </Button>
+            </div>
           {:else}
-            <span>Sign In</span>
-          {/if}
-        </Button>
-      </form>
+            <!-- Username Field -->
+            <div>
+              <label for="username" class="block text-sm font-medium text-foreground mb-2.5">Username</label>
+              <Input
+                id="username"
+                type="text"
+                bind:value={username}
+                placeholder="Enter your username"
+                autocomplete="username"
+                prefixIcon="user"
+                class="w-full"
+                size="default"
+                required
+              />
+            </div>
 
-      <!-- Divider -->
-      <div class="relative my-6 lg:my-8">
-        <div class="absolute inset-0 flex items-center">
-          <div class="w-full border-t border-border"></div>
-        </div>
-       
+            <!-- Password Field -->
+            <div>
+              <label for="password" class="block text-sm font-medium text-foreground mb-2.5">Password</label>
+              <Input
+                id="password"
+                type="password"
+                bind:value={password}
+                placeholder="Enter your password"
+                autocomplete="current-password"
+                prefixIcon="lock"
+                class="w-full"
+                size="default"
+                required
+              />
+            </div>
+
+            <!-- Remember me & Submit -->
+            <div class="flex items-center justify-between pt-2">
+              <Checkbox variant="switch" label="Remember me" labelPosition="right" />
+              <Button type="submit" loading={loading}>
+                {#if loading}
+                  Signing in...
+                {:else}
+                  Sign In
+                  <Icon name="arrow-right" size={16} class="ml-2" />
+                {/if}
+              </Button>
+            </div>
+          {/if}
+        </form>
       </div>
+
+      <!-- Footer -->
+      <p class="text-center text-xs text-muted-foreground mt-6">
+        Protected by enterprise-grade security
+      </p>
     </div>
   </div>
 </div>

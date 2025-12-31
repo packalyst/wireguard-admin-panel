@@ -54,7 +54,7 @@ services:
       - SILENTDROP_DEBUG=${SILENTDROP_DEBUG:-false}
     volumes:
       - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
-      - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - ./traefik/dynamic:/etc/traefik/dynamic
       - ./traefik/acme.json:/etc/traefik/acme.json
       - ./traefik/logs:/var/log/traefik
       - ./traefik/plugins-local/src:/plugins-local/src:ro
@@ -110,7 +110,7 @@ services:
       - API_PORT=${API_PORT}
       - DATA_DIR=/data
       - CONFIG_PATH=/app/configs/endpoints.json
-      - TRAEFIK_CONFIG=/traefik/dynamic.yml
+      - TRAEFIK_CONFIG=/traefik/dynamic
       - TRAEFIK_STATIC=/traefik/traefik.yml
       - TRAEFIK_LOGS=/traefik/logs/access.log
       # WireGuard settings

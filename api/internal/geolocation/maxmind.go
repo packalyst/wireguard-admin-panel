@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"api/internal/helper"
+
 	"github.com/oschwald/maxminddb-golang"
 )
 
@@ -239,7 +241,7 @@ func (p *MaxMindProvider) downloadDBToPath(destPath string) error {
 
 	log.Printf("Downloading MaxMind database...")
 
-	client := &http.Client{Timeout: 5 * time.Minute}
+	client := &http.Client{Timeout: helper.GeoDBDownloadTimeout}
 	resp, err := client.Get(url)
 	if err != nil {
 		return fmt.Errorf("download failed: %v", err)

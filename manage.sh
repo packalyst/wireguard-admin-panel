@@ -1341,6 +1341,9 @@ elif [ -f "traefik/traefik.yml.template" ]; then
 fi
 
 if [ -f "traefik/dynamic.yml.template" ]; then
+    # Create dynamic config directory for Traefik
+    mkdir -p traefik/dynamic
+
     # Convert IGNORE_NETWORKS from comma-separated to YAML list format
     IFS=',' read -ra NETS <<< "$IGNORE_NETWORKS"
     VPN_SOURCE_RANGE=""
@@ -1349,8 +1352,8 @@ if [ -f "traefik/dynamic.yml.template" ]; then
     done
     export VPN_SOURCE_RANGE="${VPN_SOURCE_RANGE%$'\n'}"  # Remove trailing newline
 
-    # Generate base dynamic.yml
-    envsubst < traefik/dynamic.yml.template > traefik/dynamic.yml
+    # Generate base dynamic config (core.yml)
+    envsubst < traefik/dynamic.yml.template > traefik/dynamic/core.yml
 
     # If SSL enabled, insert SSL routers before the services section
     if [ "$SSL_ENABLED" = "true" ] && [ -f "traefik/dynamic-ssl-routers.yml.template" ]; then
@@ -1362,11 +1365,17 @@ if [ -f "traefik/dynamic.yml.template" ]; then
         awk -v ssl="$SSL_ROUTERS" '
             /^  services:/ { print ssl }
             { print }
-        ' traefik/dynamic.yml > traefik/dynamic.yml.tmp && mv traefik/dynamic.yml.tmp traefik/dynamic.yml
+        ' traefik/dynamic/core.yml > traefik/dynamic/core.yml.tmp && mv traefik/dynamic/core.yml.tmp traefik/dynamic/core.yml
 
-        echo "  ✓ traefik/dynamic.yml (with SSL routers)"
+        echo "  ✓ traefik/dynamic/core.yml (with SSL routers)"
     else
-        echo "  ✓ traefik/dynamic.yml"
+        echo "  ✓ traefik/dynamic/core.yml"
+    fi
+
+    # Create empty domains.yml if it doesn't exist (will be managed by API)
+    if [ ! -f "traefik/dynamic/domains.yml" ]; then
+        echo "# Domain routes - managed by API" > traefik/dynamic/domains.yml
+        echo "  ✓ traefik/dynamic/domains.yml (placeholder)"
     fi
 fi
 

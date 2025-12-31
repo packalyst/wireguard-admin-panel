@@ -2,12 +2,16 @@ package database
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
 
 	_ "github.com/mattn/go-sqlite3"
 )
+
+// ErrNotAvailable is returned when the database is not initialized
+var ErrNotAvailable = errors.New("database not available")
 
 // DB is the shared database instance
 var (
@@ -44,9 +48,17 @@ func Init(dataDir string) (*sql.DB, error) {
 	return instance, initErr
 }
 
-// Get returns the shared database instance
+// Get returns the shared database instance (for backwards compatibility)
 func Get() *sql.DB {
 	return instance
+}
+
+// GetDB returns the shared database instance or an error if not initialized
+func GetDB() (*sql.DB, error) {
+	if instance == nil {
+		return nil, ErrNotAvailable
+	}
+	return instance, nil
 }
 
 // createSchema creates all required tables (if they don't exist)
@@ -165,6 +177,25 @@ func createSchema(db *sql.DB) error {
 
 	CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 	CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+
+	-- Domain routes for Traefik reverse proxy
+	CREATE TABLE IF NOT EXISTS domain_routes (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		domain TEXT UNIQUE NOT NULL,
+		target_ip TEXT NOT NULL,
+		target_port INTEGER NOT NULL,
+		vpn_client_id INTEGER,
+		enabled BOOLEAN DEFAULT 1,
+		https_backend BOOLEAN DEFAULT 0,
+		middlewares TEXT DEFAULT '[]',
+		description TEXT,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (vpn_client_id) REFERENCES vpn_clients(id) ON DELETE SET NULL
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_domain_routes_domain ON domain_routes(domain);
+	CREATE INDEX IF NOT EXISTS idx_domain_routes_client ON domain_routes(vpn_client_id);
 	`
 
 	// VPN ACL tables - unified view of all VPN clients and access control
@@ -209,6 +240,7 @@ func createSchema(db *sql.DB) error {
 	CREATE INDEX IF NOT EXISTS idx_vpn_acl_source ON vpn_acl_rules(source_client_id);
 	CREATE INDEX IF NOT EXISTS idx_vpn_acl_target ON vpn_acl_rules(target_client_id);
 	CREATE INDEX IF NOT EXISTS idx_vpn_clients_type ON vpn_clients(type);
+	CREATE INDEX IF NOT EXISTS idx_vpn_clients_external_id ON vpn_clients(external_id);
 	`
 
 	// Execute firewall schema
@@ -396,6 +428,74 @@ func runMigrations(db *sql.DB) error {
 				return fmt.Errorf("failed to add %s column: %v", col.name, err)
 			}
 			log.Printf("Migration: added '%s' column to vpn_clients", col.name)
+		}
+	}
+
+	// Migration: Add middlewares column to domain_routes and migrate vpn_only data
+	var hasMiddlewares int
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('domain_routes') WHERE name='middlewares'`).Scan(&hasMiddlewares)
+	if err != nil {
+		return err
+	}
+	if hasMiddlewares == 0 {
+		_, err = db.Exec(`ALTER TABLE domain_routes ADD COLUMN middlewares TEXT DEFAULT '[]'`)
+		if err != nil {
+			return fmt.Errorf("failed to add middlewares column: %v", err)
+		}
+		// Migrate vpn_only=1 to middlewares containing vpn-only@file
+		_, err = db.Exec(`UPDATE domain_routes SET middlewares = '["vpn-only@file"]' WHERE vpn_only = 1`)
+		if err != nil {
+			log.Printf("Migration warning: could not migrate vpn_only to middlewares: %v", err)
+		}
+		log.Printf("Migration: added 'middlewares' column to domain_routes and migrated vpn_only data")
+	}
+
+	// Migration: Add session tracking columns (ip_address, user_agent, last_active)
+	sessionCols := []struct {
+		name string
+		def  string
+	}{
+		{"ip_address", "TEXT DEFAULT ''"},
+		{"user_agent", "TEXT DEFAULT ''"},
+		{"last_active", "DATETIME"},  // Can't use CURRENT_TIMESTAMP as default for ALTER TABLE
+	}
+	for _, col := range sessionCols {
+		err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name=?`, col.name).Scan(&count)
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			_, err = db.Exec(`ALTER TABLE sessions ADD COLUMN ` + col.name + ` ` + col.def)
+			if err != nil {
+				return fmt.Errorf("failed to add sessions.%s column: %v", col.name, err)
+			}
+			log.Printf("Migration: added '%s' column to sessions", col.name)
+			// Set default for last_active on existing rows
+			if col.name == "last_active" {
+				_, _ = db.Exec(`UPDATE sessions SET last_active = created_at WHERE last_active IS NULL`)
+			}
+		}
+	}
+
+	// Migration: Add 2FA columns to users table (totp_secret, totp_enabled)
+	twoFACols := []struct {
+		name string
+		def  string
+	}{
+		{"totp_secret_enc", "TEXT"},     // Encrypted TOTP secret
+		{"totp_enabled", "INTEGER DEFAULT 0"}, // Whether 2FA is enabled
+	}
+	for _, col := range twoFACols {
+		err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('users') WHERE name=?`, col.name).Scan(&count)
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			_, err = db.Exec(`ALTER TABLE users ADD COLUMN ` + col.name + ` ` + col.def)
+			if err != nil {
+				return fmt.Errorf("failed to add users.%s column: %v", col.name, err)
+			}
+			log.Printf("Migration: added '%s' column to users", col.name)
 		}
 	}
 

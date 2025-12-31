@@ -1,5 +1,5 @@
 <script>
-  import { onMount, onDestroy } from 'svelte'
+  import { onMount } from 'svelte'
   import { toast, apiGet, apiPost } from '../stores/app.js'
   import { copyWithToast } from '../stores/helpers.js'
   import { parseDate, formatDateShort, formatExpiryDate, isExpired, getDaysUntilExpiry } from '$lib/utils/format.js'
@@ -10,6 +10,8 @@
   import Select from '../components/Select.svelte'
   import LoadingSpinner from '../components/LoadingSpinner.svelte'
   import EmptyState from '../components/EmptyState.svelte'
+  import InfoCard from '../components/InfoCard.svelte'
+  import Checkbox from '../components/Checkbox.svelte'
 
   let { loading = $bindable(true) } = $props()
 
@@ -22,7 +24,6 @@
   let createForm = $state({ user: '', reusable: false, ephemeral: false, expiration: '90' })
   let creating = $state(false)
   let searchQuery = $state('')
-  let pollInterval = null
 
   // Get server URL for command display (from settings)
   let serverUrl = $state('')
@@ -133,30 +134,15 @@
 
   onMount(() => {
     loadData()
-    pollInterval = setInterval(loadData, 30000)
-  })
-
-  onDestroy(() => {
-    if (pollInterval) clearInterval(pollInterval)
   })
 </script>
 
 <div class="space-y-4">
-  <!-- Info Card -->
-  <div class="bg-gradient-to-r from-primary/5 to-info/5 border border-primary/20 rounded-lg p-4">
-    <div class="flex items-start gap-3">
-      <div class="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-        <Icon name="key" size={18} class="text-primary" />
-      </div>
-      <div class="flex-1 min-w-0">
-        <h3 class="text-sm font-medium text-foreground mb-1">Pre-Authentication Keys</h3>
-        <p class="text-xs text-muted-foreground leading-relaxed">
-          Generate keys to automatically register devices without manual approval. Perfect for CI/CD pipelines,
-          containerized workloads, or bulk device onboarding. Copy the command from any key to connect instantly.
-        </p>
-      </div>
-    </div>
-  </div>
+  <InfoCard
+    icon="key"
+    title="Pre-Authentication Keys"
+    description="Generate keys to automatically register devices without manual approval. Perfect for CI/CD pipelines, containerized workloads, or bulk device onboarding. Copy the command from any key to connect instantly."
+  />
 
   <!-- Toolbar -->
   <Toolbar bind:search={searchQuery} placeholder="Search keys...">
@@ -195,8 +181,8 @@
           <!-- Info -->
           <div class="border-t border-border px-3 py-2.5 text-[11px] space-y-1.5">
             <div class="flex items-center gap-1.5">
-              <Icon name="clock" size={12} class="text-slate-400 dark:text-zinc-600" />
-              <span class="text-slate-600 dark:text-zinc-400 truncate">{formatExpiryDate(key.expiration)}</span>
+              <Icon name="clock" size={12} class="text-dim" />
+              <span class="text-muted-foreground truncate">{formatExpiryDate(key.expiration)}</span>
             </div>
             <div class="flex items-center gap-2 flex-wrap">
               {#if key.reusable}
@@ -205,7 +191,7 @@
                   Reusable
                 </span>
               {:else}
-                <span class="flex items-center gap-1 text-slate-500 dark:text-zinc-500">
+                <span class="flex items-center gap-1 text-muted-foreground">
                   <Icon name="hand-stop" size={12} />
                   Single-use
                 </span>
@@ -254,36 +240,32 @@
         onclick={() => showCreateModal = true}
         class="add-item-card"
       >
-        <div class="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200/80 text-slate-600 dark:bg-zinc-700 dark:text-zinc-100">
+        <div class="flex h-8 w-8 items-center justify-center rounded-full bg-secondary text-foreground">
           <Icon name="plus" size={16} />
         </div>
-        <div class="font-medium text-slate-700 dark:text-zinc-100">Create auth key</div>
-        <p class="max-w-[200px] text-slate-400 dark:text-zinc-500">
+        <div class="font-medium text-foreground">Create auth key</div>
+        <p class="max-w-[200px] text-muted-foreground">
           Allow devices to join automatically
         </p>
       </article>
     </div>
   {:else if authKeys.length > 0}
-    <!-- No search results -->
-    <div class="flex flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 py-12 text-center dark:border-zinc-700 dark:bg-zinc-900/70">
-      <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-200/80 text-slate-500 dark:bg-zinc-700 dark:text-zinc-400">
-        <Icon name="search" size={20} />
-      </div>
-      <h4 class="mt-3 text-sm font-medium text-slate-700 dark:text-zinc-200">No keys found</h4>
-      <p class="mt-1 text-xs text-slate-500 dark:text-zinc-500">Try a different search term</p>
-    </div>
+    <EmptyState
+      icon="search"
+      title="No keys found"
+      description="Try a different search term"
+    />
   {:else}
-    <div class="flex flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 py-12 text-center dark:border-zinc-700 dark:bg-zinc-900/70">
-      <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-200/80 text-slate-500 dark:bg-zinc-700 dark:text-zinc-400">
-        <Icon name="key" size={20} />
-      </div>
-      <h4 class="mt-3 text-sm font-medium text-slate-700 dark:text-zinc-200">No auth keys</h4>
-      <p class="mt-1 text-xs text-slate-500 dark:text-zinc-500">Create keys to allow devices to join automatically</p>
-      <Button onclick={() => showCreateModal = true} size="sm" class="mt-4">
+    <EmptyState
+      icon="key"
+      title="No auth keys"
+      description="Create keys to allow devices to join automatically"
+    >
+      <Button onclick={() => showCreateModal = true} size="sm">
         <Icon name="plus" size={14} />
         Create Key
       </Button>
-    </div>
+    </EmptyState>
   {/if}
 </div>
 
@@ -308,15 +290,9 @@
       ]}
       helperText="Key will expire on {new Date(Date.now() + parseInt(createForm.expiration) * 24 * 60 * 60 * 1000).toLocaleDateString()}"
     />
-    <div class="flex gap-6">
-      <label class="flex items-center gap-2 cursor-pointer">
-        <input type="checkbox" bind:checked={createForm.reusable} class="w-4 h-4 rounded border-border" />
-        <span class="text-sm text-foreground">Reusable</span>
-      </label>
-      <label class="flex items-center gap-2 cursor-pointer">
-        <input type="checkbox" bind:checked={createForm.ephemeral} class="w-4 h-4 rounded border-border" />
-        <span class="text-sm text-foreground">Ephemeral</span>
-      </label>
+    <div class="flex gap-4">
+      <Checkbox variant="chip" bind:checked={createForm.reusable} icon="refresh" label="Reusable" />
+      <Checkbox variant="chip" bind:checked={createForm.ephemeral} icon="clock" label="Ephemeral" color="warning" />
     </div>
     <div class="text-xs text-muted-foreground bg-muted/50 p-2 rounded space-y-1">
       <p><strong>Reusable:</strong> Key can register multiple devices (e.g., CI runners)</p>

@@ -16,11 +16,6 @@ func escapeLikePattern(s string) string {
 	return s
 }
 
-// parseIP parses an IP address string
-func parseIP(ip string) net.IP {
-	return net.ParseIP(ip)
-}
-
 // validateIPOrCIDR validates an IP address or CIDR range
 func validateIPOrCIDR(input string) (string, bool, error) {
 	input = strings.TrimSpace(input)

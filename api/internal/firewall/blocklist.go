@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"api/internal/helper"
 )
 
 // Blocklist sources loaded from config file
@@ -20,7 +22,10 @@ func init() {
 
 // LoadBlocklistSources loads blocklist sources from JSON file
 func LoadBlocklistSources() {
-	configPath := "/app/configs/blocklist-sources.json"
+	configPath := os.Getenv("BLOCKLIST_CONFIG_PATH")
+	if configPath == "" {
+		configPath = helper.BlocklistSourcesPath
+	}
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		log.Printf("Warning: failed to load blocklist sources from %s: %v", configPath, err)

@@ -1,0 +1,306 @@
+package ws
+
+import (
+	"log"
+	"sync"
+	"time"
+)
+
+// NodeStats represents VPN node statistics for the dashboard
+type NodeStats struct {
+	Online  int `json:"online"`
+	Offline int `json:"offline"`
+	HsNodes int `json:"hsNodes"`
+	WgPeers int `json:"wgPeers"`
+}
+
+// DockerContainer represents a Docker container for WebSocket broadcast
+type DockerContainer struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Image  string `json:"image"`
+	State  string `json:"state"`
+	Status string `json:"status"`
+}
+
+// DockerLogEntry represents a single log line from Docker
+type DockerLogEntry struct {
+	Timestamp string `json:"timestamp"`
+	Message   string `json:"message"`
+	Stream    string `json:"stream"`
+}
+
+// DockerLogStreamer interface for streaming Docker logs
+type DockerLogStreamer interface {
+	StreamLogs(containerName string, onLog func(DockerLogEntry), stop <-chan struct{}) error
+}
+
+var (
+	// syncNodesCallback refreshes node data from Headscale/WireGuard
+	syncNodesCallback func()
+	// getNodeStatsCallback returns current node statistics
+	getNodeStatsCallback func() NodeStats
+	// getDockerContainersCallback returns current docker containers
+	getDockerContainersCallback func() []DockerContainer
+	// dockerLogStreamer for streaming container logs
+	dockerLogStreamer DockerLogStreamer
+	callbackMu        sync.RWMutex
+
+	// lastNodeStats stores previous stats for change detection
+	lastNodeStats   NodeStats
+	lastNodeStatsMu sync.RWMutex
+
+	// lastDockerContainers stores previous container states for change detection
+	lastDockerContainers   []DockerContainer
+	lastDockerContainersMu sync.RWMutex
+
+	// statusTicker for periodic status checks
+	statusTicker *time.Ticker
+	stopStatus   chan struct{}
+)
+
+// SetNodeStatsProvider sets the callbacks for syncing and getting node stats
+// This avoids circular imports (vpn -> ws -> vpn)
+func SetNodeStatsProvider(syncFn func(), statsFn func() NodeStats) {
+	callbackMu.Lock()
+	defer callbackMu.Unlock()
+	syncNodesCallback = syncFn
+	getNodeStatsCallback = statsFn
+}
+
+// SetDockerProvider sets the callback for getting docker containers
+func SetDockerProvider(containersFn func() []DockerContainer) {
+	callbackMu.Lock()
+	defer callbackMu.Unlock()
+	getDockerContainersCallback = containersFn
+}
+
+// SetDockerLogStreamer sets the docker log streamer
+func SetDockerLogStreamer(streamer DockerLogStreamer) {
+	callbackMu.Lock()
+	defer callbackMu.Unlock()
+	dockerLogStreamer = streamer
+}
+
+// GetDockerLogStreamer returns the docker log streamer
+func GetDockerLogStreamer() DockerLogStreamer {
+	callbackMu.RLock()
+	defer callbackMu.RUnlock()
+	return dockerLogStreamer
+}
+
+// StartStatusChecker starts the background status polling (nodes + docker)
+func StartStatusChecker(interval time.Duration) {
+	if statusTicker != nil {
+		return // Already running
+	}
+
+	stopStatus = make(chan struct{})
+	statusTicker = time.NewTicker(interval)
+
+	go func() {
+		log.Printf("Status checker started (interval: %v)", interval)
+		for {
+			select {
+			case <-statusTicker.C:
+				checkAndBroadcastStatus()
+			case <-stopStatus:
+				statusTicker.Stop()
+				log.Println("Status checker stopped")
+				return
+			}
+		}
+	}()
+}
+
+// StopStatusChecker stops the background status polling
+func StopStatusChecker() {
+	if stopStatus != nil {
+		close(stopStatus)
+		statusTicker = nil
+	}
+}
+
+// checkAndBroadcastStatus syncs data and broadcasts if changed
+func checkAndBroadcastStatus() {
+	if serviceInstance == nil || serviceInstance.hub == nil {
+		return
+	}
+
+	// Check node stats
+	checkAndBroadcastNodes()
+
+	// Check docker containers
+	checkAndBroadcastDocker()
+}
+
+// checkAndBroadcastNodes checks node status and broadcasts if changed
+func checkAndBroadcastNodes() {
+	// Skip if no subscribers for either channel
+	hasStatsSubscribers := serviceInstance.hub.ChannelSubscriberCount("stats") > 0
+	hasNodesSubscribers := serviceInstance.hub.ChannelSubscriberCount("nodes_updated") > 0
+	if !hasStatsSubscribers && !hasNodesSubscribers {
+		return
+	}
+
+	// Call sync to refresh data from Headscale/WireGuard
+	callbackMu.RLock()
+	syncFn := syncNodesCallback
+	statsFn := getNodeStatsCallback
+	callbackMu.RUnlock()
+
+	if syncFn != nil {
+		syncFn()
+	}
+
+	if statsFn == nil {
+		return
+	}
+
+	// Get current stats
+	stats := statsFn()
+
+	// Compare with last stats
+	lastNodeStatsMu.RLock()
+	statsChanged := stats != lastNodeStats
+	nodeCountChanged := stats.HsNodes != lastNodeStats.HsNodes || stats.WgPeers != lastNodeStats.WgPeers
+	lastNodeStatsMu.RUnlock()
+
+	if statsChanged {
+		lastNodeStatsMu.Lock()
+		lastNodeStats = stats
+		lastNodeStatsMu.Unlock()
+
+		if hasStatsSubscribers {
+			log.Printf("Node status changed, broadcasting: online=%d, offline=%d, hs=%d, wg=%d",
+				stats.Online, stats.Offline, stats.HsNodes, stats.WgPeers)
+			serviceInstance.hub.Broadcast("stats", stats)
+		}
+
+		// Notify nodes_updated if node counts changed
+		if nodeCountChanged && hasNodesSubscribers {
+			log.Println("Broadcasting nodes_updated notification")
+			serviceInstance.hub.Broadcast("nodes_updated", nil)
+		}
+	}
+}
+
+// checkAndBroadcastDocker checks docker status and broadcasts if changed
+func checkAndBroadcastDocker() {
+	if serviceInstance.hub.ChannelSubscriberCount("docker") == 0 {
+		return
+	}
+
+	callbackMu.RLock()
+	containersFn := getDockerContainersCallback
+	callbackMu.RUnlock()
+
+	if containersFn == nil {
+		return
+	}
+
+	containers := containersFn()
+
+	// Compare with last containers
+	lastDockerContainersMu.RLock()
+	changed := dockerContainersChanged(lastDockerContainers, containers)
+	lastDockerContainersMu.RUnlock()
+
+	if changed {
+		lastDockerContainersMu.Lock()
+		lastDockerContainers = containers
+		lastDockerContainersMu.Unlock()
+
+		log.Printf("Docker status changed, broadcasting %d containers", len(containers))
+		serviceInstance.hub.Broadcast("docker", map[string]interface{}{
+			"containers": containers,
+		})
+	}
+}
+
+// dockerContainersChanged checks if container states have changed
+func dockerContainersChanged(old, new []DockerContainer) bool {
+	if len(old) != len(new) {
+		return true
+	}
+	oldMap := make(map[string]DockerContainer)
+	for _, c := range old {
+		oldMap[c.ID] = c
+	}
+	for _, c := range new {
+		if prev, ok := oldMap[c.ID]; !ok || prev.State != c.State || prev.Status != c.Status {
+			return true
+		}
+	}
+	return false
+}
+
+// BroadcastNodeStats broadcasts current node stats to subscribers
+// Called when nodes change (create, delete, sync)
+func BroadcastNodeStats() {
+	if serviceInstance == nil || serviceInstance.hub == nil {
+		return
+	}
+
+	callbackMu.RLock()
+	statsFn := getNodeStatsCallback
+	callbackMu.RUnlock()
+
+	if statsFn == nil {
+		return
+	}
+
+	stats := statsFn()
+
+	// Check if node counts changed (not just online/offline status)
+	lastNodeStatsMu.RLock()
+	nodeCountChanged := stats.HsNodes != lastNodeStats.HsNodes || stats.WgPeers != lastNodeStats.WgPeers
+	lastNodeStatsMu.RUnlock()
+
+	// Update last stats
+	lastNodeStatsMu.Lock()
+	lastNodeStats = stats
+	lastNodeStatsMu.Unlock()
+
+	// Broadcast stats if there are subscribers
+	if serviceInstance.hub.ChannelSubscriberCount("stats") > 0 {
+		log.Printf("Broadcasting node stats: online=%d, offline=%d, hs=%d, wg=%d",
+			stats.Online, stats.Offline, stats.HsNodes, stats.WgPeers)
+		serviceInstance.hub.Broadcast("stats", stats)
+	}
+
+	// Notify nodes_updated subscribers if node counts changed
+	if nodeCountChanged && serviceInstance.hub.ChannelSubscriberCount("nodes_updated") > 0 {
+		log.Println("Broadcasting nodes_updated notification")
+		serviceInstance.hub.Broadcast("nodes_updated", nil)
+	}
+}
+
+// GetCurrentNodeStats returns current node stats (for sending on subscribe)
+func GetCurrentNodeStats() NodeStats {
+	callbackMu.RLock()
+	statsFn := getNodeStatsCallback
+	callbackMu.RUnlock()
+
+	if statsFn == nil {
+		return NodeStats{}
+	}
+	return statsFn()
+}
+
+// BroadcastTraffic broadcasts traffic data to subscribers
+func BroadcastTraffic(traffic interface{}) {
+	Broadcast("traffic", traffic)
+}
+
+// GetCurrentDockerContainers returns current docker containers (for sending on subscribe)
+func GetCurrentDockerContainers() []DockerContainer {
+	callbackMu.RLock()
+	containersFn := getDockerContainersCallback
+	callbackMu.RUnlock()
+
+	if containersFn == nil {
+		return nil
+	}
+	return containersFn()
+}

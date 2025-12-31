@@ -17,7 +17,7 @@
 
     # Unified API - HTTPS
     unified-api-secure:
-      rule: "PathPrefix(`/api/wg`) || PathPrefix(`/api/fw`) || PathPrefix(`/api/traefik`) || PathPrefix(`/api/adguard`) || PathPrefix(`/api/hs`) || PathPrefix(`/api/auth`) || PathPrefix(`/api/setup`) || PathPrefix(`/api/settings`) || PathPrefix(`/api/docker`) || PathPrefix(`/api/vpn`) || PathPrefix(`/api/geo`)"
+      rule: "PathPrefix(`/api/`) && !PathPrefix(`/api/v1`)"
       service: unified-api
       priority: 100
       middlewares:
@@ -58,16 +58,3 @@
         domains:
           - main: "${SSL_DOMAIN}"
 
-    # API info endpoint - HTTPS
-    api-info-secure:
-      rule: "Path(`/api`) || Path(`/api/`)"
-      service: unified-api
-      priority: 99
-      middlewares:
-        - rate-limit
-      entryPoints:
-        - websecure
-      tls:
-        certResolver: letsencrypt
-        domains:
-          - main: "${SSL_DOMAIN}"

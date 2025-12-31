@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"api/internal/helper"
 	"api/internal/router"
@@ -24,9 +25,13 @@ type Service struct {
 
 // New creates a new Traefik service
 func New() *Service {
+	configDir := helper.GetEnv("TRAEFIK_CONFIG")
+	// Use core.yml for middleware config (the directory contains multiple files)
+	configPath := configDir + "/core.yml"
+
 	return &Service{
 		traefikAPI:    helper.GetEnv("TRAEFIK_API"),
-		configPath:    helper.GetEnv("TRAEFIK_CONFIG"),
+		configPath:    configPath,
 		staticPath:    helper.GetEnv("TRAEFIK_STATIC"),
 		accessLogPath: helper.GetEnv("TRAEFIK_LOGS"),
 	}
@@ -41,7 +46,6 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"GetLogs":      s.handleLogs,
 		"GetVPNOnly":   s.handleGetVPNOnly,
 		"SetVPNOnly":   s.handleSetVPNOnly,
-		"Health":       s.handleHealth,
 	}
 }
 
@@ -265,7 +269,7 @@ func updateTraefikDashboardAddress(configPath string, enabled bool) error {
 }
 
 func (s *Service) handleLogs(w http.ResponseWriter, r *http.Request) {
-	p := router.ParsePagination(r, 100)
+	p := router.ParsePagination(r, helper.LargePaginationLimit)
 	limit := p.Limit
 
 	file, err := os.Open(s.accessLogPath)
@@ -314,10 +318,6 @@ func (s *Service) handleLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	router.JSON(w, logs)
-}
-
-func (s *Service) handleHealth(w http.ResponseWriter, r *http.Request) {
-	router.JSON(w, map[string]string{"status": "ok"})
 }
 
 // Helper functions
@@ -732,4 +732,68 @@ func (s *Service) handleSetVPNOnly(w http.ResponseWriter, r *http.Request) {
 	}
 
 	router.JSON(w, map[string]string{"mode": req.Mode})
+}
+
+// DomainRouteConfig represents a domain route for Traefik config generation
+type DomainRouteConfig struct {
+	Domain       string
+	TargetIP     string
+	TargetPort   int
+	HTTPSBackend bool
+	Middlewares  []string
+}
+
+// GenerateDomainRoutes writes domain routes to Traefik's dynamic config directory
+func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig) error {
+	var sb strings.Builder
+
+	sb.WriteString("# Domain Routes - Auto-generated, do not edit manually\n")
+	sb.WriteString("# Generated at: " + time.Now().Format(time.RFC3339) + "\n\n")
+
+	if len(routes) == 0 {
+		sb.WriteString("# No routes configured\n")
+	} else {
+		sb.WriteString("http:\n")
+		sb.WriteString("  routers:\n")
+
+		for _, route := range routes {
+			name := helper.SanitizeDomainName(route.Domain)
+			sb.WriteString(fmt.Sprintf("    domain-%s:\n", name))
+			sb.WriteString(fmt.Sprintf("      rule: \"Host(`%s`)\"\n", route.Domain))
+			sb.WriteString(fmt.Sprintf("      service: domain-%s-svc\n", name))
+			sb.WriteString("      priority: 50\n")
+			sb.WriteString("      entryPoints:\n")
+			sb.WriteString("        - web\n")
+			if len(route.Middlewares) > 0 {
+				sb.WriteString("      middlewares:\n")
+				for _, mw := range route.Middlewares {
+					sb.WriteString(fmt.Sprintf("        - %s\n", mw))
+				}
+			}
+			sb.WriteString("\n")
+		}
+
+		sb.WriteString("  services:\n")
+		for _, route := range routes {
+			name := helper.SanitizeDomainName(route.Domain)
+			protocol := "http"
+			if route.HTTPSBackend {
+				protocol = "https"
+			}
+			sb.WriteString(fmt.Sprintf("    domain-%s-svc:\n", name))
+			sb.WriteString("      loadBalancer:\n")
+			sb.WriteString("        servers:\n")
+			sb.WriteString(fmt.Sprintf("          - url: \"%s://%s:%d\"\n", protocol, route.TargetIP, route.TargetPort))
+			sb.WriteString("\n")
+		}
+	}
+
+	// Write to domains.yml
+	configPath := configDir + "/domains.yml"
+	if err := os.WriteFile(configPath, []byte(sb.String()), 0644); err != nil {
+		return fmt.Errorf("failed to write config: %v", err)
+	}
+
+	log.Printf("Generated Traefik domain routes config with %d routes", len(routes))
+	return nil
 }

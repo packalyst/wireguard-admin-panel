@@ -6,7 +6,7 @@
 
 <div class="bg-gradient-to-r from-primary/5 to-info/5 border border-primary/20 rounded-lg p-4">
   <div class="flex items-start gap-3">
-    <div class="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
+    <div class="header-icon">
       <Icon name={icon} size={18} class="text-primary" />
     </div>
     <div class="flex-1 min-w-0">

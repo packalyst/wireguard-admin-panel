@@ -1,6 +1,7 @@
 package vpn
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -12,10 +13,90 @@ import (
 	"time"
 
 	"api/internal/database"
+	"api/internal/domains"
 	"api/internal/helper"
 	"api/internal/router"
+	"api/internal/settings"
 	"api/internal/wireguard"
+	"api/internal/ws"
 )
+
+// syncClient upserts a VPN client into the database
+func syncClient(db *sql.DB, existing map[string]int, seen map[string]bool,
+	name, ip, clientType, externalID, rawData string, added *int) {
+	seen[ip] = true
+	if id, exists := existing[ip]; exists {
+		db.Exec(`UPDATE vpn_clients SET name = ?, raw_data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+			name, rawData, id)
+	} else {
+		_, err := db.Exec(`INSERT INTO vpn_clients (name, ip, type, external_id, raw_data, acl_policy) VALUES (?, ?, ?, ?, ?, ?)`,
+			name, ip, clientType, externalID, rawData, helper.DefaultACLPolicy)
+		if err == nil {
+			*added++
+		}
+	}
+}
+
+// GetNodeStats returns current VPN node statistics from the database
+func GetNodeStats() ws.NodeStats {
+	db, err := database.GetDB()
+	if err != nil {
+		return ws.NodeStats{}
+	}
+
+	var stats ws.NodeStats
+
+	rows, err := db.Query(`SELECT type, raw_data FROM vpn_clients`)
+	if err != nil {
+		return stats
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var clientType string
+		var rawData []byte
+		if err := rows.Scan(&clientType, &rawData); err != nil {
+			continue
+		}
+
+		switch clientType {
+		case "headscale":
+			stats.HsNodes++
+		case "wireguard":
+			stats.WgPeers++
+		}
+
+		if len(rawData) > 0 && isNodeOnline(rawData) {
+			stats.Online++
+		} else {
+			stats.Offline++
+		}
+	}
+
+	return stats
+}
+
+// isNodeOnline checks if the raw JSON data indicates the node is online
+func isNodeOnline(rawData []byte) bool {
+	// Simple byte scan for "online":true pattern
+	// More efficient than full JSON parsing
+	for i := 0; i < len(rawData)-12; i++ {
+		if rawData[i] == '"' && rawData[i+1] == 'o' && rawData[i+2] == 'n' &&
+			rawData[i+3] == 'l' && rawData[i+4] == 'i' && rawData[i+5] == 'n' &&
+			rawData[i+6] == 'e' && rawData[i+7] == '"' && rawData[i+8] == ':' {
+			// Found "online":, check for true
+			j := i + 9
+			for j < len(rawData) && rawData[j] == ' ' {
+				j++
+			}
+			if j+4 <= len(rawData) && rawData[j] == 't' && rawData[j+1] == 'r' &&
+				rawData[j+2] == 'u' && rawData[j+3] == 'e' {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // Service handles unified VPN client management and ACL
 type Service struct {
@@ -75,19 +156,18 @@ func New() *Service {
 func (s *Service) Handlers() router.ServiceHandlers {
 	return router.ServiceHandlers{
 		// Clients & ACL
-		"GetClients":    s.handleGetClients,
-		"GetClient":     s.handleGetClient,
-		"UpdateACL":     s.handleUpdateACL,
-		"SyncClients":   s.handleSyncClients,
-		"ApplyRules":    s.handleApplyRules,
-		"ToggleDNS":     s.handleToggleDNS,
+		"GetClients":  s.handleGetClients,
+		"GetClient":   s.handleGetClient,
+		"UpdateACL":   s.handleUpdateACL,
+		"ApplyRules":  s.handleApplyRules,
+		"ToggleDNS":   s.handleToggleDNS,
+		// Port Scanner
+		"ScanPorts": s.handleScanPorts,
 		// Router Management
 		"GetRouterStatus": s.handleGetRouterStatus,
 		"SetupRouter":     s.handleSetupRouter,
 		"RestartRouter":   s.handleRestartRouter,
 		"RemoveRouter":    s.handleRemoveRouter,
-		// Health
-		"Health": s.handleHealth,
 	}
 }
 
@@ -97,7 +177,11 @@ func (s *Service) handleGetClients(w http.ResponseWriter, r *http.Request) {
 	// Auto-sync to get fresh data from WireGuard and Headscale
 	s.SyncClients()
 
-	db := database.Get()
+	db, err := database.GetDB()
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	// Use LEFT JOIN with subquery to avoid N+1 query problem
 	rows, err := db.Query(`
 		SELECT c.id, c.name, c.ip, c.type, c.external_id, c.raw_data,
@@ -138,13 +222,16 @@ func (s *Service) handleGetClients(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) handleGetClient(w http.ResponseWriter, r *http.Request) {
 	idStr := router.ExtractPathParam(r, "/api/vpn/clients/")
-	id, err := strconv.Atoi(idStr)
-	if err != nil {
-		router.JSONError(w, "invalid client ID", http.StatusBadRequest)
+	id, ok := router.ParseIDOrError(w, idStr)
+	if !ok {
 		return
 	}
 
-	db := database.Get()
+	db, err := database.GetDB()
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	var c VPNClient
 	var externalID sql.NullString
 	err = db.QueryRow(`
@@ -193,7 +280,11 @@ func (s *Service) handleToggleDNS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db := database.Get()
+	db, err := database.GetDB()
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	var name, ip string
 	err = db.QueryRow(`SELECT name, ip FROM vpn_clients WHERE id = ?`, id).Scan(&name, &ip)
 	if err != nil {
@@ -240,7 +331,11 @@ func (s *Service) handleUpdateACL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db := database.Get()
+	db, err := database.GetDB()
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	tx, err := db.Begin()
 	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusInternalServerError)
@@ -351,20 +446,6 @@ func (s *Service) handleUpdateACL(w http.ResponseWriter, r *http.Request) {
 	router.JSON(w, map[string]string{"status": "ok"})
 }
 
-func (s *Service) handleSyncClients(w http.ResponseWriter, r *http.Request) {
-	added, removed, err := s.SyncClients()
-	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	router.JSON(w, map[string]interface{}{
-		"status":  "ok",
-		"added":   added,
-		"removed": removed,
-	})
-}
-
 func (s *Service) handleApplyRules(w http.ResponseWriter, r *http.Request) {
 	if err := s.ApplyRules(); err != nil {
 		router.JSONError(w, err.Error(), http.StatusInternalServerError)
@@ -406,14 +487,13 @@ func (s *Service) handleRemoveRouter(w http.ResponseWriter, r *http.Request) {
 	router.JSON(w, map[string]string{"status": "ok"})
 }
 
-func (s *Service) handleHealth(w http.ResponseWriter, r *http.Request) {
-	router.JSON(w, map[string]string{"status": "ok"})
-}
-
 // --- Helper Methods ---
 
 func (s *Service) getClientACLRules(clientID int) []ACLRule {
-	db := database.Get()
+	db, err := database.GetDB()
+	if err != nil {
+		return nil
+	}
 
 	// Get rules where this client is source, include target's policy and check if reverse rule exists
 	// Uses subquery to check for bidirectional in single query (avoids N+1)
@@ -447,7 +527,10 @@ func (s *Service) getClientACLRules(clientID int) []ACLRule {
 
 // SyncClients synchronizes VPN clients from WireGuard and Headscale
 func (s *Service) SyncClients() (added int, removed int, err error) {
-	db := database.Get()
+	db, err := database.GetDB()
+	if err != nil {
+		return 0, 0, err
+	}
 
 	// Get existing clients
 	existing := make(map[string]int) // ip -> id
@@ -472,29 +555,12 @@ func (s *Service) SyncClients() (added int, removed int, err error) {
 	if wgSvc != nil {
 		peers := wgSvc.ListPeersWithStatus()
 		for _, peer := range peers {
-			seen[peer.IPAddress] = true
 			// Strip sensitive keys before storing in database
 			peerCopy := *peer
 			peerCopy.PrivateKey = ""
 			peerCopy.PresharedKey = ""
 			rawData, _ := json.Marshal(peerCopy)
-
-			if id, exists := existing[peer.IPAddress]; exists {
-				// Update existing record with fresh data
-				db.Exec(`
-					UPDATE vpn_clients SET name = ?, raw_data = ?, updated_at = CURRENT_TIMESTAMP
-					WHERE id = ?
-				`, peer.Name, string(rawData), id)
-			} else {
-				// Insert new record
-				_, err := db.Exec(`
-					INSERT INTO vpn_clients (name, ip, type, external_id, raw_data, acl_policy)
-					VALUES (?, ?, 'wireguard', ?, ?, ?)
-				`, peer.Name, peer.IPAddress, peer.ID, string(rawData), helper.DefaultACLPolicy)
-				if err == nil {
-					added++
-				}
-			}
+			syncClient(db, existing, seen, peer.Name, peer.IPAddress, "wireguard", peer.ID, string(rawData), &added)
 		}
 	}
 
@@ -509,35 +575,26 @@ func (s *Service) SyncClients() (added int, removed int, err error) {
 			if node.Name == routerName {
 				continue
 			}
-			seen[node.IP] = true
-
-			if id, exists := existing[node.IP]; exists {
-				// Update existing record with fresh data
-				db.Exec(`
-					UPDATE vpn_clients SET name = ?, raw_data = ?, updated_at = CURRENT_TIMESTAMP
-					WHERE id = ?
-				`, node.Name, rawNodes[i], id)
-			} else {
-				// Insert new record
-				_, err := db.Exec(`
-					INSERT INTO vpn_clients (name, ip, type, external_id, raw_data, acl_policy)
-					VALUES (?, ?, 'headscale', ?, ?, ?)
-				`, node.Name, node.IP, node.ID, rawNodes[i], helper.DefaultACLPolicy)
-				if err == nil {
-					added++
-				}
-			}
+			syncClient(db, existing, seen, node.Name, node.IP, "headscale", node.ID, rawNodes[i], &added)
 		}
 	}
 
 	// Remove stale clients (no longer in WireGuard or Headscale)
 	for ip, id := range existing {
 		if !seen[ip] {
+			// Delete domain routes for this client first
+			domains.DeleteClientRoutes(id)
+			// ACL rules are automatically deleted via ON DELETE CASCADE
 			_, err := db.Exec(`DELETE FROM vpn_clients WHERE id = ?`, id)
 			if err == nil {
 				removed++
 			}
 		}
+	}
+
+	// Broadcast node stats update if anything changed
+	if added > 0 || removed > 0 {
+		ws.BroadcastNodeStats()
 	}
 
 	return added, removed, nil
@@ -617,4 +674,88 @@ func (s *Service) ApplyRules() error {
 	}
 
 	return nil
+}
+
+// --- Port Scanner ---
+
+// ScanRequest for POST /api/vpn/clients/{id}/scan
+type ScanRequest struct {
+	Mode string `json:"mode"` // "common", "range", "full"
+}
+
+func (s *Service) handleScanPorts(w http.ResponseWriter, r *http.Request) {
+	// Extract client ID from path
+	path := strings.TrimPrefix(r.URL.Path, "/api/vpn/clients/")
+	parts := strings.Split(path, "/")
+	if len(parts) < 2 || parts[1] != "scan" {
+		router.JSONError(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+	clientID := parts[0]
+
+	// Get client IP from database
+	db, err := database.GetDB()
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var clientIP string
+	err = db.QueryRow("SELECT ip FROM vpn_clients WHERE id = ?", clientID).Scan(&clientIP)
+	if err == sql.ErrNoRows {
+		router.JSONError(w, "client not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Parse request
+	var req ScanRequest
+	if !router.DecodeJSONOrError(w, r, &req) {
+		return
+	}
+	if req.Mode == "" {
+		req.Mode = "common"
+	}
+
+	// Get scanner settings
+	config := helper.ScanConfig{
+		PortStart:  settings.GetSettingInt("scanner_port_start", 1),
+		PortEnd:    settings.GetSettingInt("scanner_port_end", 5000),
+		Concurrent: settings.GetSettingInt("scanner_concurrent", 100),
+		PauseMs:    settings.GetSettingInt("scanner_pause_ms", 0),
+		TimeoutMs:  settings.GetSettingInt("scanner_timeout_ms", 500),
+	}
+
+	// Create context with timeout (max 5 minutes for full scan)
+	ctx, cancel := context.WithTimeout(r.Context(), helper.PortScanTimeout)
+	defer cancel()
+
+	var results []helper.PortResult
+
+	switch req.Mode {
+	case "common":
+		results, err = helper.ScanCommonPorts(ctx, clientIP, config, nil)
+	case "range":
+		results, err = helper.ScanRange(ctx, clientIP, config.PortStart, config.PortEnd, config, nil)
+	case "full":
+		results, err = helper.ScanFull(ctx, clientIP, config, nil)
+	default:
+		router.JSONError(w, "invalid mode: use 'common', 'range', or 'full'", http.StatusBadRequest)
+		return
+	}
+
+	if err != nil {
+		router.JSONError(w, "scan failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	router.JSON(w, map[string]interface{}{
+		"clientId": clientID,
+		"ip":       clientIP,
+		"mode":     req.Mode,
+		"ports":    results,
+		"count":    len(results),
+	})
 }

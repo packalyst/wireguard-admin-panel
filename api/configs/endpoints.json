@@ -11,6 +11,17 @@
     },
     "session": {
       "timeoutHours": 24
+    },
+    "websocket": {
+      "writeWaitSec": 10,
+      "pongWaitSec": 60,
+      "maxMessageSize": 512,
+      "sendBufferSize": 256,
+      "readBufferSize": 1024,
+      "writeBufferSize": 1024,
+      "broadcastBufferSize": 256,
+      "statusCheckIntervalSec": 10,
+      "channels": ["stats", "nodes_updated", "docker", "docker_logs"]
     }
   },
   "services": {
@@ -22,8 +33,7 @@
         {"path": "/detect-headscale", "methods": ["GET"], "handler": "DetectHeadscale", "description": "Auto-detect headscale URL"},
         {"path": "/generate-apikey", "methods": ["POST"], "handler": "GenerateAPIKey", "description": "Generate headscale API key"},
         {"path": "/test-headscale", "methods": ["POST"], "handler": "TestHeadscale", "description": "Test headscale connection"},
-        {"path": "/complete", "methods": ["POST"], "handler": "CompleteSetup", "description": "Complete initial setup"},
-        {"path": "/health", "methods": ["GET"], "handler": "Health", "description": "Setup health check"}
+        {"path": "/complete", "methods": ["POST"], "handler": "CompleteSetup", "description": "Complete initial setup"}
       ]
     },
     "auth": {
@@ -32,10 +42,16 @@
       "endpoints": [
         {"path": "/login", "methods": ["POST"], "handler": "Login", "description": "Login with username/password"},
         {"path": "/logout", "methods": ["POST"], "handler": "Logout", "description": "Logout and invalidate session"},
-        {"path": "/validate", "methods": ["GET"], "handler": "ValidateSession", "description": "Validate session token"},
         {"path": "/me", "methods": ["GET"], "handler": "GetCurrentUser", "description": "Get current user"},
         {"path": "/users", "methods": ["POST"], "handler": "CreateUser", "description": "Create new user"},
-        {"path": "/health", "methods": ["GET"], "handler": "Health", "description": "Auth health check"}
+        {"path": "/sessions", "methods": ["GET"], "handler": "GetSessions", "description": "List active sessions"},
+        {"path": "/sessions/{id}/revoke", "methods": ["POST"], "handler": "RevokeSession", "description": "Revoke specific session"},
+        {"path": "/sessions/revoke-others", "methods": ["POST"], "handler": "RevokeOtherSessions", "description": "Revoke all other sessions"},
+        {"path": "/change-password", "methods": ["POST"], "handler": "ChangePassword", "description": "Change password"},
+        {"path": "/2fa/status", "methods": ["GET"], "handler": "Get2FAStatus", "description": "Get 2FA status"},
+        {"path": "/2fa/setup", "methods": ["POST"], "handler": "Setup2FA", "description": "Start 2FA setup, generate secret and QR code"},
+        {"path": "/2fa/enable", "methods": ["POST"], "handler": "Enable2FA", "description": "Verify code and enable 2FA"},
+        {"path": "/2fa/disable", "methods": ["POST"], "handler": "Disable2FA", "description": "Disable 2FA (requires password and code)"}
       ]
     },
     "settings": {
@@ -74,8 +90,7 @@
         {"path": "/ssh", "methods": ["POST"], "handler": "ChangeSSHPort", "description": "Change SSH port"},
         {"path": "/blocklists", "methods": ["GET"], "handler": "GetBlocklists", "description": "Get available blocklist sources"},
         {"path": "/blocklists/import", "methods": ["POST"], "handler": "ImportBlocklist", "description": "Import blocklist from source"},
-        {"path": "/blocked/source/{source}", "methods": ["DELETE"], "handler": "DeleteBlockedSource", "description": "Delete all IPs from source"},
-        {"path": "/health", "methods": ["GET"], "handler": "Health", "description": "Health check"}
+        {"path": "/blocked/source/{source}", "methods": ["DELETE"], "handler": "DeleteBlockedSource", "description": "Delete all IPs from source"}
       ]
     },
     "wireguard": {
@@ -91,8 +106,7 @@
         {"path": "/peers/{id}/disable", "methods": ["POST"], "handler": "DisablePeer", "description": "Disable peer"},
         {"path": "/peers/{id}/config", "methods": ["GET"], "handler": "GetPeerConfig", "description": "Download peer config"},
         {"path": "/peers/{id}/qr", "methods": ["GET"], "handler": "GetPeerQR", "description": "Get peer QR code"},
-        {"path": "/server", "methods": ["GET"], "handler": "GetServer", "description": "Get server info"},
-        {"path": "/health", "methods": ["GET"], "handler": "Health", "description": "Health check"}
+        {"path": "/server", "methods": ["GET"], "handler": "GetServer", "description": "Get server info"}
       ]
     },
     "traefik": {
@@ -104,8 +118,7 @@
         {"path": "/config", "methods": ["PUT"], "handler": "UpdateConfig", "description": "Update dynamic config"},
         {"path": "/logs", "methods": ["GET"], "handler": "GetLogs", "description": "Get access logs"},
         {"path": "/vpn-only", "methods": ["GET"], "handler": "GetVPNOnly", "description": "Get VPN-only mode status"},
-        {"path": "/vpn-only", "methods": ["POST"], "handler": "SetVPNOnly", "description": "Set VPN-only mode"},
-        {"path": "/health", "methods": ["GET"], "handler": "Health", "description": "Health check"}
+        {"path": "/vpn-only", "methods": ["POST"], "handler": "SetVPNOnly", "description": "Set VPN-only mode"}
       ]
     },
     "headscale": {
@@ -131,8 +144,7 @@
         {"path": "/preauthkeys/expire", "methods": ["POST"], "handler": "ExpirePreAuthKey", "description": "Expire pre-auth key"},
         {"path": "/apikeys", "methods": ["GET"], "handler": "GetAPIKeys", "description": "List API keys"},
         {"path": "/apikeys", "methods": ["POST"], "handler": "CreateAPIKey", "description": "Create API key"},
-        {"path": "/apikeys/{id}", "methods": ["DELETE"], "handler": "DeleteAPIKey", "description": "Delete API key"},
-        {"path": "/health", "methods": ["GET"], "handler": "Health", "description": "Health check"}
+        {"path": "/apikeys/{id}", "methods": ["DELETE"], "handler": "DeleteAPIKey", "description": "Delete API key"}
       ]
     },
     "adguard": {
@@ -145,8 +157,7 @@
         {"path": "/filtering", "methods": ["PUT"], "handler": "UpdateFiltering", "description": "Filtering actions (action: add|remove|toggle|refresh|setRules)"},
         {"path": "/rewrites", "methods": ["GET"], "handler": "GetRewrites", "description": "Get DNS rewrites"},
         {"path": "/rewrites", "methods": ["PUT"], "handler": "UpdateRewrites", "description": "Rewrite actions (action: add|delete)"},
-        {"path": "/querylog", "methods": ["GET"], "handler": "GetQueryLog", "description": "Get query log"},
-        {"path": "/health", "methods": ["GET"], "handler": "Health", "description": "Health check"}
+        {"path": "/querylog", "methods": ["GET"], "handler": "GetQueryLog", "description": "Get query log"}
       ]
     },
     "docker": {
@@ -155,11 +166,10 @@
       "endpoints": [
         {"path": "/containers", "methods": ["GET"], "handler": "GetContainers", "description": "List containers"},
         {"path": "/containers/{name}", "methods": ["GET"], "handler": "GetContainer", "description": "Get container details"},
-        {"path": "/containers/{name}/logs", "methods": ["GET"], "handler": "GetLogs", "description": "Get container logs"},
         {"path": "/containers/{name}/restart", "methods": ["POST"], "handler": "Restart", "description": "Restart container"},
         {"path": "/containers/{name}/stop", "methods": ["POST"], "handler": "Stop", "description": "Stop container"},
         {"path": "/containers/{name}/start", "methods": ["POST"], "handler": "Start", "description": "Start container"},
-        {"path": "/health", "methods": ["GET"], "handler": "Health", "description": "Health check"}
+        {"path": "/images/{name}/analyze", "methods": ["GET"], "handler": "AnalyzeImage", "description": "Analyze image layers and sizes"}
       ]
     },
     "vpn": {
@@ -170,13 +180,12 @@
         {"path": "/clients/{id}", "methods": ["GET"], "handler": "GetClient", "description": "Get client with ACL rules"},
         {"path": "/clients/{id}/acl", "methods": ["PUT"], "handler": "UpdateACL", "description": "Update client ACL policy"},
         {"path": "/clients/{id}/dns", "methods": ["PUT"], "handler": "ToggleDNS", "description": "Toggle DNS rewrite for client"},
-        {"path": "/sync", "methods": ["POST"], "handler": "SyncClients", "description": "Sync clients from WG + Headscale"},
+        {"path": "/clients/{id}/scan", "methods": ["POST"], "handler": "ScanPorts", "description": "Scan open ports on client"},
         {"path": "/apply", "methods": ["POST"], "handler": "ApplyRules", "description": "Apply nftables + Headscale ACL"},
         {"path": "/router/status", "methods": ["GET"], "handler": "GetRouterStatus", "description": "Get router status"},
         {"path": "/router/setup", "methods": ["POST"], "handler": "SetupRouter", "description": "Setup router"},
         {"path": "/router/restart", "methods": ["POST"], "handler": "RestartRouter", "description": "Restart router"},
-        {"path": "/router", "methods": ["DELETE"], "handler": "RemoveRouter", "description": "Remove router"},
-        {"path": "/health", "methods": ["GET"], "handler": "Health", "description": "Health check"}
+        {"path": "/router", "methods": ["DELETE"], "handler": "RemoveRouter", "description": "Remove router"}
       ]
     },
     "geolocation": {
@@ -195,6 +204,18 @@
         {"path": "/blocked/{code}", "methods": ["DELETE"], "handler": "UnblockCountry", "description": "Unblock a country"},
         {"path": "/blocked/status", "methods": ["GET"], "handler": "GetBlockingStatus", "description": "Get blocking status"},
         {"path": "/zones/refresh", "methods": ["POST"], "handler": "RefreshZones", "description": "Refresh all country zones"}
+      ]
+    },
+    "domains": {
+      "prefix": "/api/domains",
+      "enabled": true,
+      "endpoints": [
+        {"path": "", "methods": ["GET"], "handler": "List", "description": "List all domain routes"},
+        {"path": "", "methods": ["POST"], "handler": "Create", "description": "Create domain route"},
+        {"path": "/{id}", "methods": ["GET"], "handler": "Get", "description": "Get domain route"},
+        {"path": "/{id}", "methods": ["PUT"], "handler": "Update", "description": "Update domain route"},
+        {"path": "/{id}", "methods": ["DELETE"], "handler": "Delete", "description": "Delete domain route"},
+        {"path": "/{id}/toggle", "methods": ["POST"], "handler": "Toggle", "description": "Toggle domain route"}
       ]
     }
   },

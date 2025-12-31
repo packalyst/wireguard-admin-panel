@@ -4,14 +4,11 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 	"unicode"
 
@@ -19,81 +16,18 @@ import (
 	"api/internal/helper"
 	"api/internal/router"
 
+	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
 )
 
+// Error types
 var (
 	ErrInvalidCredentials = errors.New("invalid username or password")
 	ErrUserNotFound       = errors.New("user not found")
 	ErrUserExists         = errors.New("user already exists")
 	ErrInvalidSession     = errors.New("invalid or expired session")
+	ErrTOTPRequired       = errors.New("2FA code required")
 )
-
-// Rate limiting for login attempts
-const (
-	maxLoginAttempts   = 5               // Max failed attempts before lockout
-	loginLockoutWindow = 15 * time.Minute // Window for counting attempts
-	loginLockoutTime   = 15 * time.Minute // How long to lock out after max attempts
-)
-
-type loginAttempt struct {
-	count     int
-	firstTry  time.Time
-	lockedAt  time.Time
-}
-
-var (
-	loginAttempts      = make(map[string]*loginAttempt)
-	loginAttemptsMutex sync.RWMutex
-	trustedProxyCIDRs  []*net.IPNet
-)
-
-func init() {
-	// Load trusted proxies from environment
-	// TRUSTED_PROXIES can be comma-separated list of IPs or CIDRs: "172.18.0.2,162.158.0.0/15"
-	proxies := helper.GetEnvOptional("TRUSTED_PROXIES", "")
-	if proxies != "" {
-		for _, entry := range strings.Split(proxies, ",") {
-			entry = strings.TrimSpace(entry)
-			if entry == "" {
-				continue
-			}
-
-			// Check if it's a CIDR or single IP
-			if !strings.Contains(entry, "/") {
-				// Single IP - convert to /32 CIDR
-				entry = entry + "/32"
-			}
-
-			_, cidr, err := net.ParseCIDR(entry)
-			if err != nil {
-				log.Printf("Auth: invalid trusted proxy entry (skipped): %s - %v", entry, err)
-				continue
-			}
-			trustedProxyCIDRs = append(trustedProxyCIDRs, cidr)
-			log.Printf("Auth: trusted proxy added: %s", cidr.String())
-		}
-	}
-}
-
-// isTrustedProxy checks if an IP is in the trusted proxy list
-func isTrustedProxy(ipStr string) bool {
-	if len(trustedProxyCIDRs) == 0 {
-		return true // No trusted proxies configured = trust all (backwards compatible)
-	}
-
-	ip := net.ParseIP(ipStr)
-	if ip == nil {
-		return false
-	}
-
-	for _, cidr := range trustedProxyCIDRs {
-		if cidr.Contains(ip) {
-			return true
-		}
-	}
-	return false
-}
 
 // Service handles authentication
 type Service struct {
@@ -110,16 +44,21 @@ type User struct {
 
 // Session represents a login session
 type Session struct {
-	ID        string    `json:"id"`
-	UserID    int64     `json:"userId"`
-	CreatedAt time.Time `json:"createdAt"`
-	ExpiresAt time.Time `json:"expiresAt"`
+	ID         string    `json:"id"`
+	UserID     int64     `json:"userId"`
+	CreatedAt  time.Time `json:"createdAt"`
+	ExpiresAt  time.Time `json:"expiresAt"`
+	IPAddress  string    `json:"ipAddress,omitempty"`
+	UserAgent  string    `json:"userAgent,omitempty"`
+	LastActive time.Time `json:"lastActive,omitempty"`
+	Current    bool      `json:"current,omitempty"`
 }
 
 // LoginRequest represents login credentials
 type LoginRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
+	TOTPCode string `json:"totpCode,omitempty"`
 }
 
 // LoginResponse represents successful login response
@@ -131,9 +70,9 @@ type LoginResponse struct {
 
 // New creates a new auth service
 func New() (*Service, error) {
-	db := database.Get()
-	if db == nil {
-		return nil, fmt.Errorf("database not initialized")
+	db, err := database.GetDB()
+	if err != nil {
+		return nil, err
 	}
 
 	svc := &Service{
@@ -144,16 +83,21 @@ func New() (*Service, error) {
 	return svc, nil
 }
 
-
 // Handlers returns the handler map for the router
 func (s *Service) Handlers() router.ServiceHandlers {
 	return router.ServiceHandlers{
-		"Login":           s.handleLogin,
-		"Logout":          s.handleLogout,
-		"ValidateSession": s.handleValidate,
-		"GetCurrentUser":  s.handleGetCurrentUser,
-		"CreateUser":      s.handleCreateUser,
-		"Health":          s.handleHealth,
+		"Login":               s.handleLogin,
+		"Logout":              s.handleLogout,
+		"GetCurrentUser":      s.handleGetCurrentUser,
+		"CreateUser":          s.handleCreateUser,
+		"GetSessions":         s.handleGetSessions,
+		"RevokeSession":       s.handleRevokeSession,
+		"RevokeOtherSessions": s.handleRevokeOtherSessions,
+		"ChangePassword":      s.handleChangePassword,
+		"Get2FAStatus":        s.handleGet2FAStatus,
+		"Setup2FA":            s.handleSetup2FA,
+		"Enable2FA":           s.handleEnable2FA,
+		"Disable2FA":          s.handleDisable2FA,
 	}
 }
 
@@ -232,19 +176,23 @@ func (s *Service) CreateUser(username, password string) (*User, error) {
 }
 
 // Login validates credentials and creates a session
-func (s *Service) Login(username, password string) (*LoginResponse, error) {
+func (s *Service) Login(username, password, totpCode, ipAddress, userAgent string) (*LoginResponse, error) {
 	username = strings.TrimSpace(strings.ToLower(username))
 
-	// Get user
+	// Get user including 2FA fields
 	var user User
 	var passwordHash string
 	var lastLogin sql.NullTime
+	var totpSecretEnc sql.NullString
+	var totpEnabled int
 	err := s.db.QueryRow(
-		"SELECT id, username, password_hash, created_at, last_login FROM users WHERE username = ?",
+		"SELECT id, username, password_hash, created_at, last_login, totp_secret_enc, COALESCE(totp_enabled, 0) FROM users WHERE username = ?",
 		username,
-	).Scan(&user.ID, &user.Username, &passwordHash, &user.CreatedAt, &lastLogin)
+	).Scan(&user.ID, &user.Username, &passwordHash, &user.CreatedAt, &lastLogin, &totpSecretEnc, &totpEnabled)
 
 	if err == sql.ErrNoRows {
+		// Perform dummy bcrypt comparison to prevent timing attacks
+		bcrypt.CompareHashAndPassword([]byte("$2a$10$dummyhashtopreventtimingattacks"), []byte(password))
 		return nil, ErrInvalidCredentials
 	}
 	if err != nil {
@@ -259,13 +207,35 @@ func (s *Service) Login(username, password string) (*LoginResponse, error) {
 		return nil, ErrInvalidCredentials
 	}
 
-	// Create session
-	sessionID := generateSessionID()
+	// Check 2FA if enabled
+	if totpEnabled == 1 {
+		if totpCode == "" {
+			return nil, ErrTOTPRequired
+		}
+
+		// Decrypt and verify TOTP code
+		if totpSecretEnc.Valid && totpSecretEnc.String != "" {
+			secret, err := helper.Decrypt(totpSecretEnc.String)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decrypt 2FA secret: %v", err)
+			}
+
+			if !totp.Validate(totpCode, secret) {
+				return nil, errors.New("invalid 2FA code")
+			}
+		}
+	}
+
+	// Create session with IP and user agent
+	sessionID, err := generateSessionID()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate session ID: %w", err)
+	}
 	expiresAt := time.Now().Add(24 * time.Hour) // 24 hour sessions
 
 	_, err = s.db.Exec(
-		"INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)",
-		sessionID, user.ID, expiresAt,
+		"INSERT INTO sessions (id, user_id, expires_at, ip_address, user_agent, last_active) VALUES (?, ?, ?, ?, ?, ?)",
+		sessionID, user.ID, expiresAt, ipAddress, userAgent, time.Now(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session: %v", err)
@@ -307,7 +277,19 @@ func (s *Service) ValidateSession(token string) (*User, error) {
 		user.LastLogin = lastLogin.Time
 	}
 
+	// Update session activity (only if > 1 minute since last update)
+	go s.updateSessionActivity(token)
+
 	return &user, nil
+}
+
+// updateSessionActivity updates last_active timestamp (runs async)
+func (s *Service) updateSessionActivity(token string) {
+	s.db.Exec(`
+		UPDATE sessions
+		SET last_active = datetime('now')
+		WHERE id = ? AND (last_active IS NULL OR last_active < datetime('now', '-1 minute'))
+	`, token)
 }
 
 // Logout invalidates a session
@@ -324,246 +306,130 @@ func (s *Service) HasUsers() bool {
 }
 
 // generateSessionID generates a random session ID
-func generateSessionID() string {
+func generateSessionID() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		panic("crypto/rand failed: " + err.Error())
+		return "", fmt.Errorf("crypto/rand failed: %w", err)
 	}
-	return base64.URLEncoding.EncodeToString(b)
+	return base64.URLEncoding.EncodeToString(b), nil
+}
+
+// parseTime tries multiple time formats for SQLite compatibility
+func parseTime(s string) time.Time {
+	formats := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02T15:04:05.999999999Z07:00",
+		"2006-01-02 15:04:05.999999999Z07:00",
+		"2006-01-02 15:04:05.999999999+00:00",
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04:05",
+	}
+	for _, f := range formats {
+		if t, err := time.Parse(f, s); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
 }
 
 // HTTP Handlers
 
-// getClientIP extracts the real client IP from the request
-func getClientIP(r *http.Request) string {
-	// Extract remote IP (without port)
-	remoteIP := r.RemoteAddr
-	if idx := strings.LastIndex(remoteIP, ":"); idx != -1 {
-		remoteIP = remoteIP[:idx]
-	}
-
-	// Only trust X-Forwarded-For and X-Real-IP from trusted proxies
-	if isTrustedProxy(remoteIP) {
-		// Check X-Forwarded-For header (set by reverse proxy)
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			// Take the first IP (original client)
-			if idx := strings.Index(xff, ","); idx != -1 {
-				return strings.TrimSpace(xff[:idx])
-			}
-			return strings.TrimSpace(xff)
-		}
-		// Check X-Real-IP header
-		if xri := r.Header.Get("X-Real-IP"); xri != "" {
-			return xri
-		}
-	}
-
-	return remoteIP
-}
-
-// checkLoginRateLimit returns true if the IP is rate limited
-func checkLoginRateLimit(ip string) (bool, time.Duration) {
-	loginAttemptsMutex.RLock()
-	attempt, exists := loginAttempts[ip]
-	loginAttemptsMutex.RUnlock()
-
-	if !exists {
-		return false, 0
-	}
-
-	now := time.Now()
-
-	// Check if currently locked out
-	if !attempt.lockedAt.IsZero() {
-		remaining := loginLockoutTime - now.Sub(attempt.lockedAt)
-		if remaining > 0 {
-			return true, remaining
-		}
-		// Lockout expired, reset
-		loginAttemptsMutex.Lock()
-		delete(loginAttempts, ip)
-		loginAttemptsMutex.Unlock()
-		return false, 0
-	}
-
-	// Check if window has expired (reset counter)
-	if now.Sub(attempt.firstTry) > loginLockoutWindow {
-		loginAttemptsMutex.Lock()
-		delete(loginAttempts, ip)
-		loginAttemptsMutex.Unlock()
-		return false, 0
-	}
-
-	return false, 0
-}
-
-// recordFailedLogin records a failed login attempt and returns true if now locked out
-func recordFailedLogin(ip string) bool {
-	loginAttemptsMutex.Lock()
-	defer loginAttemptsMutex.Unlock()
-
-	now := time.Now()
-	attempt, exists := loginAttempts[ip]
-
-	if !exists {
-		loginAttempts[ip] = &loginAttempt{
-			count:    1,
-			firstTry: now,
-		}
-		return false
-	}
-
-	// Reset if window expired
-	if now.Sub(attempt.firstTry) > loginLockoutWindow {
-		attempt.count = 1
-		attempt.firstTry = now
-		attempt.lockedAt = time.Time{}
-		return false
-	}
-
-	attempt.count++
-	if attempt.count >= maxLoginAttempts {
-		attempt.lockedAt = now
-		log.Printf("Login rate limit: IP %s locked out after %d failed attempts", ip, attempt.count)
-		return true
-	}
-
-	return false
-}
-
-// clearLoginAttempts clears failed attempts for an IP after successful login
-func clearLoginAttempts(ip string) {
-	loginAttemptsMutex.Lock()
-	delete(loginAttempts, ip)
-	loginAttemptsMutex.Unlock()
-}
-
 func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 	clientIP := getClientIP(r)
+	userAgent := r.Header.Get("User-Agent")
 
 	// Check rate limit
 	if locked, remaining := checkLoginRateLimit(clientIP); locked {
 		w.Header().Set("Retry-After", fmt.Sprintf("%d", int(remaining.Seconds())))
-		http.Error(w, fmt.Sprintf("Too many login attempts. Try again in %d minutes.", int(remaining.Minutes())+1), http.StatusTooManyRequests)
+		router.JSONError(w, fmt.Sprintf("Too many failed attempts. Try again in %d seconds.", int(remaining.Seconds())), http.StatusTooManyRequests)
 		return
 	}
 
 	var req LoginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
 
-	resp, err := s.Login(req.Username, req.Password)
+	resp, err := s.Login(req.Username, req.Password, req.TOTPCode, clientIP, userAgent)
 	if err != nil {
-		if err == ErrInvalidCredentials {
-			// Record failed attempt
+		// Record failed attempt (except for TOTP required which isn't a failure)
+		if err != ErrTOTPRequired {
 			if recordFailedLogin(clientIP) {
-				w.Header().Set("Retry-After", fmt.Sprintf("%d", int(loginLockoutTime.Seconds())))
-				http.Error(w, fmt.Sprintf("Too many login attempts. Try again in %d minutes.", int(loginLockoutTime.Minutes())), http.StatusTooManyRequests)
+				router.JSONError(w, "Account locked due to too many failed attempts", http.StatusTooManyRequests)
 				return
 			}
-			http.Error(w, "Invalid username or password", http.StatusUnauthorized)
+		}
+
+		if err == ErrTOTPRequired {
+			router.JSONError(w, "2FA code required", http.StatusPreconditionRequired)
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		if err == ErrInvalidCredentials {
+			router.JSONError(w, "Invalid username or password", http.StatusUnauthorized)
+			return
+		}
+		router.JSONError(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 
 	// Clear failed attempts on successful login
 	clearLoginAttempts(clientIP)
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	router.JSON(w, resp)
 }
 
 func (s *Service) handleLogout(w http.ResponseWriter, r *http.Request) {
 	token := helper.ExtractBearerToken(r)
-	if token == "" {
-		http.Error(w, "No token provided", http.StatusBadRequest)
-		return
+	if token != "" {
+		s.Logout(token)
 	}
-
-	s.Logout(token)
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"message": "Logged out"})
-}
-
-func (s *Service) handleValidate(w http.ResponseWriter, r *http.Request) {
-	token := helper.ExtractBearerToken(r)
-	if token == "" {
-		http.Error(w, "No token provided", http.StatusUnauthorized)
-		return
-	}
-
-	user, err := s.ValidateSession(token)
-	if err != nil {
-		http.Error(w, "Invalid or expired session", http.StatusUnauthorized)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"valid": true,
-		"user":  user,
-	})
+	router.JSON(w, map[string]string{"message": "Logged out"})
 }
 
 func (s *Service) handleGetCurrentUser(w http.ResponseWriter, r *http.Request) {
 	token := helper.ExtractBearerToken(r)
 	if token == "" {
-		http.Error(w, "No token provided", http.StatusUnauthorized)
+		router.JSONError(w, "No token provided", http.StatusUnauthorized)
 		return
 	}
 
 	user, err := s.ValidateSession(token)
 	if err != nil {
-		http.Error(w, "Invalid or expired session", http.StatusUnauthorized)
+		router.JSONError(w, "Invalid or expired session", http.StatusUnauthorized)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(user)
+	router.JSON(w, user)
 }
 
 func (s *Service) handleCreateUser(w http.ResponseWriter, r *http.Request) {
-	var req LoginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
 
 	user, err := s.CreateUser(req.Username, req.Password)
 	if err != nil {
-		if err == ErrUserExists {
-			http.Error(w, "Username already exists", http.StatusConflict)
-			return
-		}
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		router.JSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(user)
+	router.JSON(w, user)
 }
 
-func (s *Service) handleHealth(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":   "ok",
-		"hasUsers": s.HasUsers(),
-	})
-}
-
+// Service instance management
+var serviceInstance *Service
 
 // GetService returns the auth service instance for use by other packages
-var instance *Service
-
 func GetService() *Service {
-	return instance
+	return serviceInstance
 }
 
+// SetService sets the auth service instance
 func SetService(svc *Service) {
-	instance = svc
+	serviceInstance = svc
 }

@@ -4,11 +4,12 @@
   import Icon from '../components/Icon.svelte'
   import Badge from '../components/Badge.svelte'
   import InfoCard from '../components/InfoCard.svelte'
+  import ContentBlock from '../components/ContentBlock.svelte'
   import Tabs from '../components/Tabs.svelte'
 
   let { loading = $bindable(true) } = $props()
 
-  let activeTab = $state(getInitialTab('overview', ['overview', 'api', 'services']))
+  let activeTab = $state(getInitialTab('overview', ['overview', 'api']))
   let routerStatus = $state(null)
   let expandedApi = $state(null)
   let apiSchema = $state(null)
@@ -51,15 +52,14 @@
 
   const tabs = [
     { id: 'overview', label: 'Overview', icon: 'info-circle' },
-    { id: 'api', label: 'API Reference', icon: 'code' },
-    { id: 'services', label: 'Services', icon: 'server' }
+    { id: 'api', label: 'API Reference', icon: 'code' }
   ]
 
   onMount(async () => {
     try {
       const [router, schema] = await Promise.all([
         apiGet('/api/vpn/router/status').catch(() => null),
-        apiGet('/api').catch(() => null)
+        apiGet('/api/schema').catch(() => null)
       ])
       routerStatus = router
       apiSchema = schema
@@ -94,68 +94,105 @@
           <div>
             <h3 class="text-lg font-semibold text-foreground mb-3">Key Features</h3>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div class="p-4 bg-muted/30 rounded-lg border border-border">
-                <div class="flex items-center gap-2 mb-2">
-                  <Icon name="users" size={18} class="text-primary" />
-                  <span class="font-medium text-foreground">Headscale Management</span>
-                </div>
-                <p class="text-xs text-muted-foreground">Manage users, nodes, pre-auth keys, API keys, and routes for your Headscale/Tailscale network.</p>
-              </div>
-              <div class="p-4 bg-muted/30 rounded-lg border border-border">
-                <div class="flex items-center gap-2 mb-2">
-                  <Icon name="shield" size={18} class="text-success" />
-                  <span class="font-medium text-foreground">WireGuard Peers</span>
-                </div>
-                <p class="text-xs text-muted-foreground">Create and manage WireGuard peers with QR codes for easy mobile setup.</p>
-              </div>
-              <div class="p-4 bg-muted/30 rounded-lg border border-border">
-                <div class="flex items-center gap-2 mb-2">
-                  <Icon name="shield-check" size={18} class="text-warning" />
-                  <span class="font-medium text-foreground">AdGuard DNS</span>
-                </div>
-                <p class="text-xs text-muted-foreground">Network-wide ad blocking, safe browsing, parental controls, and DNS query logging.</p>
-              </div>
-              <div class="p-4 bg-muted/30 rounded-lg border border-border">
-                <div class="flex items-center gap-2 mb-2">
-                  <Icon name="lock" size={18} class="text-destructive" />
-                  <span class="font-medium text-foreground">Firewall & Fail2Ban</span>
-                </div>
-                <p class="text-xs text-muted-foreground">Port management, IP blocking, intrusion detection with configurable jails.</p>
-              </div>
-              <div class="p-4 bg-muted/30 rounded-lg border border-border">
-                <div class="flex items-center gap-2 mb-2">
-                  <Icon name="world" size={18} class="text-info" />
-                  <span class="font-medium text-foreground">Traefik Proxy</span>
-                </div>
-                <p class="text-xs text-muted-foreground">View routers, services, middlewares. Configure VPN-only access mode.</p>
-              </div>
-              <div class="p-4 bg-muted/30 rounded-lg border border-border">
-                <div class="flex items-center gap-2 mb-2">
-                  <Icon name="route" size={18} class="text-primary" />
-                  <span class="font-medium text-foreground">Cross-Network Routing</span>
-                </div>
-                <p class="text-xs text-muted-foreground">Enable communication between WireGuard and Headscale networks with ACL rules.</p>
-              </div>
+              <ContentBlock
+                variant="box"
+                border
+                padding="lg"
+                icon="users"
+                iconColor="text-primary"
+                title="Headscale Management"
+                description="Manage users, nodes, pre-auth keys, API keys, and routes for your Headscale/Tailscale network."
+              />
+              <ContentBlock
+                variant="box"
+                border
+                padding="lg"
+                icon="shield"
+                iconColor="text-success"
+                title="WireGuard Peers"
+                description="Create and manage WireGuard peers with QR codes for easy mobile setup."
+              />
+              <ContentBlock
+                variant="box"
+                border
+                padding="lg"
+                icon="shield-check"
+                iconColor="text-warning"
+                title="AdGuard DNS"
+                description="Network-wide ad blocking, safe browsing, parental controls, and DNS query logging."
+              />
+              <ContentBlock
+                variant="box"
+                border
+                padding="lg"
+                icon="lock"
+                iconColor="text-destructive"
+                title="Firewall & Fail2Ban"
+                description="Port management, IP blocking, intrusion detection with configurable jails."
+              />
+              <ContentBlock
+                variant="box"
+                border
+                padding="lg"
+                icon="world"
+                iconColor="text-info"
+                title="Traefik Proxy"
+                description="View routers, services, middlewares. Configure VPN-only access mode."
+              />
+              <ContentBlock
+                variant="box"
+                border
+                padding="lg"
+                icon="route"
+                iconColor="text-primary"
+                title="Cross-Network Routing"
+                description="Enable communication between WireGuard and Headscale networks with ACL rules."
+              />
+              <ContentBlock
+                variant="box"
+                border
+                padding="lg"
+                icon="globe"
+                iconColor="text-info"
+                title="Geolocation"
+                description="IP lookup with MaxMind/IP2Location. Country blocking with IPDeny zone files."
+              />
+              <ContentBlock
+                variant="box"
+                border
+                padding="lg"
+                icon="box"
+                iconColor="text-muted-foreground"
+                title="Docker Management"
+                description="View and manage Docker containers. Restart services, view logs and resource usage."
+              />
+            </div>
+          </div>
+
+          <!-- Cross-Network Routing Details -->
+          <div>
+            <h3 class="text-lg font-semibold text-foreground mb-3">Cross-Network Routing</h3>
+            <p class="text-xs text-muted-foreground mb-3">
+              VPN Router enables communication between WireGuard and Headscale networks via Tailscale container.
+            </p>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <ContentBlock variant="box" border padding="md" title="1. Router Setup" description="Tailscale container joins Headscale and advertises WG subnet." />
+              <ContentBlock variant="box" border padding="md" title="2. ACL Rules" description="Define which clients can communicate using Headscale ACL + nftables." />
+              <ContentBlock variant="box" border padding="md" title="3. Traffic Flow" description="Traffic between networks flows through the router based on ACL policy." />
             </div>
           </div>
 
           <div>
             <h3 class="text-lg font-semibold text-foreground mb-3">Network Configuration</h3>
             <div class="grid grid-cols-2 gap-4">
-              <div class="p-3 bg-muted/50 rounded-lg">
-                <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">WireGuard Network</div>
-                <code class="text-sm font-mono text-foreground">{routerStatus?.wgIPRange || 'Not configured'}</code>
-              </div>
-              <div class="p-3 bg-muted/50 rounded-lg">
-                <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Headscale Network</div>
-                <code class="text-sm font-mono text-foreground">{routerStatus?.headscaleIPRange || 'Not configured'}</code>
-              </div>
+              <ContentBlock variant="data" label="WireGuard Network" value={routerStatus?.wgIPRange || 'Not configured'} mono />
+              <ContentBlock variant="data" label="Headscale Network" value={routerStatus?.headscaleIPRange || 'Not configured'} mono />
             </div>
           </div>
 
           <div>
             <h3 class="text-lg font-semibold text-foreground mb-3">System Architecture</h3>
-            <div class="bg-zinc-900 text-zinc-100 p-4 rounded-lg font-mono text-[10px] overflow-x-auto">
+            <div class="bg-secondary text-secondary-foreground p-4 rounded-lg font-mono text-[10px] overflow-x-auto">
               <pre class="whitespace-pre">{`┌─────────────────────────────────────────────────────────────────────┐
 │                         Admin Panel (UI + API)                       │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐            │
@@ -315,12 +352,12 @@
                     {#if ex.request}
                       <div>
                         <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Request</div>
-                        <pre class="bg-zinc-900 text-zinc-100 p-2 rounded text-[10px] font-mono overflow-x-auto">{ex.request}</pre>
+                        <pre class="bg-secondary text-secondary-foreground p-2 rounded text-[10px] font-mono overflow-x-auto">{ex.request}</pre>
                       </div>
                     {/if}
                     <div>
                       <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Response</div>
-                      <pre class="bg-zinc-900 text-zinc-100 p-2 rounded text-[10px] font-mono overflow-x-auto">{ex.response}</pre>
+                      <pre class="bg-secondary text-secondary-foreground p-2 rounded text-[10px] font-mono overflow-x-auto">{ex.response}</pre>
                     </div>
                   </div>
                 </div>
@@ -329,161 +366,7 @@
           </div>
         </div>
 
-      <!-- Services Tab -->
-      {:else if activeTab === 'services'}
-        <div class="space-y-4">
-          <p class="text-sm text-muted-foreground">
-            Each service runs in its own Docker container and is managed through the unified API.
-          </p>
-
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="p-4 bg-muted/30 rounded-lg border border-border">
-              <div class="flex items-start gap-3">
-                <div class="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <Icon name="users" size={16} class="text-primary" />
-                </div>
-                <div class="flex-1 min-w-0">
-                  <h4 class="font-medium text-foreground">Headscale</h4>
-                  <p class="text-xs text-muted-foreground mb-2">Self-hosted Tailscale control server</p>
-                  <p class="text-xs text-muted-foreground/80 leading-relaxed">
-                    Open source Tailscale control server. Run your own mesh VPN with NAT traversal, MagicDNS, and automatic key rotation.
-                  </p>
-                  <div class="mt-2 flex flex-wrap gap-1">
-                    <Badge variant="info" size="sm">Mesh VPN</Badge>
-                    <Badge variant="info" size="sm">NAT Traversal</Badge>
-                    <Badge variant="info" size="sm">MagicDNS</Badge>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="p-4 bg-muted/30 rounded-lg border border-border">
-              <div class="flex items-start gap-3">
-                <div class="w-8 h-8 rounded-lg bg-success/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <Icon name="shield" size={16} class="text-success" />
-                </div>
-                <div class="flex-1 min-w-0">
-                  <h4 class="font-medium text-foreground">WireGuard</h4>
-                  <p class="text-xs text-muted-foreground mb-2">Fast, modern VPN tunnel</p>
-                  <p class="text-xs text-muted-foreground/80 leading-relaxed">
-                    Simple, fast VPN using state-of-the-art cryptography. Lean and performant with minimal attack surface.
-                  </p>
-                  <div class="mt-2 flex flex-wrap gap-1">
-                    <Badge variant="success" size="sm">Point-to-Point</Badge>
-                    <Badge variant="success" size="sm">ChaCha20</Badge>
-                    <Badge variant="success" size="sm">QR Codes</Badge>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="p-4 bg-muted/30 rounded-lg border border-border">
-              <div class="flex items-start gap-3">
-                <div class="w-8 h-8 rounded-lg bg-warning/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <Icon name="shield-check" size={16} class="text-warning" />
-                </div>
-                <div class="flex-1 min-w-0">
-                  <h4 class="font-medium text-foreground">AdGuard Home</h4>
-                  <p class="text-xs text-muted-foreground mb-2">Network-wide ad blocking DNS</p>
-                  <p class="text-xs text-muted-foreground/80 leading-relaxed">
-                    DNS sinkhole blocking ads, trackers, and malware at network level. All VPN clients use it automatically.
-                  </p>
-                  <div class="mt-2 flex flex-wrap gap-1">
-                    <Badge variant="warning" size="sm">Ad Blocking</Badge>
-                    <Badge variant="warning" size="sm">Safe Browsing</Badge>
-                    <Badge variant="warning" size="sm">Query Log</Badge>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="p-4 bg-muted/30 rounded-lg border border-border">
-              <div class="flex items-start gap-3">
-                <div class="w-8 h-8 rounded-lg bg-info/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <Icon name="world" size={16} class="text-info" />
-                </div>
-                <div class="flex-1 min-w-0">
-                  <h4 class="font-medium text-foreground">Traefik</h4>
-                  <p class="text-xs text-muted-foreground mb-2">Cloud-native reverse proxy</p>
-                  <p class="text-xs text-muted-foreground/80 leading-relaxed">
-                    HTTPS termination, routing, and load balancing. Restrict access to VPN clients with VPN-only mode.
-                  </p>
-                  <div class="mt-2 flex flex-wrap gap-1">
-                    <Badge variant="info" size="sm">HTTPS</Badge>
-                    <Badge variant="info" size="sm">VPN-Only</Badge>
-                    <Badge variant="info" size="sm">Middlewares</Badge>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="p-4 bg-muted/30 rounded-lg border border-border">
-              <div class="flex items-start gap-3">
-                <div class="w-8 h-8 rounded-lg bg-destructive/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <Icon name="lock" size={16} class="text-destructive" />
-                </div>
-                <div class="flex-1 min-w-0">
-                  <h4 class="font-medium text-foreground">Firewall</h4>
-                  <p class="text-xs text-muted-foreground mb-2">nftables + custom jails</p>
-                  <p class="text-xs text-muted-foreground/80 leading-relaxed">
-                    Port management with nftables. Custom jails auto-block IPs after repeated failed connection attempts.
-                  </p>
-                  <div class="mt-2 flex flex-wrap gap-1">
-                    <Badge variant="danger" size="sm">Port Control</Badge>
-                    <Badge variant="danger" size="sm">IP Blocking</Badge>
-                    <Badge variant="danger" size="sm">Jails</Badge>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="p-4 bg-muted/30 rounded-lg border border-border">
-              <div class="flex items-start gap-3">
-                <div class="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <Icon name="globe" size={16} class="text-primary" />
-                </div>
-                <div class="flex-1 min-w-0">
-                  <h4 class="font-medium text-foreground">Geolocation</h4>
-                  <p class="text-xs text-muted-foreground mb-2">IP-based country lookup</p>
-                  <p class="text-xs text-muted-foreground/80 leading-relaxed">
-                    Identify traffic origin by country. Block connections from specific countries with country-based firewall rules.
-                  </p>
-                  <div class="mt-2 flex flex-wrap gap-1">
-                    <Badge variant="info" size="sm">IP Lookup</Badge>
-                    <Badge variant="info" size="sm">Country Block</Badge>
-                    <Badge variant="info" size="sm">Traffic Logs</Badge>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Cross-Network Routing -->
-          <div class="pt-2">
-            <h4 class="font-medium text-foreground mb-3 flex items-center gap-2">
-              <Icon name="route" size={16} class="text-muted-foreground" />
-              Cross-Network Routing
-            </h4>
-            <p class="text-xs text-muted-foreground mb-3">
-              VPN Router enables communication between WireGuard and Headscale networks via Tailscale container.
-            </p>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div class="p-3 bg-muted/30 rounded-lg border border-border">
-                <h5 class="text-sm font-medium text-foreground mb-1">1. Router Setup</h5>
-                <p class="text-xs text-muted-foreground">Tailscale container joins Headscale and advertises WG subnet.</p>
-              </div>
-              <div class="p-3 bg-muted/30 rounded-lg border border-border">
-                <h5 class="text-sm font-medium text-foreground mb-1">2. ACL Rules</h5>
-                <p class="text-xs text-muted-foreground">Define which clients can communicate using Headscale ACL + nftables.</p>
-              </div>
-              <div class="p-3 bg-muted/30 rounded-lg border border-border">
-                <h5 class="text-sm font-medium text-foreground mb-1">3. Traffic Flow</h5>
-                <p class="text-xs text-muted-foreground">Traffic between networks flows through the router based on ACL policy.</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      {/if}
+{/if}
     </div>
   </div>
 </div>

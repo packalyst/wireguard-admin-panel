@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"api/internal/helper"
+
 	"github.com/ip2location/ip2location-go/v9"
 )
 
@@ -296,7 +298,7 @@ func (p *IP2LocationProvider) downloadDBToPath(destPath string) error {
 
 	log.Printf("Downloading IP2Location database (variant: %s)...", p.variant)
 
-	client := &http.Client{Timeout: 5 * time.Minute}
+	client := &http.Client{Timeout: helper.GeoDBDownloadTimeout}
 	resp, err := client.Get(url)
 	if err != nil {
 		return fmt.Errorf("download failed: %v", err)
