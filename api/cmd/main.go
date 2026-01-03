@@ -1,8 +1,12 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"api/internal/adguard"
@@ -43,7 +47,6 @@ func main() {
 	if _, err := database.Init(dataDir); err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
-	defer database.Close()
 
 	// Initialize encryption (must be before services that use encryption)
 	helper.InitEncryption()
@@ -218,10 +221,55 @@ func main() {
 	mux.Handle("/api/ws", http.HandlerFunc(wsSvc.HandleWebSocket))
 	mux.Handle("/", handler)
 
-	// Start server
+	// Create server with timeouts
 	port := helper.GetEnv("API_PORT")
+	server := &http.Server{
+		Addr:         ":" + port,
+		Handler:      mux,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	// Channel to signal shutdown completion
+	done := make(chan bool, 1)
+
+	// Handle shutdown signals
+	go func() {
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+		sig := <-sigChan
+		log.Printf("Received signal %v, initiating graceful shutdown...", sig)
+
+		// Create shutdown context with timeout
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		// Stop accepting new connections and wait for existing ones
+		if err := server.Shutdown(ctx); err != nil {
+			log.Printf("Error during server shutdown: %v", err)
+		}
+
+		// Stop WebSocket status checker
+		ws.StopStatusChecker()
+
+		// Close database
+		if err := database.Close(); err != nil {
+			log.Printf("Error closing database: %v", err)
+		}
+
+		log.Println("Graceful shutdown completed")
+		done <- true
+	}()
+
+	// Start server
 	log.Printf("Unified API server starting on port %s", port)
-	log.Fatal(http.ListenAndServe(":"+port, mux))
+	if err := server.ListenAndServe(); err != http.ErrServerClosed {
+		log.Fatalf("Server error: %v", err)
+	}
+
+	// Wait for shutdown to complete
+	<-done
 }
 
 // dockerLogAdapter adapts docker.Service to ws.DockerLogStreamer interface

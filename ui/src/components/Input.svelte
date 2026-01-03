@@ -45,6 +45,9 @@
     onPrefixCheckboxChange = undefined,
     onSuffixCheckboxChange = undefined,
 
+    // Password toggle - auto-enabled for type="password", set false to disable
+    showPasswordToggle = undefined,
+
     onkeydown = undefined,
     onclick = undefined,
     oninput = undefined,
@@ -52,6 +55,21 @@
     tooltip = undefined,
     ...restProps
   } = $props();
+
+  // Password visibility state
+  let passwordVisible = $state(false);
+
+  // Auto-detect password toggle: enabled by default for password fields unless explicitly disabled
+  const isPasswordField = type === 'password';
+  const hasPasswordToggle = showPasswordToggle ?? isPasswordField;
+
+  // Compute actual input type (toggle between password and text)
+  const actualType = $derived(isPasswordField && passwordVisible ? 'text' : type);
+
+  // Toggle password visibility
+  function togglePassword() {
+    passwordVisible = !passwordVisible;
+  }
 
   // Size classes mapping (sm is default)
   const sizeClasses = {
@@ -69,17 +87,17 @@
   const suffixCheckboxProps = suffixCheckbox === true ? {} : suffixCheckbox;
 
   // Determine wrapper type - any prefix/suffix uses input-group
-  const hasInputGroup = prefixAddon || suffixAddon || prefixAddonIcon || suffixAddonIcon || prefixAddonBtn || suffixAddonBtn || prefixCheckbox || suffixCheckbox || prefixIconBtn || suffixIconBtn || prefixIcon || suffixIcon;
+  const hasInputGroup = prefixAddon || suffixAddon || prefixAddonIcon || suffixAddonIcon || prefixAddonBtn || suffixAddonBtn || prefixCheckbox || suffixCheckbox || prefixIconBtn || suffixIconBtn || prefixIcon || suffixIcon || hasPasswordToggle;
 
   // Whether input needs inner wrapper (has icons or icon buttons inside)
-  const hasInnerWrapper = prefixIcon || suffixIcon || suffixIconBtn || prefixIconBtn;
+  const hasInnerWrapper = prefixIcon || suffixIcon || suffixIconBtn || prefixIconBtn || hasPasswordToggle;
 </script>
 
 <!-- Reusable snippet for the input element -->
 {#snippet inputElement(inputClass, showTooltip = false)}
   <input
     bind:value
-    {type}
+    type={actualType}
     {placeholder}
     {disabled}
     {readonly}
@@ -161,6 +179,17 @@
     {@render inputElement("w-full")}
     {#if suffixIcon}
       <Icon name={suffixIcon} size={14} />
+    {/if}
+    {#if hasPasswordToggle}
+      <Button
+        icon={passwordVisible ? 'eye-off' : 'eye'}
+        size="xs"
+        variant="ghost"
+        iconOnly
+        class="-me-1"
+        onclick={togglePassword}
+        tabindex={-1}
+      />
     {/if}
     {#if suffixIconBtn}
       <Button {...suffixIconBtn} size="xs" variant="ghost" iconOnly class="-me-1" />

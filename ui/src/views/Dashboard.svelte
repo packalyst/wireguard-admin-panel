@@ -106,6 +106,11 @@
   }
 
   function navigate(id, isChild = false) {
+    // Skip if already on this page
+    if ($currentView === id) {
+      sidebarOpen = false
+      return
+    }
     currentView.set(id)
     sidebarOpen = false
     loading = true

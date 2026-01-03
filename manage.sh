@@ -64,12 +64,13 @@ validate_domain_dns() {
     # Check if dig is available, otherwise use host or nslookup
     local resolved_ip=""
 
+    # Use || true to prevent set -e from exiting on grep failure
     if command -v dig &> /dev/null; then
-        resolved_ip=$(dig +short "$domain" A 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+        resolved_ip=$(dig +short "$domain" A 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
     elif command -v host &> /dev/null; then
-        resolved_ip=$(host "$domain" 2>/dev/null | grep "has address" | head -1 | awk '{print $NF}')
+        resolved_ip=$(host "$domain" 2>/dev/null | grep "has address" | head -1 | awk '{print $NF}' || true)
     elif command -v nslookup &> /dev/null; then
-        resolved_ip=$(nslookup "$domain" 2>/dev/null | grep -A1 "Name:" | grep "Address:" | awk '{print $2}' | head -1)
+        resolved_ip=$(nslookup "$domain" 2>/dev/null | grep -A1 "Name:" | grep "Address:" | awk '{print $2}' | head -1 || true)
     else
         echo "no-dns-tool"
         return 2
@@ -99,6 +100,81 @@ validate_email() {
     fi
 }
 
+validate_domain_format() {
+    local domain="$1"
+    # Domain format validation:
+    # - Must contain at least one dot
+    # - Cannot start/end with dot or hyphen
+    # - Only alphanumeric, dots, and hyphens allowed
+    # - Each label max 63 chars, total max 253 chars
+    if [[ ${#domain} -gt 253 ]]; then
+        return 1
+    fi
+    if [[ "$domain" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$ ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Cloudflare IP ranges (cached)
+CF_IPS=""
+
+fetch_cloudflare_ips() {
+    if [ -n "$CF_IPS" ]; then
+        echo "$CF_IPS"
+        return 0
+    fi
+
+    echo -e "${YELLOW}Fetching Cloudflare IP ranges...${NC}" >&2
+    CF_IPS=$(curl -s --max-time 5 "https://www.cloudflare.com/ips-v4/" 2>/dev/null)
+
+    if [ -z "$CF_IPS" ]; then
+        echo -e "${RED}Failed to fetch Cloudflare IPs${NC}" >&2
+        return 1
+    fi
+
+    echo "$CF_IPS"
+}
+
+is_cloudflare_ip() {
+    local ip="$1"
+    local cf_ranges="$2"
+
+    # Convert IP to integer for comparison
+    local ip_int=0
+    local i=0
+    IFS='.' read -ra octets <<< "$ip"
+    for octet in "${octets[@]}"; do
+        ip_int=$((ip_int * 256 + octet))
+    done
+
+    # Check each CIDR range
+    while IFS= read -r cidr; do
+        [ -z "$cidr" ] && continue
+
+        local network="${cidr%/*}"
+        local prefix="${cidr#*/}"
+
+        # Convert network to integer
+        local net_int=0
+        IFS='.' read -ra octets <<< "$network"
+        for octet in "${octets[@]}"; do
+            net_int=$((net_int * 256 + octet))
+        done
+
+        # Calculate mask
+        local mask=$(( (0xFFFFFFFF << (32 - prefix)) & 0xFFFFFFFF ))
+
+        # Check if IP is in range
+        if [ $((ip_int & mask)) -eq $((net_int & mask)) ]; then
+            return 0
+        fi
+    done <<< "$cf_ranges"
+
+    return 1
+}
+
 prompt_yes_no() {
     local prompt="$1"
     local default="${2:-n}"
@@ -120,8 +196,12 @@ update_env_value() {
     local key="$1"
     local value="$2"
 
+    # Escape special sed characters in value
+    local escaped_value
+    escaped_value=$(printf '%s' "$value" | sed 's/[&/\|]/\\&/g')
+
     if grep -q "^${key}=" .env 2>/dev/null; then
-        sed -i "s|^${key}=.*|${key}=${value}|g" .env
+        sed -i "s|^${key}=.*|${key}=${escaped_value}|g" .env
     else
         echo "${key}=${value}" >> .env
     fi
@@ -830,7 +910,7 @@ FIREWALL_CONFLICTS=()
 # Check UFW
 if command -v ufw &> /dev/null; then
     UFW_STATUS=$(sudo ufw status 2>/dev/null | head -1)
-    if [[ "$UFW_STATUS" == *"active"* ]]; then
+    if [[ "$UFW_STATUS" == "Status: active" ]]; then
         FIREWALL_CONFLICTS+=("ufw")
         echo -e "  ${YELLOW}⚠${NC} UFW is active"
     else
@@ -1034,8 +1114,25 @@ echo -e "${YELLOW}[3/5] Admin Panel Domain (VPN-only):${NC}"
 echo "  Configure a custom domain for the admin panel (requires VPN connection)"
 echo ""
 
-read -p "Enter domain name [manage.me]: " ADMIN_DOMAIN
-ADMIN_DOMAIN=${ADMIN_DOMAIN:-manage.me}
+ADMIN_DOMAIN_VALID="false"
+while [ "$ADMIN_DOMAIN_VALID" = "false" ]; do
+    read -p "Enter domain name [manage.me]: " ADMIN_DOMAIN
+    ADMIN_DOMAIN=${ADMIN_DOMAIN:-manage.me}
+
+    if ! validate_domain_format "$ADMIN_DOMAIN"; then
+        echo -e "${RED}✗ Invalid domain format: ${ADMIN_DOMAIN}${NC}"
+        echo -e "  Domain must be a valid format like: manage.me or admin.local"
+        if ! prompt_yes_no "Try again?" "y"; then
+            ADMIN_DOMAIN="manage.me"
+            echo -e "${YELLOW}Using default: manage.me${NC}"
+            break
+        fi
+        continue
+    fi
+
+    ADMIN_DOMAIN_VALID="true"
+done
+
 update_env_value "ADMIN_DOMAIN" "$ADMIN_DOMAIN"
 echo -e "${GREEN}✓ Admin domain set to: ${ADMIN_DOMAIN}${NC}"
 echo ""
@@ -1053,22 +1150,52 @@ if prompt_yes_no "Enable HTTPS with Let's Encrypt?" "y"; then
     SSL_ENABLED="true"
     echo ""
 
-    # Get domain
-    if [ -n "$CURRENT_SSL_DOMAIN" ]; then
-        echo -e "Current SSL domain: ${CYAN}${CURRENT_SSL_DOMAIN}${NC}"
-        read -p "Enter domain for SSL certificate (or press Enter to keep current): " SSL_DOMAIN_INPUT
-        SSL_DOMAIN="${SSL_DOMAIN_INPUT:-$CURRENT_SSL_DOMAIN}"
-    else
-        read -p "Enter domain for SSL certificate (e.g., vpn.example.com): " SSL_DOMAIN
+    # Domain input with validation and retry loop
+    DOMAIN_VALID="false"
+    while [ "$DOMAIN_VALID" = "false" ]; do
+        # Get domain
+        if [ -n "$CURRENT_SSL_DOMAIN" ]; then
+            echo -e "Current SSL domain: ${CYAN}${CURRENT_SSL_DOMAIN}${NC}"
+            read -p "Enter domain for SSL certificate (or press Enter to keep current): " SSL_DOMAIN_INPUT
+            SSL_DOMAIN="${SSL_DOMAIN_INPUT:-$CURRENT_SSL_DOMAIN}"
+        else
+            read -p "Enter domain for SSL certificate (e.g., vpn.example.com): " SSL_DOMAIN
+        fi
+
+        # Check if empty
         if [ -z "$SSL_DOMAIN" ]; then
             echo -e "${RED}✗ Domain is required for SSL${NC}"
-            SSL_ENABLED="false"
+            if ! prompt_yes_no "Try again?" "y"; then
+                SSL_ENABLED="false"
+                break
+            fi
+            continue
         fi
-    fi
 
+        # Validate domain format
+        if ! validate_domain_format "$SSL_DOMAIN"; then
+            echo -e "${RED}✗ Invalid domain format: ${SSL_DOMAIN}${NC}"
+            echo -e "  Domain must be a valid format like: vpn.example.com"
+            if ! prompt_yes_no "Try again?" "y"; then
+                SSL_ENABLED="false"
+                break
+            fi
+            continue
+        fi
+
+        DOMAIN_VALID="true"
+    done
+
+    # DNS validation with Cloudflare proxy support
     if [ "$SSL_ENABLED" = "true" ] && [ -n "$SSL_DOMAIN" ]; then
-        # Validate domain DNS
         echo ""
+
+        # Ask about Cloudflare proxy
+        BEHIND_CLOUDFLARE="false"
+        if prompt_yes_no "Is this domain behind Cloudflare proxy (orange cloud)?" "n"; then
+            BEHIND_CLOUDFLARE="true"
+        fi
+
         echo -e "${YELLOW}Validating domain DNS...${NC}"
 
         DNS_RESULT=$(validate_domain_dns "$SSL_DOMAIN" "$SERVER_IP")
@@ -1077,11 +1204,11 @@ if prompt_yes_no "Enable HTTPS with Let's Encrypt?" "y"; then
         if [ $DNS_STATUS -eq 2 ]; then
             echo -e "${YELLOW}⚠ No DNS lookup tool available (dig/host/nslookup)${NC}"
             echo -e "  Cannot verify domain points to this server."
-            if prompt_yes_no "Continue anyway? (Make sure $SSL_DOMAIN points to $SERVER_IP)" "n"; then
-                echo -e "${YELLOW}⚠ Proceeding without DNS validation${NC}"
-            else
+            if ! prompt_yes_no "Continue anyway? (Make sure $SSL_DOMAIN points to $SERVER_IP)" "n"; then
                 SSL_ENABLED="false"
                 echo -e "${YELLOW}SSL disabled - please configure DNS and try again${NC}"
+            else
+                echo -e "${YELLOW}⚠ Proceeding without DNS validation${NC}"
             fi
         elif [ $DNS_STATUS -eq 0 ]; then
             echo -e "${GREEN}✓ Domain $SSL_DOMAIN resolves to $SERVER_IP${NC}"
@@ -1089,16 +1216,43 @@ if prompt_yes_no "Enable HTTPS with Let's Encrypt?" "y"; then
             if [ "$DNS_RESULT" = "unresolved" ]; then
                 echo -e "${RED}✗ Domain $SSL_DOMAIN does not resolve to any IP${NC}"
                 echo -e "  Please add an A record pointing to: ${CYAN}${SERVER_IP}${NC}"
+                echo ""
+                if ! prompt_yes_no "Continue anyway? (SSL will fail if DNS is incorrect)" "n"; then
+                    SSL_ENABLED="false"
+                    echo -e "${YELLOW}SSL disabled - please fix DNS and run ./manage.sh again${NC}"
+                else
+                    echo -e "${YELLOW}⚠ Proceeding with unresolved domain${NC}"
+                fi
             else
-                echo -e "${RED}✗ Domain $SSL_DOMAIN resolves to ${DNS_RESULT}, not ${SERVER_IP}${NC}"
-                echo -e "  Please update the A record to point to: ${CYAN}${SERVER_IP}${NC}"
-            fi
-            echo ""
-            if prompt_yes_no "Continue anyway? (SSL will fail if DNS is incorrect)" "n"; then
-                echo -e "${YELLOW}⚠ Proceeding with mismatched DNS${NC}"
-            else
-                SSL_ENABLED="false"
-                echo -e "${YELLOW}SSL disabled - please fix DNS and run ./manage.sh again${NC}"
+                # Domain resolves to different IP - check if it's Cloudflare
+                if [ "$BEHIND_CLOUDFLARE" = "true" ]; then
+                    echo -e "${YELLOW}Domain resolves to: ${DNS_RESULT}${NC}"
+                    CF_RANGES=$(fetch_cloudflare_ips)
+                    if [ -n "$CF_RANGES" ] && is_cloudflare_ip "$DNS_RESULT" "$CF_RANGES"; then
+                        echo -e "${GREEN}✓ IP ${DNS_RESULT} is a Cloudflare proxy IP${NC}"
+                        echo -e "${GREEN}✓ Domain is correctly proxied through Cloudflare${NC}"
+                    else
+                        echo -e "${RED}✗ IP ${DNS_RESULT} is NOT a Cloudflare IP${NC}"
+                        echo -e "  Expected Cloudflare IP but got different address"
+                        if ! prompt_yes_no "Continue anyway?" "n"; then
+                            SSL_ENABLED="false"
+                            echo -e "${YELLOW}SSL disabled - please check DNS settings${NC}"
+                        else
+                            echo -e "${YELLOW}⚠ Proceeding with non-Cloudflare IP${NC}"
+                        fi
+                    fi
+                else
+                    echo -e "${RED}✗ Domain $SSL_DOMAIN resolves to ${DNS_RESULT}, not ${SERVER_IP}${NC}"
+                    echo -e "  Please update the A record to point to: ${CYAN}${SERVER_IP}${NC}"
+                    echo -e "  ${CYAN}Tip: If using Cloudflare proxy, run again and select 'yes' for proxy${NC}"
+                    echo ""
+                    if ! prompt_yes_no "Continue anyway? (SSL will fail if DNS is incorrect)" "n"; then
+                        SSL_ENABLED="false"
+                        echo -e "${YELLOW}SSL disabled - please fix DNS and run ./manage.sh again${NC}"
+                    else
+                        echo -e "${YELLOW}⚠ Proceeding with mismatched DNS${NC}"
+                    fi
+                fi
             fi
         fi
     fi

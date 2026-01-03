@@ -1,7 +1,7 @@
 # Traefik Static Configuration
 api:
   dashboard: true
-  insecure: true  # Enable on port 8080
+  insecure: true
 
 # Local plugins
 experimental:
