@@ -15,6 +15,8 @@ headscale/config/config.yaml
 headscale/config/acl.json
 traefik/traefik.yml
 traefik/dynamic.yml
+traefik/dynamic/core.yml
+traefik/acme.json
 
 # Screenshots
 Capture.PNG
