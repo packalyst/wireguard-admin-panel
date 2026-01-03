@@ -231,7 +231,7 @@
       "format": "json"
     },
     "rateLimit": {
-      "enabled": false,
+      "enabled": true,
       "requestsPerSecond": 100
     }
   }
