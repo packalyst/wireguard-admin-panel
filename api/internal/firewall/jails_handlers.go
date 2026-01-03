@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"regexp"
 
+	"api/internal/helper"
 	"api/internal/router"
 )
 
@@ -46,6 +47,14 @@ func (s *Service) handleCreateJail(w http.ResponseWriter, r *http.Request) {
 	if jail.FilterRegex != "" {
 		if _, err := regexp.Compile(jail.FilterRegex); err != nil {
 			router.JSONError(w, "invalid regex pattern: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Validate log file path to prevent path traversal
+	if jail.LogFile != "" {
+		if err := helper.ValidateLogFilePath(jail.LogFile); err != nil {
+			router.JSONError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 	}
@@ -111,6 +120,14 @@ func (s *Service) handleUpdateJail(w http.ResponseWriter, r *http.Request) {
 	if jail.FilterRegex != "" {
 		if _, err := regexp.Compile(jail.FilterRegex); err != nil {
 			router.JSONError(w, "invalid regex pattern: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Validate log file path to prevent path traversal
+	if jail.LogFile != "" {
+		if err := helper.ValidateLogFilePath(jail.LogFile); err != nil {
+			router.JSONError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 	}

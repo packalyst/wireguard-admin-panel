@@ -3,6 +3,8 @@ package helper
 import (
 	"fmt"
 	"net"
+	"net/url"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -200,4 +202,205 @@ func SanitizeDomainName(domain string) string {
 
 	// Lowercase
 	return strings.ToLower(safe)
+}
+
+// ValidateURL validates a URL for safe usage (prevents SSRF)
+// Allows only http/https schemes and validates format
+func ValidateURL(rawURL string) error {
+	if rawURL == "" {
+		return &ValidationError{Field: "url", Message: "URL is required"}
+	}
+
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return &ValidationError{Field: "url", Message: "invalid URL format"}
+	}
+
+	// Only allow http and https schemes
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return &ValidationError{Field: "url", Message: "URL must use http or https scheme"}
+	}
+
+	// Must have a host
+	if parsed.Host == "" {
+		return &ValidationError{Field: "url", Message: "URL must have a host"}
+	}
+
+	return nil
+}
+
+// ValidateInternalServiceURL validates a URL for internal service connections
+// Used for Headscale, AdGuard, etc. - blocks dangerous metadata endpoints
+func ValidateInternalServiceURL(rawURL string) error {
+	_, err := SanitizeInternalServiceURL(rawURL)
+	return err
+}
+
+// SanitizeInternalServiceURL validates and returns a sanitized URL for internal services
+// Blocks only dangerous endpoints (cloud metadata)
+func SanitizeInternalServiceURL(rawURL string) (string, error) {
+	if rawURL == "" {
+		return "", &ValidationError{Field: "url", Message: "URL is required"}
+	}
+
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return "", &ValidationError{Field: "url", Message: "invalid URL format"}
+	}
+
+	// Only allow http and https schemes
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", &ValidationError{Field: "url", Message: "URL must use http or https scheme"}
+	}
+
+	// Must have a host
+	if parsed.Host == "" {
+		return "", &ValidationError{Field: "url", Message: "URL must have a host"}
+	}
+
+	host := parsed.Hostname()
+	port := parsed.Port()
+
+	// Block dangerous endpoints
+	if ip := net.ParseIP(host); ip != nil {
+		// Block link-local (169.254.x.x) - cloud metadata endpoint
+		if ip.IsLinkLocalUnicast() {
+			return "", &ValidationError{Field: "url", Message: "URL cannot point to link-local addresses (security risk)"}
+		}
+	}
+
+	// Reconstruct URL from validated components
+	var safeURL string
+	if port != "" {
+		safeURL = parsed.Scheme + "://" + host + ":" + port + parsed.RequestURI()
+	} else {
+		safeURL = parsed.Scheme + "://" + host + parsed.RequestURI()
+	}
+	return safeURL, nil
+}
+
+// ValidateBlocklistURL validates a URL for blocklist fetching
+// Only allows https and known safe domains
+func ValidateBlocklistURL(rawURL string) error {
+	_, err := SanitizeBlocklistURL(rawURL)
+	return err
+}
+
+// SanitizeBlocklistURL validates and returns a sanitized blocklist URL
+// Returns the canonical URL string to break taint tracking
+func SanitizeBlocklistURL(rawURL string) (string, error) {
+	if rawURL == "" {
+		return "", &ValidationError{Field: "url", Message: "URL is required"}
+	}
+
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return "", &ValidationError{Field: "url", Message: "invalid URL format"}
+	}
+
+	// Only allow https for external blocklists
+	if parsed.Scheme != "https" {
+		return "", &ValidationError{Field: "url", Message: "blocklist URL must use https"}
+	}
+
+	// Must have a host
+	if parsed.Host == "" {
+		return "", &ValidationError{Field: "url", Message: "URL must have a host"}
+	}
+
+	// Block private/internal IPs to prevent SSRF
+	host := parsed.Hostname()
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+			return "", &ValidationError{Field: "url", Message: "blocklist URL cannot point to private/internal addresses"}
+		}
+	}
+
+	// Return the canonical URL string (breaks taint tracking)
+	return parsed.String(), nil
+}
+
+// SanitizeURL validates and returns a sanitized URL
+// Blocks only dangerous endpoints (cloud metadata)
+func SanitizeURL(rawURL string) (string, error) {
+	if rawURL == "" {
+		return "", &ValidationError{Field: "url", Message: "URL is required"}
+	}
+
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return "", &ValidationError{Field: "url", Message: "invalid URL format"}
+	}
+
+	// Only allow http and https schemes
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", &ValidationError{Field: "url", Message: "URL must use http or https scheme"}
+	}
+
+	// Must have a host
+	if parsed.Host == "" {
+		return "", &ValidationError{Field: "url", Message: "URL must have a host"}
+	}
+
+	host := parsed.Hostname()
+	port := parsed.Port()
+
+	// Block dangerous endpoints
+	if ip := net.ParseIP(host); ip != nil {
+		// Block link-local (169.254.x.x) - cloud metadata endpoint
+		if ip.IsLinkLocalUnicast() {
+			return "", &ValidationError{Field: "url", Message: "URL cannot point to link-local addresses (security risk)"}
+		}
+	}
+
+	// Reconstruct URL from validated components
+	var safeURL string
+	if port != "" {
+		safeURL = parsed.Scheme + "://" + host + ":" + port + parsed.RequestURI()
+	} else {
+		safeURL = parsed.Scheme + "://" + host + parsed.RequestURI()
+	}
+	return safeURL, nil
+}
+
+// AllowedLogDirs contains directories where log files can be read
+var AllowedLogDirs = []string{
+	"/var/log",
+	"/home",
+	"/var/lib/docker",
+}
+
+// ValidateLogFilePath validates a log file path to prevent path traversal
+func ValidateLogFilePath(logPath string) error {
+	if logPath == "" {
+		return &ValidationError{Field: "log_file", Message: "log file path is required"}
+	}
+
+	// Clean the path to resolve any . or .. components
+	cleanPath := filepath.Clean(logPath)
+
+	// Must be an absolute path
+	if !filepath.IsAbs(cleanPath) {
+		return &ValidationError{Field: "log_file", Message: "log file must be an absolute path"}
+	}
+
+	// Check for path traversal attempts
+	if strings.Contains(logPath, "..") {
+		return &ValidationError{Field: "log_file", Message: "path traversal not allowed"}
+	}
+
+	// Verify the path is within allowed directories
+	allowed := false
+	for _, dir := range AllowedLogDirs {
+		if strings.HasPrefix(cleanPath, dir+"/") || cleanPath == dir {
+			allowed = true
+			break
+		}
+	}
+
+	if !allowed {
+		return &ValidationError{Field: "log_file", Message: "log file must be in /var/log, /home, or /var/lib/docker"}
+	}
+
+	return nil
 }

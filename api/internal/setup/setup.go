@@ -441,8 +441,15 @@ func (s *Service) handleTestHeadscale(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate and sanitize URL to prevent SSRF
+	sanitizedURL, err := helper.SanitizeInternalServiceURL(req.URL)
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	// Ensure URL has /api/v1 suffix
-	baseURL := req.URL
+	baseURL := sanitizedURL
 	if !strings.HasSuffix(baseURL, "/api/v1") {
 		baseURL = strings.TrimSuffix(baseURL, "/") + "/api/v1"
 	}

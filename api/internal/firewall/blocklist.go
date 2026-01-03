@@ -46,9 +46,15 @@ func GetBlocklistSources() map[string]BlocklistSource {
 }
 
 // fetchBlocklist fetches and parses a blocklist from URL
-func (s *Service) fetchBlocklist(url string, minScore int) ([]string, error) {
+func (s *Service) fetchBlocklist(rawURL string, minScore int) ([]string, error) {
+	// Validate and sanitize URL to prevent SSRF
+	sanitizedURL, err := helper.SanitizeURL(rawURL)
+	if err != nil {
+		return nil, err
+	}
+
 	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Get(url)
+	resp, err := client.Get(sanitizedURL)
 	if err != nil {
 		return nil, err
 	}

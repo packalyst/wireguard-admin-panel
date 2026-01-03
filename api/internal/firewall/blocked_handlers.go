@@ -208,6 +208,11 @@ func (s *Service) handleImportBlocklist(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 	} else if req.URL != "" {
+		// Validate custom URL to prevent SSRF
+		if err := helper.ValidateBlocklistURL(req.URL); err != nil {
+			router.JSONError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		sourceName = "custom"
 		var err error
 		entries, err = s.fetchBlocklist(req.URL, 0)
