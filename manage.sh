@@ -1568,6 +1568,9 @@ if [ -f "traefik/dynamic.yml.template" ]; then
 
     # If SSL enabled, insert SSL routers before the services section
     if [ "$SSL_ENABLED" = "true" ] && [ -f "traefik/dynamic-ssl-routers.yml.template" ]; then
+        # Remove headscale-control-secure from base config (SSL template has its own with certResolver)
+        sed -i '/headscale-control-secure:/,/^    # Headscale API/{ /headscale-control-secure:/,/tls: {}/d }' traefik/dynamic/core.yml
+
         # Read SSL routers template and substitute variables
         SSL_ROUTERS=$(envsubst < traefik/dynamic-ssl-routers.yml.template)
 
