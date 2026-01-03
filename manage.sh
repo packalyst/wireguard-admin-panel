@@ -1286,24 +1286,55 @@ if prompt_yes_no "Enable HTTPS with Let's Encrypt?" "y"; then
     # Get email for Let's Encrypt
     if [ "$SSL_ENABLED" = "true" ]; then
         echo ""
-        if [ -n "$CURRENT_SSL_EMAIL" ]; then
-            echo -e "Current email: ${CYAN}${CURRENT_SSL_EMAIL}${NC}"
-            read -p "Enter email for Let's Encrypt (or press Enter to keep current): " SSL_EMAIL_INPUT
-            LETSENCRYPT_EMAIL="${SSL_EMAIL_INPUT:-$CURRENT_SSL_EMAIL}"
-        else
-            read -p "Enter email for Let's Encrypt notifications: " LETSENCRYPT_EMAIL
-        fi
-
-        if [ -n "$LETSENCRYPT_EMAIL" ]; then
-            if validate_email "$LETSENCRYPT_EMAIL"; then
-                echo -e "${GREEN}✓ Email validated${NC}"
+        EMAIL_VALID="false"
+        while [ "$EMAIL_VALID" = "false" ] && [ "$SSL_ENABLED" = "true" ]; do
+            if [ -n "$CURRENT_SSL_EMAIL" ]; then
+                echo -e "Current email: ${CYAN}${CURRENT_SSL_EMAIL}${NC}"
+                read -p "Enter email for Let's Encrypt (or press Enter to keep current): " SSL_EMAIL_INPUT
+                LETSENCRYPT_EMAIL="${SSL_EMAIL_INPUT:-$CURRENT_SSL_EMAIL}"
             else
-                echo -e "${YELLOW}⚠ Email format looks invalid, but continuing...${NC}"
+                read -p "Enter email for Let's Encrypt notifications: " LETSENCRYPT_EMAIL
             fi
-        else
-            echo -e "${RED}✗ Email is required for Let's Encrypt${NC}"
-            SSL_ENABLED="false"
-        fi
+
+            if [ -n "$LETSENCRYPT_EMAIL" ]; then
+                if validate_email "$LETSENCRYPT_EMAIL"; then
+                    echo -e "${GREEN}✓ Email validated${NC}"
+                    EMAIL_VALID="true"
+                else
+                    echo -e "${RED}✗ Invalid email format${NC}"
+                    echo ""
+                    echo -e "Options:"
+                    echo -e "  ${CYAN}1)${NC} Try again"
+                    echo -e "  ${CYAN}2)${NC} Disable SSL"
+                    echo ""
+                    read -p "Select option [1-2]: " EMAIL_CHOICE
+                    case "$EMAIL_CHOICE" in
+                        2)
+                            SSL_ENABLED="false"
+                            echo -e "${YELLOW}SSL disabled${NC}"
+                            ;;
+                        *)
+                            ;;
+                    esac
+                fi
+            else
+                echo -e "${RED}✗ Email is required for Let's Encrypt${NC}"
+                echo ""
+                echo -e "Options:"
+                echo -e "  ${CYAN}1)${NC} Try again"
+                echo -e "  ${CYAN}2)${NC} Disable SSL"
+                echo ""
+                read -p "Select option [1-2]: " EMAIL_CHOICE
+                case "$EMAIL_CHOICE" in
+                    2)
+                        SSL_ENABLED="false"
+                        echo -e "${YELLOW}SSL disabled${NC}"
+                        ;;
+                    *)
+                        ;;
+                esac
+            fi
+        done
     fi
 
     # Save SSL configuration
