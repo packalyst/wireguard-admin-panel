@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strconv"
 	"time"
+
+	"api/internal/helper"
 )
 
 // runJailMonitors starts monitors for all enabled jails
@@ -116,6 +118,12 @@ func (s *Service) restartJailMonitor(jailID int64) {
 
 // monitorJailWithContext monitors a log file for the jail with a cancellable context
 func (s *Service) monitorJailWithContext(ctx context.Context, jailID int64, name, logFile, filterRegex string, maxRetry, findTime, banTime int, lastLogPos int64) {
+	// Validate log file path to prevent path injection
+	if err := helper.ValidateLogFilePath(logFile); err != nil {
+		log.Printf("Jail %s: invalid log file path %s: %v", name, logFile, err)
+		return
+	}
+
 	if _, err := os.Stat(logFile); os.IsNotExist(err) {
 		log.Printf("Jail %s: log file %s not found, skipping", name, logFile)
 		return
@@ -150,6 +158,11 @@ func (s *Service) monitorJailWithContext(ctx context.Context, jailID int64, name
 
 // processJailLogFile processes a jail log file and returns the new position
 func (s *Service) processJailLogFile(name, logFile string, regex *regexp.Regexp, ipAttempts map[string][]time.Time, lastLogPos int64, jailID int64, maxRetry, findTime, banTime int) int64 {
+	// Validate log file path to prevent path injection
+	if err := helper.ValidateLogFilePath(logFile); err != nil {
+		return lastLogPos
+	}
+
 	file, err := os.Open(logFile)
 	if err != nil {
 		return lastLogPos

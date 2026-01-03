@@ -231,6 +231,13 @@ func (s *Service) handleTestAdGuard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate and sanitize URL to prevent SSRF
+	sanitizedURL, err := helper.SanitizeInternalServiceURL(req.URL)
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	// Get password - either from request or from DB
 	password := ""
 	if req.Password != nil {
@@ -241,7 +248,7 @@ func (s *Service) handleTestAdGuard(w http.ResponseWriter, r *http.Request) {
 
 	// Test connection to AdGuard
 	client := &http.Client{Timeout: helper.HTTPClientTimeout}
-	testReq, err := http.NewRequest("GET", req.URL+"/control/status", nil)
+	testReq, err := http.NewRequest("GET", sanitizedURL+"/control/status", nil)
 	if err != nil {
 		router.JSONError(w, "Invalid URL: "+err.Error(), http.StatusBadRequest)
 		return
