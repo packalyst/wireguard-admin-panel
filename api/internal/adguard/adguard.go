@@ -675,7 +675,7 @@ type DomainRoute struct {
 }
 
 // SyncDomainRewrites ensures DNS rewrites exist for all domains pointing to targetIP
-// It also cleans up orphaned rewrites (those pointing to targetIP that are no longer needed)
+// Only adds/updates rewrites for managed domains - does NOT delete other rewrites
 // Returns a list of errors for domains that failed
 func SyncDomainRewrites(domains []DomainRoute, targetIP string) []string {
 	errors := []string{}
@@ -693,28 +693,13 @@ func SyncDomainRewrites(domains []DomainRoute, targetIP string) []string {
 		existingMap[rw.Domain] = rw.Answer
 	}
 
-	// Build set of domains we want to keep
-	wantDomains := make(map[string]bool)
-	for _, route := range domains {
-		wantDomains[route.Domain] = true
-	}
-
-	// Delete orphaned rewrites (those pointing to our targetIP but not in our domains list)
-	for _, rw := range existing {
-		if rw.Answer == targetIP && !wantDomains[rw.Domain] {
-			if err := DeleteRewrite(rw.Domain, rw.Answer); err != nil {
-				errors = append(errors, rw.Domain+": failed to delete orphaned rewrite: "+err.Error())
-			}
-		}
-	}
-
 	// Add/update rewrites for each domain (all point to targetIP)
 	for _, route := range domains {
 		if current, exists := existingMap[route.Domain]; exists {
 			if current == targetIP {
 				continue // Already correct
 			}
-			// Delete wrong rewrite first
+			// Delete wrong rewrite first (domain exists but points elsewhere)
 			if err := DeleteRewrite(route.Domain, current); err != nil {
 				errors = append(errors, route.Domain+": failed to delete old rewrite: "+err.Error())
 			}
@@ -726,5 +711,10 @@ func SyncDomainRewrites(domains []DomainRoute, targetIP string) []string {
 	}
 
 	return errors
+}
+
+// DeleteDomainRewrite removes the DNS rewrite for a specific domain pointing to targetIP
+func DeleteDomainRewrite(domain, targetIP string) error {
+	return DeleteRewrite(domain, targetIP)
 }
 

@@ -451,6 +451,21 @@ func (s *Service) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get domain first (need it for AdGuard cleanup)
+	var domain string
+	err = db.QueryRow("SELECT domain FROM domain_routes WHERE id = ?", id).Scan(&domain)
+	if err != nil {
+		router.JSONError(w, "route not found", http.StatusNotFound)
+		return
+	}
+
+	// Step 1: Delete AdGuard rewrite first
+	if err := adguard.DeleteDomainRewrite(domain, s.traefikIP); err != nil {
+		router.JSONError(w, "failed to delete DNS rewrite: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Step 2: Delete from database
 	result, err := db.Exec("DELETE FROM domain_routes WHERE id = ?", id)
 	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusInternalServerError)
@@ -463,9 +478,10 @@ func (s *Service) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Auto-apply after delete (removes from Traefik and AdGuard)
+	// Step 3: Regenerate Traefik config
 	if err := s.applyRoutes(); err != nil {
-		log.Printf("Warning: failed to apply routes after delete: %v", err)
+		router.JSONError(w, "route deleted but failed to update Traefik: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	router.JSON(w, map[string]string{"message": "route deleted and applied"})
