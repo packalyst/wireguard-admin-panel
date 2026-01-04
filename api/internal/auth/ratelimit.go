@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"log"
 	"sync"
 	"time"
 
