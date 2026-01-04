@@ -724,7 +724,7 @@ if [ "$DOCKER_RUNNING" = true ]; then
             echo -e "${RED}⚠ WARNING: This will remove all containers, volumes, and images!${NC}"
             if prompt_yes_no "Are you sure?" "n"; then
                 echo -e "${YELLOW}Cleaning everything...${NC}"
-                docker compose down -v --rmi all
+                docker compose down -v --rmi all --remove-orphans
 
                 # Clean generated configs
                 rm -f headscale/config/config.yaml
@@ -1049,6 +1049,136 @@ fi
 set -a
 source .env 2>/dev/null || true
 set +a
+
+# ===========================================
+# Check Docker Network Subnet Conflicts
+# ===========================================
+
+echo -e "${BLUE}Checking Docker network availability...${NC}"
+
+# Check if our subnet is already used by another network
+check_subnet_conflict() {
+    local target_subnet="$1"
+    local target_base="${target_subnet%.*}"  # e.g., 172.18.0
+
+    docker network ls --format '{{.Name}}' 2>/dev/null | while read net; do
+        [ "$net" = "vpn-network" ] && continue
+        [ "$net" = "bridge" ] && continue
+        [ "$net" = "host" ] && continue
+        [ "$net" = "none" ] && continue
+
+        SUBNET=$(docker network inspect "$net" --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}' 2>/dev/null)
+        if [ -n "$SUBNET" ]; then
+            NET_BASE="${SUBNET%.*}"
+            if [ "$NET_BASE" = "$target_base" ]; then
+                echo "$net:$SUBNET"
+                return
+            fi
+        fi
+    done
+}
+
+CONFLICT=$(check_subnet_conflict "$DOCKER_SUBNET")
+
+if [ -n "$CONFLICT" ]; then
+    CONFLICT_NET="${CONFLICT%%:*}"
+    CONFLICT_SUBNET="${CONFLICT#*:}"
+
+    echo -e "${YELLOW}⚠ Subnet conflict detected!${NC}"
+    echo -e "  Desired subnet: ${CYAN}${DOCKER_SUBNET}${NC}"
+    echo -e "  Conflicting network: ${RED}${CONFLICT_NET}${NC} (${CONFLICT_SUBNET})"
+    echo ""
+    echo -e "${CYAN}What would you like to do?${NC}"
+    echo "  1) Delete conflicting network '${CONFLICT_NET}'"
+    echo "  2) Change subnet (will update .env automatically)"
+    echo "  3) Exit"
+    echo ""
+    read -p "Enter your choice [1-3]: " subnet_choice
+
+    case "$subnet_choice" in
+        1)
+            echo -e "${YELLOW}Removing network ${CONFLICT_NET}...${NC}"
+            # Check for attached containers
+            ATTACHED=$(docker network inspect "$CONFLICT_NET" --format '{{range .Containers}}{{.Name}} {{end}}' 2>/dev/null | xargs)
+            if [ -n "$ATTACHED" ]; then
+                echo -e "  Stopping attached containers: ${CYAN}${ATTACHED}${NC}"
+                for container in $ATTACHED; do
+                    docker stop "$container" 2>/dev/null || true
+                done
+            fi
+            docker network rm "$CONFLICT_NET" 2>/dev/null || {
+                echo -e "${RED}Failed to remove network${NC}"
+                echo "Try manually: docker network rm ${CONFLICT_NET}"
+                exit 1
+            }
+            echo -e "${GREEN}✓ Network removed${NC}"
+            ;;
+        2)
+            # Find an available subnet
+            echo -e "${YELLOW}Finding available subnet...${NC}"
+            CURRENT_BASE="${DOCKER_SUBNET%%.0.0/*}"  # e.g., 172.18
+            CURRENT_THIRD="${CURRENT_BASE#*.}"       # e.g., 18
+
+            NEW_THIRD=$((CURRENT_THIRD + 1))
+            while [ $NEW_THIRD -lt 255 ]; do
+                NEW_SUBNET="172.${NEW_THIRD}.0.0/24"
+                NEW_CHECK=$(check_subnet_conflict "$NEW_SUBNET")
+                if [ -z "$NEW_CHECK" ]; then
+                    break
+                fi
+                NEW_THIRD=$((NEW_THIRD + 1))
+            done
+
+            if [ $NEW_THIRD -ge 255 ]; then
+                echo -e "${RED}Could not find available subnet${NC}"
+                exit 1
+            fi
+
+            NEW_SUBNET="172.${NEW_THIRD}.0.0/24"
+            NEW_GATEWAY="172.${NEW_THIRD}.0.1"
+            NEW_TRAEFIK_IP="172.${NEW_THIRD}.0.2"
+            NEW_HEADSCALE_IP="172.${NEW_THIRD}.0.3"
+            NEW_UI_IP="172.${NEW_THIRD}.0.4"
+
+            echo -e "  New subnet: ${GREEN}${NEW_SUBNET}${NC}"
+            echo ""
+
+            # Update .env file
+            echo -e "${YELLOW}Updating .env file...${NC}"
+            update_env_value "DOCKER_SUBNET" "$NEW_SUBNET"
+            update_env_value "DOCKER_GATEWAY" "$NEW_GATEWAY"
+            update_env_value "TRAEFIK_CONTAINER_IP" "$NEW_TRAEFIK_IP"
+            update_env_value "HEADSCALE_CONTAINER_IP" "$NEW_HEADSCALE_IP"
+            update_env_value "UI_CONTAINER_IP" "$NEW_UI_IP"
+
+            # Reload environment
+            export DOCKER_SUBNET="$NEW_SUBNET"
+            export DOCKER_GATEWAY="$NEW_GATEWAY"
+            export TRAEFIK_CONTAINER_IP="$NEW_TRAEFIK_IP"
+            export HEADSCALE_CONTAINER_IP="$NEW_HEADSCALE_IP"
+            export UI_CONTAINER_IP="$NEW_UI_IP"
+
+            echo -e "${GREEN}✓ Updated .env:${NC}"
+            echo "    DOCKER_SUBNET=$NEW_SUBNET"
+            echo "    DOCKER_GATEWAY=$NEW_GATEWAY"
+            echo "    TRAEFIK_CONTAINER_IP=$NEW_TRAEFIK_IP"
+            echo "    HEADSCALE_CONTAINER_IP=$NEW_HEADSCALE_IP"
+            echo "    UI_CONTAINER_IP=$NEW_UI_IP"
+            ;;
+        3)
+            echo -e "${BLUE}Exiting...${NC}"
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}Invalid choice${NC}"
+            exit 1
+            ;;
+    esac
+else
+    echo -e "  ${GREEN}✓${NC} Subnet ${DOCKER_SUBNET} is available"
+fi
+
+echo ""
 
 # ===========================================
 # Interactive Configuration
