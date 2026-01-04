@@ -220,12 +220,17 @@
   // QR code - fetch with auth
   let qrUrl = $state(null)
   let qrLoading = $state(false)
+  let qrLoadedFor = $state(null) // Track which peer/mode combo was loaded: "peerId:mode"
 
   // Delete/expire confirmation
   let confirmAction = $state(null) // 'delete' | 'expire' | null
   let actionLoading = $state(false)
 
   async function loadQrCode(peerId, mode) {
+    const key = `${peerId}:${mode}`
+    // Skip if already loading or already loaded for this peer/mode
+    if (qrLoading || qrLoadedFor === key) return
+
     qrLoading = true
     // Revoke old URL to prevent memory leak
     if (qrUrl) {
@@ -235,8 +240,10 @@
     try {
       const blob = await apiGetBlob(`/api/wg/peers/${peerId}/qr?mode=${mode}`)
       qrUrl = URL.createObjectURL(blob)
+      qrLoadedFor = key
     } catch (e) {
       toast('Failed to load QR code', 'error')
+      qrLoadedFor = null // Allow retry on error
     } finally {
       qrLoading = false
     }
@@ -332,6 +339,7 @@
     editingName = false
     editingTags = false
     tunnelMode = 'full'
+    qrLoadedFor = null // Reset so QR loads fresh for new node
     newName = node._displayName
     newTags = (node.forcedTags || []).map(t => t.replace('tag:', '')).join(', ')
     // Reset ACL state
