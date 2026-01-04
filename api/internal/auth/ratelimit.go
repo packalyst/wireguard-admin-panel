@@ -1,10 +1,6 @@
 package auth
 
 import (
-	"log"
-	"net"
-	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -31,81 +27,11 @@ type loginAttempt struct {
 var (
 	loginAttempts      = make(map[string]*loginAttempt)
 	loginAttemptsMutex sync.RWMutex
-	trustedProxyCIDRs  []*net.IPNet
 )
 
 func init() {
-	// Load trusted proxies from environment
-	// TRUSTED_PROXIES can be comma-separated list of IPs or CIDRs: "172.18.0.2,162.158.0.0/15"
-	proxies := helper.GetEnvOptional("TRUSTED_PROXIES", "")
-	if proxies != "" {
-		for _, entry := range strings.Split(proxies, ",") {
-			entry = strings.TrimSpace(entry)
-			if entry == "" {
-				continue
-			}
-
-			// Check if it's a CIDR or single IP
-			if !strings.Contains(entry, "/") {
-				// Single IP - convert to /32 CIDR
-				entry = entry + "/32"
-			}
-
-			_, cidr, err := net.ParseCIDR(entry)
-			if err != nil {
-				log.Printf("Auth: invalid trusted proxy entry (skipped): %s - %v", entry, err)
-				continue
-			}
-			trustedProxyCIDRs = append(trustedProxyCIDRs, cidr)
-			log.Printf("Auth: trusted proxy added: %s", cidr.String())
-		}
-	}
-}
-
-// isTrustedProxy checks if an IP is in the trusted proxy list
-func isTrustedProxy(ipStr string) bool {
-	if len(trustedProxyCIDRs) == 0 {
-		return true // No trusted proxies configured = trust all (backwards compatible)
-	}
-
-	ip := net.ParseIP(ipStr)
-	if ip == nil {
-		return false
-	}
-
-	for _, cidr := range trustedProxyCIDRs {
-		if cidr.Contains(ip) {
-			return true
-		}
-	}
-	return false
-}
-
-// getClientIP extracts the real client IP, respecting trusted proxies
-func getClientIP(r *http.Request) string {
-	// Extract remote IP (without port)
-	remoteIP := r.RemoteAddr
-	if idx := strings.LastIndex(remoteIP, ":"); idx != -1 {
-		remoteIP = remoteIP[:idx]
-	}
-
-	// Only trust X-Forwarded-For and X-Real-IP from trusted proxies
-	if isTrustedProxy(remoteIP) {
-		// Check X-Forwarded-For header (set by reverse proxy)
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			// Take the first IP (original client)
-			if idx := strings.Index(xff, ","); idx != -1 {
-				return strings.TrimSpace(xff[:idx])
-			}
-			return strings.TrimSpace(xff)
-		}
-		// Check X-Real-IP header
-		if xri := r.Header.Get("X-Real-IP"); xri != "" {
-			return xri
-		}
-	}
-
-	return remoteIP
+	// Initialize trusted proxies from environment
+	helper.InitTrustedProxies(helper.GetEnvOptional("TRUSTED_PROXIES", ""))
 }
 
 // checkLoginRateLimit returns true if the IP is rate limited

@@ -323,7 +323,7 @@ func (r *Router) loggingMiddleware(next http.Handler) http.Handler {
 		wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 		next.ServeHTTP(wrapped, req)
 
-		clientIP := getClientIPFromRequest(req)
+		clientIP := helper.GetClientIP(req)
 
 		if r.config.Middleware.Logging.Format == "json" {
 			log.Printf(`{"request_id":"%s","method":"%s","path":"%s","status":%d,"duration":"%s","client_ip":"%s"}`,
@@ -334,25 +334,6 @@ func (r *Router) loggingMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// getClientIPFromRequest extracts client IP from request
-func getClientIPFromRequest(req *http.Request) string {
-	// Check X-Forwarded-For header
-	if xff := req.Header.Get("X-Forwarded-For"); xff != "" {
-		if idx := strings.Index(xff, ","); idx != -1 {
-			return strings.TrimSpace(xff[:idx])
-		}
-		return strings.TrimSpace(xff)
-	}
-	// Check X-Real-IP header
-	if xri := req.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
-	// Fall back to RemoteAddr
-	if idx := strings.LastIndex(req.RemoteAddr, ":"); idx != -1 {
-		return req.RemoteAddr[:idx]
-	}
-	return req.RemoteAddr
-}
 
 // securityHeadersMiddleware adds security headers including CSP
 func (r *Router) securityHeadersMiddleware(next http.Handler) http.Handler {
@@ -399,7 +380,7 @@ func (r *Router) rateLimitMiddleware(next http.Handler) http.Handler {
 	burstSize := float64(rps * 2) // Allow burst of 2x rate
 
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		clientIP := getClientIPFromRequest(req)
+		clientIP := helper.GetClientIP(req)
 
 		// Skip rate limiting for health checks
 		if req.URL.Path == "/health" {

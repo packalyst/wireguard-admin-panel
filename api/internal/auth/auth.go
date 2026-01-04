@@ -336,7 +336,7 @@ func parseTime(s string) time.Time {
 // HTTP Handlers
 
 func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
-	clientIP := getClientIP(r)
+	clientIP := helper.GetClientIP(r)
 	userAgent := r.Header.Get("User-Agent")
 
 	// Check rate limit
