@@ -3,6 +3,16 @@
     # SSL/HTTPS Routers (auto-generated)
     # ========================================
 
+    # HTTP to HTTPS redirect for public domain
+    redirect-to-https:
+      rule: "Host(`${SSL_DOMAIN}`)"
+      service: ui
+      priority: 5
+      middlewares:
+        - redirect-to-https
+      entryPoints:
+        - web
+
     # UI - HTTPS
     ui-secure:
       rule: "PathPrefix(`/`)"

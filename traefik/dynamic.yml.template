@@ -103,3 +103,9 @@ ${VPN_SOURCE_RANGE}
           sourceRange:
 ${VPN_SOURCE_RANGE}
           mode: "silent"
+
+    # Redirect HTTP to HTTPS (for public domain only)
+    redirect-to-https:
+      redirectScheme:
+        scheme: https
+        permanent: true

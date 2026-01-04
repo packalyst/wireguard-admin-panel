@@ -1636,11 +1636,6 @@ experimental:
 entryPoints:
   web:
     address: ":${HTTP_PORT}"
-    http:
-      redirections:
-        entryPoint:
-          to: websecure
-          scheme: https
   websecure:
     address: ":${HTTPS_PORT}"
   traefik:
