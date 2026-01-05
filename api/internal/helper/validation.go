@@ -109,8 +109,11 @@ func ValidateDomain(domain string) error {
 		return &ValidationError{Field: "domain", Message: "invalid domain format (use alphanumeric, hyphens, dots)"}
 	}
 
-	// Validate each label
+	// Validate each label (require at least one dot, e.g., "wiki.local")
 	labels := strings.Split(domain, ".")
+	if len(labels) < 2 {
+		return &ValidationError{Field: "domain", Message: "domain must include a TLD (e.g., wiki.local)"}
+	}
 	for _, label := range labels {
 		if len(label) == 0 {
 			return &ValidationError{Field: "domain", Message: "domain cannot have empty labels (consecutive dots)"}

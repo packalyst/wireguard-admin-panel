@@ -8,19 +8,24 @@ import (
 	"api/internal/router"
 )
 
+// jailQueryBase is the common SELECT for jail queries
+const jailQueryBase = `
+	SELECT j.id, j.name, j.enabled, j.log_file, j.filter_regex, j.max_retry, j.find_time, j.ban_time, j.port, j.action,
+		COUNT(CASE WHEN f.id IS NOT NULL AND f.enabled = 1 AND (f.expires_at IS NULL OR f.expires_at > datetime('now')) THEN 1 END) as currently_banned,
+		COUNT(f.id) as total_banned,
+		COALESCE(j.escalate_enabled, 0), COALESCE(j.escalate_threshold, 3), COALESCE(j.escalate_window, 3600)
+	FROM jails j
+	LEFT JOIN firewall_entries f ON j.name = f.source AND f.entry_type IN ('ip', 'range') AND f.action = 'block'`
+
+const jailGroupBy = `
+	GROUP BY j.id, j.name, j.enabled, j.log_file, j.filter_regex, j.max_retry, j.find_time, j.ban_time, j.port, j.action,
+		j.escalate_enabled, j.escalate_threshold, j.escalate_window`
+
 // handleGetJails returns all jails
 func (s *Service) handleGetJails(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.db.Query(`
-		SELECT j.id, j.name, j.enabled, j.log_file, j.filter_regex, j.max_retry, j.find_time, j.ban_time, j.port, j.action,
-			COUNT(CASE WHEN b.id IS NOT NULL AND (b.expires_at IS NULL OR b.expires_at > datetime('now')) THEN 1 END) as currently_banned,
-			COUNT(b.id) as total_banned,
-			COALESCE(j.escalate_enabled, 0), COALESCE(j.escalate_threshold, 3), COALESCE(j.escalate_window, 3600)
-		FROM jails j
-		LEFT JOIN blocked_ips b ON j.name = b.jail_name
-		GROUP BY j.id, j.name, j.enabled, j.log_file, j.filter_regex, j.max_retry, j.find_time, j.ban_time, j.port, j.action,
-			j.escalate_enabled, j.escalate_threshold, j.escalate_window`)
+	rows, err := s.db.Query(jailQueryBase + jailGroupBy)
 	if err != nil {
-		router.JSONError(w, "database error", http.StatusInternalServerError)
+		router.JSONError(w, "database error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
@@ -89,18 +94,10 @@ func (s *Service) handleCreateJail(w http.ResponseWriter, r *http.Request) {
 func (s *Service) handleGetJail(w http.ResponseWriter, r *http.Request) {
 	name := router.ExtractPathParam(r, "/api/fw/jails/")
 	var jail Jail
-	err := s.db.QueryRow(`
-		SELECT j.id, j.name, j.enabled, j.log_file, j.filter_regex, j.max_retry, j.find_time, j.ban_time, j.port, j.action,
-			COUNT(CASE WHEN b.id IS NOT NULL AND (b.expires_at IS NULL OR b.expires_at > datetime('now')) THEN 1 END) as currently_banned,
-			COUNT(b.id) as total_banned,
-			COALESCE(j.escalate_enabled, 0), COALESCE(j.escalate_threshold, 3), COALESCE(j.escalate_window, 3600)
-		FROM jails j
-		LEFT JOIN blocked_ips b ON j.name = b.jail_name
-		WHERE j.name = ?
-		GROUP BY j.id, j.name, j.enabled, j.log_file, j.filter_regex, j.max_retry, j.find_time, j.ban_time, j.port, j.action,
-			j.escalate_enabled, j.escalate_threshold, j.escalate_window`,
-		name).Scan(&jail.ID, &jail.Name, &jail.Enabled, &jail.LogFile, &jail.FilterRegex,
-		&jail.MaxRetry, &jail.FindTime, &jail.BanTime, &jail.Port, &jail.Action, &jail.CurrentlyBanned, &jail.TotalBanned,
+	err := s.db.QueryRow(jailQueryBase+" WHERE j.name = ?"+jailGroupBy, name).Scan(
+		&jail.ID, &jail.Name, &jail.Enabled, &jail.LogFile, &jail.FilterRegex,
+		&jail.MaxRetry, &jail.FindTime, &jail.BanTime, &jail.Port, &jail.Action,
+		&jail.CurrentlyBanned, &jail.TotalBanned,
 		&jail.EscalateEnabled, &jail.EscalateThreshold, &jail.EscalateWindow)
 	if err != nil {
 		router.JSONError(w, "jail not found", http.StatusNotFound)
@@ -164,7 +161,7 @@ func (s *Service) handleDeleteJail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.db.Exec("DELETE FROM jails WHERE name = ?", name)
-	s.db.Exec("DELETE FROM blocked_ips WHERE jail_name = ?", name)
-	s.ApplyRules()
+	s.db.Exec("DELETE FROM firewall_entries WHERE source = ? AND entry_type IN ('ip', 'range')", name)
+	s.RequestApply()
 	w.WriteHeader(http.StatusNoContent)
 }

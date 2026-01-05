@@ -11,14 +11,14 @@ const (
 	dnsCacheTTL     = 1 * time.Hour
 )
 
-// dnsEntry holds a cached DNS lookup with timestamp
+// dnsEntry holds a cached reverse DNS lookup result
 type dnsEntry struct {
-	key       string
+	ip        string
 	domain    string
 	timestamp time.Time
 }
 
-// lruDNSCache is an LRU cache for DNS lookups with O(1) operations
+// lruDNSCache is an LRU cache for reverse DNS lookups (IP → domain)
 type lruDNSCache struct {
 	items   map[string]*list.Element
 	order   *list.List
@@ -36,9 +36,9 @@ func newLRUDNSCache(maxSize int, ttl time.Duration) *lruDNSCache {
 	}
 }
 
-func (c *lruDNSCache) get(key string) (string, bool) {
+func (c *lruDNSCache) get(ip string) (string, bool) {
 	c.mu.RLock()
-	elem, exists := c.items[key]
+	elem, exists := c.items[ip]
 	if !exists {
 		c.mu.RUnlock()
 		return "", false
@@ -50,7 +50,7 @@ func (c *lruDNSCache) get(key string) (string, bool) {
 	}
 	c.mu.RUnlock()
 
-	// Move to front (most recently used) - requires write lock
+	// Move to front (most recently used)
 	c.mu.Lock()
 	c.order.MoveToFront(elem)
 	c.mu.Unlock()
@@ -58,12 +58,12 @@ func (c *lruDNSCache) get(key string) (string, bool) {
 	return entry.domain, true
 }
 
-func (c *lruDNSCache) set(key, domain string) {
+func (c *lruDNSCache) set(ip, domain string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	// Update existing entry
-	if elem, exists := c.items[key]; exists {
+	if elem, exists := c.items[ip]; exists {
 		entry := elem.Value.(*dnsEntry)
 		entry.domain = domain
 		entry.timestamp = time.Now()
@@ -71,18 +71,18 @@ func (c *lruDNSCache) set(key, domain string) {
 		return
 	}
 
-	// Evict oldest (back of list) if at capacity - O(1)
+	// Evict oldest if at capacity
 	if c.order.Len() >= c.maxSize {
 		oldest := c.order.Back()
 		if oldest != nil {
 			entry := oldest.Value.(*dnsEntry)
-			delete(c.items, entry.key)
+			delete(c.items, entry.ip)
 			c.order.Remove(oldest)
 		}
 	}
 
-	// Add new entry at front
-	entry := &dnsEntry{key: key, domain: domain, timestamp: time.Now()}
+	// Add new entry
+	entry := &dnsEntry{ip: ip, domain: domain, timestamp: time.Now()}
 	elem := c.order.PushFront(entry)
-	c.items[key] = elem
+	c.items[ip] = elem
 }

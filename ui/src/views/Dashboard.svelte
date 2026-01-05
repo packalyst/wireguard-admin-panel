@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte'
   import { slide } from 'svelte/transition'
   import { theme, currentView, apiGet } from '../stores/app.js'
-  import { subscribe, unsubscribe, statsStore } from '../stores/websocket.js'
+  import { subscribe, unsubscribe, generalInfoStore } from '../stores/websocket.js'
   import Icon from '../components/Icon.svelte'
 
   // Lazy load views - each becomes a separate chunk
@@ -51,18 +51,19 @@
 
   // Update stats when WebSocket pushes new data
   $effect(() => {
-    if ($statsStore) {
-      stats = $statsStore
+    const info = $generalInfoStore
+    if (info?.event === 'stats') {
+      stats = info.data
     }
   })
 
   onMount(() => {
-    // Subscribe to real-time stats updates
-    subscribe('stats')
+    // Subscribe to real-time updates
+    subscribe('general_info')
   })
 
   onDestroy(() => {
-    unsubscribe('stats')
+    unsubscribe('general_info')
   })
 
   const navItems = [

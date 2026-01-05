@@ -13,14 +13,14 @@ export const wsReconnecting = writable(false)
 export const wsUserStore = writable(null)
 
 // Data stores for each channel
-export const statsStore = writable(null)
+export const generalInfoStore = writable(null) // General info channel (stats, firewall events, etc.)
 export const nodesUpdatedStore = writable(0) // Counter that increments on nodes_updated
 export const dockerStore = writable(null)
 export const dockerLogsStore = writable([]) // Array of log entries for live streaming
 
 // Channel to store mapping
 const storeMap = {
-  stats: statsStore,
+  general_info: generalInfoStore,
   nodes_updated: nodesUpdatedStore,
   docker: dockerStore,
   docker_logs: dockerLogsStore
@@ -138,6 +138,15 @@ function handleMessage(msg) {
     } else if (type === 'docker_logs') {
       // Append log entry to array
       store.update(logs => [...logs, payload])
+    } else if (type === 'general_info') {
+      // For general_info, process firewall zone events immediately
+      // to avoid missing rapid messages
+      const event = payload?.event
+      if (event === 'firewall:zones:progress' || event === 'firewall:zones:complete' || event === 'firewall:zones:start') {
+        // Dispatch custom event for zone updates so they're not missed
+        window.dispatchEvent(new CustomEvent('firewall-zone-update', { detail: payload }))
+      }
+      store.set(payload)
     } else {
       store.set(payload)
     }

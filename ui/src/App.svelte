@@ -5,6 +5,7 @@
   import Dashboard from './views/Dashboard.svelte'
   import Login from './views/Login.svelte'
   import SetupWizard from './views/SetupWizard.svelte'
+  import ConfirmModal from './components/ConfirmModal.svelte'
 
   let user = $state(null)
   let checking = $state(true)
@@ -132,3 +133,6 @@
 {:else}
   <Login onLogin={handleLogin} />
 {/if}
+
+<!-- Global confirm modal -->
+<ConfirmModal />

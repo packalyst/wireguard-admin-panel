@@ -569,6 +569,12 @@ func ExtractPathParam(r *http.Request, prefix string) string {
 	return ""
 }
 
+// ExtractPathParamFull extracts the full remaining path after prefix (for CIDR IPs like 0.0.0.0/8)
+func ExtractPathParamFull(r *http.Request, prefix string) string {
+	path := strings.TrimPrefix(r.URL.Path, prefix)
+	return strings.Trim(path, "/")
+}
+
 // JSON sends a JSON response with 200 OK status
 func JSON(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")

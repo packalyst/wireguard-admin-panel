@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { toast, apiGet, apiPost, apiDelete } from '../stores/app.js'
+  import { toast, apiGet, apiPost, apiDelete, confirm, setConfirmLoading } from '../stores/app.js'
   import { copyWithToast } from '../stores/helpers.js'
   import { parseDate, formatDateShort, formatExpiryDate, isExpired, getDaysUntilExpiry } from '$lib/utils/format.js'
   import Icon from '../components/Icon.svelte'
@@ -16,9 +16,6 @@
 
   let apiKeys = $state([])
   let showCreateModal = $state(false)
-  let showDeleteModal = $state(false)
-  let deletingKey = $state(null)
-  let deleting = $state(false)
   let newExpiration = $state('90')
   let newKey = $state(null)
   let creating = $state(false)
@@ -68,24 +65,25 @@
     }
   }
 
-  function confirmExpireKey(key) {
-    deletingKey = key
-    showDeleteModal = true
-  }
+  async function confirmExpireKey(key) {
+    const confirmed = await confirm({
+      title: 'Expire API Key',
+      message: `Expire key ${key.prefix}...?`,
+      description: 'This key will no longer work for API access. This action cannot be undone.',
+      confirmText: 'Expire Key',
+      alert: true
+    })
+    if (!confirmed) return
 
-  async function expireKey() {
-    if (!deletingKey) return
-    deleting = true
+    setConfirmLoading(true)
     try {
-      await apiDelete(`/api/hs/apikeys/${deletingKey.prefix}`)
+      await apiDelete(`/api/hs/apikeys/${key.prefix}`)
       toast('Key expired', 'success')
-      showDeleteModal = false
-      deletingKey = null
       loadKeys()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
     } finally {
-      deleting = false
+      setConfirmLoading(false)
     }
   }
 
@@ -249,22 +247,3 @@
   {/snippet}
 </Modal>
 
-<!-- Expire Confirmation Modal -->
-<Modal bind:open={showDeleteModal} title="Expire API Key" size="sm">
-  {#if deletingKey}
-    <div class="kt-alert kt-alert-destructive">
-      <Icon name="alert-triangle" size={18} />
-      <div>
-        <p class="font-medium">Expire key {deletingKey.prefix}...?</p>
-        <p class="text-sm opacity-80 mt-0.5">This key will no longer work for API access. This action cannot be undone.</p>
-      </div>
-    </div>
-  {/if}
-
-  {#snippet footer()}
-    <Button onclick={() => { showDeleteModal = false; deletingKey = null }} variant="secondary" disabled={deleting}>Cancel</Button>
-    <Button onclick={expireKey} variant="destructive" icon="ban" disabled={deleting}>
-      {deleting ? 'Expiring...' : 'Expire Key'}
-    </Button>
-  {/snippet}
-</Modal>

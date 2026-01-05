@@ -15,6 +15,7 @@ import (
 	"api/internal/database"
 	"api/internal/domains"
 	"api/internal/helper"
+	"api/internal/nftables"
 	"api/internal/router"
 	"api/internal/settings"
 	"api/internal/wireguard"
@@ -661,11 +662,11 @@ func (s *Service) getHeadscaleNodesWithRaw() ([]hsNode, []string, error) {
 	return nodes, rawNodes, nil
 }
 
-// ApplyRules generates and applies nftables rules and Headscale ACL
+// ApplyRules triggers nftables apply and generates Headscale ACL
 func (s *Service) ApplyRules() error {
-	// Generate and apply nftables rules
-	if err := GenerateAndApplyNftables(); err != nil {
-		return fmt.Errorf("failed to apply nftables: %v", err)
+	// Request nftables apply (debounced, applies all registered tables including VPN ACL)
+	if nftSvc := nftables.GetService(); nftSvc != nil {
+		nftSvc.RequestApply()
 	}
 
 	// Generate and apply Headscale ACL

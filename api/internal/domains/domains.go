@@ -34,6 +34,8 @@ type DomainRoute struct {
 	HTTPSBackend  bool      `json:"httpsBackend"`
 	Middlewares   []string  `json:"middlewares"`
 	Description   string    `json:"description"`
+	AccessMode    string    `json:"accessMode"`   // "vpn" or "public"
+	FrontendSSL   bool      `json:"frontendSsl"`  // use websecure entrypoint
 	CreatedAt     time.Time `json:"createdAt"`
 	UpdatedAt     time.Time `json:"updatedAt"`
 	VPNClientName string    `json:"vpnClientName,omitempty"`
@@ -60,9 +62,9 @@ func ApplyRoutes() error {
 		return err
 	}
 
-	// Get all enabled routes
+	// Get all enabled routes with new columns
 	rows, err := db.Query(`
-		SELECT domain, target_ip, target_port, https_backend, middlewares
+		SELECT domain, target_ip, target_port, https_backend, middlewares, access_mode, frontend_ssl
 		FROM domain_routes
 		WHERE enabled = 1
 		ORDER BY domain
@@ -73,15 +75,48 @@ func ApplyRoutes() error {
 	defer rows.Close()
 
 	routes := []traefik.DomainRouteConfig{}
+	vpnDomains := []adguard.DomainRoute{} // Only VPN mode domains for AdGuard
+
 	for rows.Next() {
 		var rc traefik.DomainRouteConfig
 		var middlewaresJSON string
-		if err := rows.Scan(&rc.Domain, &rc.TargetIP, &rc.TargetPort, &rc.HTTPSBackend, &middlewaresJSON); err != nil {
+		var accessMode sql.NullString
+		var frontendSSL sql.NullBool
+
+		if err := rows.Scan(&rc.Domain, &rc.TargetIP, &rc.TargetPort, &rc.HTTPSBackend, &middlewaresJSON, &accessMode, &frontendSSL); err != nil {
 			continue
 		}
 		if err := json.Unmarshal([]byte(middlewaresJSON), &rc.Middlewares); err != nil {
 			rc.Middlewares = []string{}
 		}
+
+		// Set access mode (default to vpn for backwards compatibility)
+		rc.AccessMode = "vpn"
+		if accessMode.Valid && accessMode.String != "" {
+			rc.AccessMode = accessMode.String
+		}
+
+		// Set frontend SSL
+		if frontendSSL.Valid {
+			rc.FrontendSSL = frontendSSL.Bool
+		}
+
+		// Auto-add vpn-only middleware for VPN access mode
+		if rc.AccessMode == "vpn" {
+			hasVPNMiddleware := false
+			for _, mw := range rc.Middlewares {
+				if mw == "vpn-only@file" || mw == "vpn-only-silent@file" {
+					hasVPNMiddleware = true
+					break
+				}
+			}
+			if !hasVPNMiddleware {
+				rc.Middlewares = append(rc.Middlewares, "vpn-only@file")
+			}
+			// Add to AdGuard sync list
+			vpnDomains = append(vpnDomains, adguard.DomainRoute{Domain: rc.Domain})
+		}
+
 		routes = append(routes, rc)
 	}
 
@@ -90,19 +125,13 @@ func ApplyRoutes() error {
 		return fmt.Errorf("failed to generate Traefik config: %v", err)
 	}
 
-	// Convert to adguard.DomainRoute for DNS sync
-	adguardDomains := make([]adguard.DomainRoute, len(routes))
-	for i, r := range routes {
-		adguardDomains[i] = adguard.DomainRoute{Domain: r.Domain}
-	}
-
-	// Sync AdGuard DNS (log errors but don't fail the operation)
-	dnsErrors := adguard.SyncDomainRewrites(adguardDomains, traefikIP)
+	// Sync AdGuard DNS only for VPN mode domains
+	dnsErrors := adguard.SyncDomainRewrites(vpnDomains, traefikIP)
 	if len(dnsErrors) > 0 {
 		log.Printf("DNS sync warnings: %v", dnsErrors)
 	}
 
-	log.Printf("Applied %d domain routes", len(routes))
+	log.Printf("Applied %d domain routes (%d VPN mode with DNS)", len(routes), len(vpnDomains))
 	return nil
 }
 
@@ -137,12 +166,14 @@ func DeleteClientRoutes(clientID int) (int, error) {
 // Handlers returns the handler map for the router
 func (s *Service) Handlers() router.ServiceHandlers {
 	return router.ServiceHandlers{
-		"List":   s.handleList,
-		"Get":    s.handleGet,
-		"Create": s.handleCreate,
-		"Update": s.handleUpdate,
-		"Delete": s.handleDelete,
-		"Toggle": s.handleToggle,
+		"List":            s.handleList,
+		"Get":             s.handleGet,
+		"Create":          s.handleCreate,
+		"Update":          s.handleUpdate,
+		"Delete":          s.handleDelete,
+		"Toggle":          s.handleToggle,
+		"GetCertificates": s.handleGetCertificates,
+		"GetSystemDomain": s.handleGetSystemDomain,
 	}
 }
 
@@ -156,6 +187,7 @@ func (s *Service) handleList(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query(`
 		SELECT d.id, d.domain, d.target_ip, d.target_port, d.vpn_client_id,
 		       d.enabled, d.https_backend, d.middlewares, d.description,
+		       d.access_mode, d.frontend_ssl,
 		       d.created_at, d.updated_at, COALESCE(v.name, '') as vpn_client_name
 		FROM domain_routes d
 		LEFT JOIN vpn_clients v ON d.vpn_client_id = v.id
@@ -172,10 +204,13 @@ func (s *Service) handleList(w http.ResponseWriter, r *http.Request) {
 		var route DomainRoute
 		var vpnClientID sql.NullInt64
 		var middlewaresJSON string
+		var accessMode sql.NullString
+		var frontendSSL sql.NullBool
 		if err := rows.Scan(
 			&route.ID, &route.Domain, &route.TargetIP, &route.TargetPort,
 			&vpnClientID, &route.Enabled, &route.HTTPSBackend, &middlewaresJSON,
-			&route.Description, &route.CreatedAt, &route.UpdatedAt, &route.VPNClientName,
+			&route.Description, &accessMode, &frontendSSL,
+			&route.CreatedAt, &route.UpdatedAt, &route.VPNClientName,
 		); err != nil {
 			continue
 		}
@@ -186,6 +221,15 @@ func (s *Service) handleList(w http.ResponseWriter, r *http.Request) {
 		// Parse middlewares JSON
 		if err := json.Unmarshal([]byte(middlewaresJSON), &route.Middlewares); err != nil {
 			route.Middlewares = []string{}
+		}
+		// Set access mode (default vpn)
+		route.AccessMode = "vpn"
+		if accessMode.Valid && accessMode.String != "" {
+			route.AccessMode = accessMode.String
+		}
+		// Set frontend SSL
+		if frontendSSL.Valid {
+			route.FrontendSSL = frontendSSL.Bool
 		}
 		routes = append(routes, route)
 	}
@@ -212,9 +256,12 @@ func (s *Service) handleGet(w http.ResponseWriter, r *http.Request) {
 	var route DomainRoute
 	var vpnClientID sql.NullInt64
 	var middlewaresJSON string
+	var accessMode sql.NullString
+	var frontendSSL sql.NullBool
 	err = db.QueryRow(`
 		SELECT d.id, d.domain, d.target_ip, d.target_port, d.vpn_client_id,
 		       d.enabled, d.https_backend, d.middlewares, d.description,
+		       d.access_mode, d.frontend_ssl,
 		       d.created_at, d.updated_at, COALESCE(v.name, '') as vpn_client_name
 		FROM domain_routes d
 		LEFT JOIN vpn_clients v ON d.vpn_client_id = v.id
@@ -222,7 +269,8 @@ func (s *Service) handleGet(w http.ResponseWriter, r *http.Request) {
 	`, id).Scan(
 		&route.ID, &route.Domain, &route.TargetIP, &route.TargetPort,
 		&vpnClientID, &route.Enabled, &route.HTTPSBackend, &middlewaresJSON,
-		&route.Description, &route.CreatedAt, &route.UpdatedAt, &route.VPNClientName,
+		&route.Description, &accessMode, &frontendSSL,
+		&route.CreatedAt, &route.UpdatedAt, &route.VPNClientName,
 	)
 	if err == sql.ErrNoRows {
 		router.JSONError(w, "route not found", http.StatusNotFound)
@@ -239,6 +287,15 @@ func (s *Service) handleGet(w http.ResponseWriter, r *http.Request) {
 	if err := json.Unmarshal([]byte(middlewaresJSON), &route.Middlewares); err != nil {
 		route.Middlewares = []string{}
 	}
+	// Set access mode (default vpn)
+	route.AccessMode = "vpn"
+	if accessMode.Valid && accessMode.String != "" {
+		route.AccessMode = accessMode.String
+	}
+	// Set frontend SSL
+	if frontendSSL.Valid {
+		route.FrontendSSL = frontendSSL.Bool
+	}
 
 	router.JSON(w, route)
 }
@@ -252,6 +309,8 @@ type CreateRequest struct {
 	HTTPSBackend bool     `json:"httpsBackend"`
 	Middlewares  []string `json:"middlewares"`
 	Description  string   `json:"description"`
+	AccessMode   string   `json:"accessMode"`  // "vpn" or "public", defaults to "vpn"
+	FrontendSSL  bool     `json:"frontendSsl"` // use websecure entrypoint
 }
 
 func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
@@ -280,6 +339,15 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate access_mode (default to "vpn" if empty)
+	if req.AccessMode == "" {
+		req.AccessMode = "vpn"
+	}
+	if req.AccessMode != "vpn" && req.AccessMode != "public" {
+		router.JSONError(w, "accessMode must be 'vpn' or 'public'", http.StatusBadRequest)
+		return
+	}
+
 	db, err := database.GetDB()
 	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusInternalServerError)
@@ -293,9 +361,9 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := db.Exec(`
-		INSERT INTO domain_routes (domain, target_ip, target_port, vpn_client_id, https_backend, middlewares, description)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, req.Domain, req.TargetIP, req.TargetPort, req.VPNClientID, req.HTTPSBackend, string(middlewaresJSON), req.Description)
+		INSERT INTO domain_routes (domain, target_ip, target_port, vpn_client_id, https_backend, middlewares, description, access_mode, frontend_ssl)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, req.Domain, req.TargetIP, req.TargetPort, req.VPNClientID, req.HTTPSBackend, string(middlewaresJSON), req.Description, req.AccessMode, req.FrontendSSL)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint") {
 			router.JSONError(w, "domain already exists", http.StatusConflict)
@@ -327,6 +395,8 @@ type UpdateRequest struct {
 	HTTPSBackend *bool     `json:"httpsBackend,omitempty"`
 	Middlewares  *[]string `json:"middlewares,omitempty"`
 	Description  *string   `json:"description,omitempty"`
+	AccessMode   *string   `json:"accessMode,omitempty"`
+	FrontendSSL  *bool     `json:"frontendSsl,omitempty"`
 }
 
 func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request) {
@@ -371,6 +441,38 @@ func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get current domain and access_mode for AdGuard cleanup
+	var oldDomain string
+	var oldAccessMode sql.NullString
+	err = db.QueryRow("SELECT domain, access_mode FROM domain_routes WHERE id = ?", id).Scan(&oldDomain, &oldAccessMode)
+	if err != nil {
+		router.JSONError(w, "route not found", http.StatusNotFound)
+		return
+	}
+	oldMode := "vpn"
+	if oldAccessMode.Valid && oldAccessMode.String != "" {
+		oldMode = oldAccessMode.String
+	}
+
+	// Determine if we need to delete old AdGuard entry
+	needsAdGuardCleanup := false
+	if oldMode == "vpn" {
+		// Delete if: domain is changing OR access mode changing from vpn to public
+		if req.Domain != nil && *req.Domain != oldDomain {
+			needsAdGuardCleanup = true
+		}
+		if req.AccessMode != nil && *req.AccessMode == "public" {
+			needsAdGuardCleanup = true
+		}
+	}
+
+	// Clean up old AdGuard entry before making changes
+	if needsAdGuardCleanup {
+		if err := adguard.DeleteDomainRewrite(oldDomain, s.traefikIP); err != nil {
+			log.Printf("Warning: failed to delete old AdGuard rewrite for %s: %v", oldDomain, err)
+		}
+	}
+
 	// Build dynamic update query
 	updates := []string{}
 	args := []interface{}{}
@@ -403,6 +505,18 @@ func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	if req.Description != nil {
 		updates = append(updates, "description = ?")
 		args = append(args, *req.Description)
+	}
+	if req.AccessMode != nil {
+		if *req.AccessMode != "vpn" && *req.AccessMode != "public" {
+			router.JSONError(w, "accessMode must be 'vpn' or 'public'", http.StatusBadRequest)
+			return
+		}
+		updates = append(updates, "access_mode = ?")
+		args = append(args, *req.AccessMode)
+	}
+	if req.FrontendSSL != nil {
+		updates = append(updates, "frontend_ssl = ?")
+		args = append(args, *req.FrontendSSL)
 	}
 
 	if len(updates) == 0 {
@@ -451,18 +565,25 @@ func (s *Service) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get domain first (need it for AdGuard cleanup)
+	// Get domain and access_mode first (need for AdGuard cleanup)
 	var domain string
-	err = db.QueryRow("SELECT domain FROM domain_routes WHERE id = ?", id).Scan(&domain)
+	var accessMode sql.NullString
+	err = db.QueryRow("SELECT domain, access_mode FROM domain_routes WHERE id = ?", id).Scan(&domain, &accessMode)
 	if err != nil {
 		router.JSONError(w, "route not found", http.StatusNotFound)
 		return
 	}
 
-	// Step 1: Delete AdGuard rewrite first
-	if err := adguard.DeleteDomainRewrite(domain, s.traefikIP); err != nil {
-		router.JSONError(w, "failed to delete DNS rewrite: "+err.Error(), http.StatusInternalServerError)
-		return
+	// Step 1: Delete AdGuard rewrite only for VPN mode routes
+	mode := "vpn"
+	if accessMode.Valid && accessMode.String != "" {
+		mode = accessMode.String
+	}
+	if mode == "vpn" {
+		if err := adguard.DeleteDomainRewrite(domain, s.traefikIP); err != nil {
+			router.JSONError(w, "failed to delete DNS rewrite: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// Step 2: Delete from database
@@ -531,5 +652,52 @@ func (s *Service) handleToggle(w http.ResponseWriter, r *http.Request) {
 	router.JSON(w, map[string]interface{}{
 		"message": "route toggled and applied",
 		"enabled": enabled,
+	})
+}
+
+// handleGetCertificates returns SSL certificate information from acme.json
+func (s *Service) handleGetCertificates(w http.ResponseWriter, r *http.Request) {
+	certs, err := traefik.GetCertificates()
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	router.JSON(w, map[string]interface{}{
+		"certificates": certs,
+	})
+}
+
+// handleGetSystemDomain returns the system SSL domain configured during setup
+func (s *Service) handleGetSystemDomain(w http.ResponseWriter, r *http.Request) {
+	db, err := database.GetDB()
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var sslDomain string
+	err = db.QueryRow("SELECT value FROM settings WHERE key = 'ssl_domain'").Scan(&sslDomain)
+	if err != nil || sslDomain == "" {
+		router.JSON(w, map[string]interface{}{
+			"configured": false,
+		})
+		return
+	}
+
+	// Find certificate for this domain
+	certs, _ := traefik.GetCertificates()
+	var certInfo *traefik.CertificateInfo
+	for _, cert := range certs {
+		if cert.Domain == sslDomain {
+			certInfo = &cert
+			break
+		}
+	}
+
+	router.JSON(w, map[string]interface{}{
+		"configured":  true,
+		"domain":      sslDomain,
+		"certificate": certInfo,
 	})
 }

@@ -40,11 +40,6 @@ func LoadBlocklistSources() {
 	log.Printf("Loaded %d blocklist sources from config", len(blocklistSources))
 }
 
-// GetBlocklistSources returns the loaded blocklist sources
-func GetBlocklistSources() map[string]BlocklistSource {
-	return blocklistSources
-}
-
 // fetchBlocklist fetches and parses a blocklist from URL
 func (s *Service) fetchBlocklist(rawURL string, minScore int) ([]string, error) {
 	// Validate and sanitize URL to prevent SSRF

@@ -4,14 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 
 	"api/internal/database"
 	"api/internal/helper"
+	"api/internal/nftables"
 	"api/internal/router"
 	"api/internal/settings"
 )
@@ -32,6 +35,9 @@ type Service struct {
 	// Provider configs loaded from file
 	providersConfig ProvidersConfig
 
+	// nftables service for triggering applies after zone refresh
+	nft *nftables.Service
+
 	// Thread safety
 	mu sync.RWMutex
 
@@ -50,6 +56,11 @@ func SetService(s *Service) {
 // GetService returns the global service instance
 func GetService() *Service {
 	return serviceInstance
+}
+
+// SetNftService sets the nftables service reference for triggering applies
+func (s *Service) SetNftService(nft *nftables.Service) {
+	s.nft = nft
 }
 
 // New creates a new geolocation service
@@ -148,11 +159,6 @@ func (s *Service) loadProvidersConfig() {
 	}
 
 	log.Printf("Loaded %d provider configs", len(s.providersConfig.Providers))
-}
-
-// GetProvidersConfig returns the providers configuration
-func (s *Service) GetProvidersConfig() ProvidersConfig {
-	return s.providersConfig
 }
 
 // loadConfig loads configuration from settings
@@ -311,16 +317,12 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		// Lookups
 		"LookupIP":   s.handleLookupIP,
 		"LookupBulk": s.handleLookupBulk,
-		// Status
-		"GetStatus":      s.handleGetStatus,
-		"TriggerUpdate":  s.handleTriggerUpdate,
-		"GetCountries":   s.handleGetCountries,
-		// Country blocking
-		"GetBlockedCountries": s.handleGetBlockedCountries,
-		"BlockCountry":        s.handleBlockCountry,
-		"UnblockCountry":      s.handleUnblockCountry,
-		"GetBlockingStatus":   s.handleGetBlockingStatus,
-		"RefreshZones":        s.handleRefreshZones,
+		// Status and data
+		"GetStatus":     s.handleGetStatus,
+		"TriggerUpdate": s.handleTriggerUpdate,
+		"GetCountries":  s.handleGetCountries,
+		// Zone management
+		"RefreshZones": s.handleRefreshZones,
 	}
 }
 
@@ -338,11 +340,6 @@ func (s *Service) Shutdown() {
 	log.Println("Geolocation service shutdown complete")
 }
 
-// GetCountryConfigs returns loaded country configurations
-func (s *Service) GetCountryConfigs() map[string]CountryConfig {
-	return s.countryConfigs
-}
-
 // IsBlockingEnabled returns whether country blocking is enabled
 func (s *Service) IsBlockingEnabled() bool {
 	s.mu.RLock()
@@ -350,21 +347,77 @@ func (s *Service) IsBlockingEnabled() bool {
 	return s.config.BlockingEnabled
 }
 
-// GetBlockedCountryCIDRs returns CIDRs for all blocked countries
-func (s *Service) GetBlockedCountryCIDRs(outboundOnly bool) []string {
-	if !s.IsBlockingEnabled() || s.blockingProvider == nil {
-		return nil
+// FetchAndCacheCountryZones fetches zones from ipdeny if not cached, returns range count
+func (s *Service) FetchAndCacheCountryZones(countryCode string) (int, error) {
+	if s.blockingProvider == nil {
+		return 0, fmt.Errorf("blocking provider not available")
 	}
-	cidrs, err := s.blockingProvider.GetAllBlockedCIDRs(outboundOnly)
+
+	countryCode = strings.ToUpper(countryCode)
+
+	// Check if already cached
+	zones, err := s.blockingProvider.GetCachedZones(countryCode)
+	if err == nil && zones != "" {
+		return strings.Count(zones, "\n") + 1, nil
+	}
+
+	// Fetch from ipdeny.com
+	zones, err = s.blockingProvider.FetchCountryZones(countryCode)
 	if err != nil {
-		log.Printf("Error getting blocked country CIDRs: %v", err)
-		return nil
+		return 0, fmt.Errorf("failed to fetch zones for %s: %w", countryCode, err)
 	}
-	return cidrs
+
+	// Cache zones
+	if provider, ok := s.blockingProvider.(*IPDenyProvider); ok {
+		if err := provider.CacheZones(countryCode, zones); err != nil {
+			return 0, fmt.Errorf("failed to cache zones for %s: %w", countryCode, err)
+		}
+	}
+
+	rangeCount := strings.Count(zones, "\n") + 1
+	log.Printf("geolocation: fetched and cached %d ranges for country %s", rangeCount, countryCode)
+	return rangeCount, nil
+}
+
+// GetAllBlockedCIDRs returns all blocked country CIDRs (implements nftables.CountryZonesProvider)
+func (s *Service) GetAllBlockedCIDRs(outboundOnly bool) ([]string, error) {
+	if s.blockingProvider == nil {
+		return nil, fmt.Errorf("blocking provider not available")
+	}
+	return s.blockingProvider.GetAllBlockedCIDRs(outboundOnly)
 }
 
 // ReloadConfig reloads configuration and reinitializes providers
 func (s *Service) ReloadConfig() error {
 	s.loadConfig()
 	return s.initProviders()
+}
+
+// EnableBlocking enables country blocking and triggers nftables apply
+func (s *Service) EnableBlocking() {
+	s.mu.Lock()
+	s.config.BlockingEnabled = true
+	s.mu.Unlock()
+
+	// Initialize blocking provider if needed
+	if s.blockingProvider == nil {
+		s.blockingProvider = NewIPDenyProvider(s.db)
+	}
+
+	// Trigger nftables apply
+	if s.nft != nil {
+		s.nft.RequestApply()
+	}
+}
+
+// DisableBlocking disables country blocking and triggers nftables apply
+func (s *Service) DisableBlocking() {
+	s.mu.Lock()
+	s.config.BlockingEnabled = false
+	s.mu.Unlock()
+
+	// Trigger nftables apply (will result in empty country sets)
+	if s.nft != nil {
+		s.nft.RequestApply()
+	}
 }

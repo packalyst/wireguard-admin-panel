@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { toast, apiGet, apiPost, apiPut, apiDelete } from '../stores/app.js'
+  import { toast, apiGet, apiPost, apiPut, apiDelete, confirm, setConfirmLoading } from '../stores/app.js'
   import Icon from '../components/Icon.svelte'
   import Badge from '../components/Badge.svelte'
   import Button from '../components/Button.svelte'
@@ -17,15 +17,14 @@
   let routes = $state([])
   let vpnClients = $state([])
   let availableMiddlewares = $state([])
+  let certificates = $state([]) // Certificate info from Let's Encrypt
   let searchQuery = $state('')
 
   // Modal states
   let formModalMode = $state(null) // 'create' | 'edit' | null
   let showFormModal = $derived(formModalMode !== null)
-  let showDeleteModal = $state(false)
   let showScanModal = $state(false)
   let editingRoute = $state(null)
-  let deletingRoute = $state(null)
 
   // Port scanning state
   let scanMode = $state('common') // common, range, full
@@ -46,18 +45,22 @@
     vpnClientId: null,
     httpsBackend: false,
     middlewares: [],
-    description: ''
+    description: '',
+    accessMode: 'vpn',
+    frontendSsl: false
   })
 
   async function loadData() {
     try {
-      const [routesRes, clientsRes, traefikRes] = await Promise.all([
+      const [routesRes, clientsRes, traefikRes, certsRes] = await Promise.all([
         apiGet('/api/domains'),
         apiGet('/api/vpn/clients'),
-        apiGet('/api/traefik/overview')
+        apiGet('/api/traefik/overview'),
+        apiGet('/api/domains/certificates').catch(() => ({ certificates: [] }))
       ])
       routes = routesRes.routes || []
       vpnClients = Array.isArray(clientsRes) ? clientsRes : []
+      certificates = certsRes.certificates || []
       // Extract middleware names from Traefik, filter out internal ones
       const mws = traefikRes.middlewares || []
       availableMiddlewares = mws
@@ -68,6 +71,11 @@
     } finally {
       loading = false
     }
+  }
+
+  // Certificate lookup by domain
+  function getCertForDomain(domain) {
+    return certificates.find(c => c.domain === domain)
   }
 
   onMount(() => {
@@ -98,7 +106,9 @@
       vpnClientId: null,
       httpsBackend: false,
       middlewares: [],
-      description: ''
+      description: '',
+      accessMode: 'vpn',
+      frontendSsl: false
     }
   }
 
@@ -117,7 +127,9 @@
       vpnClientId: route.vpnClientId || '',
       httpsBackend: route.httpsBackend,
       middlewares: route.middlewares || [],
-      description: route.description || ''
+      description: route.description || '',
+      accessMode: route.accessMode || 'vpn',
+      frontendSsl: route.frontendSsl || false
     }
     formModalMode = 'edit'
   }
@@ -135,9 +147,24 @@
     }
   }
 
-  function confirmDelete(route) {
-    deletingRoute = route
-    showDeleteModal = true
+  async function confirmDelete(route) {
+    const confirmed = await confirm({
+      title: 'Delete Domain Route',
+      message: `Delete route for ${route.domain}?`,
+      description: 'This action cannot be undone.'
+    })
+    if (!confirmed) return
+
+    setConfirmLoading(true)
+    try {
+      await apiDelete(`/api/domains/${route.id}`)
+      toast('Domain route deleted', 'success')
+      loadData()
+    } catch (e) {
+      toast('Failed to delete route: ' + e.message, 'error')
+    } finally {
+      setConfirmLoading(false)
+    }
   }
 
   // When VPN client is selected, auto-fill the IP
@@ -165,7 +192,9 @@
         vpnClientId: formData.vpnClientId ? parseInt(formData.vpnClientId) : null,
         httpsBackend: formData.httpsBackend,
         middlewares: formData.middlewares,
-        description: formData.description
+        description: formData.description,
+        accessMode: formData.accessMode,
+        frontendSsl: formData.frontendSsl
       })
       toast('Domain route created', 'success')
       closeFormModal()
@@ -185,7 +214,9 @@
         vpnClientId: formData.vpnClientId ? parseInt(formData.vpnClientId) : null,
         httpsBackend: formData.httpsBackend,
         middlewares: formData.middlewares,
-        description: formData.description
+        description: formData.description,
+        accessMode: formData.accessMode,
+        frontendSsl: formData.frontendSsl
       })
       toast('Domain route updated', 'success')
       closeFormModal()
@@ -200,19 +231,6 @@
       createRoute()
     } else if (formModalMode === 'edit') {
       updateRoute()
-    }
-  }
-
-  async function deleteRoute() {
-    if (!deletingRoute) return
-    try {
-      await apiDelete(`/api/domains/${deletingRoute.id}`)
-      toast('Domain route deleted', 'success')
-      showDeleteModal = false
-      deletingRoute = null
-      loadData()
-    } catch (e) {
-      toast('Failed to delete route: ' + e.message, 'error')
     }
   }
 
@@ -439,9 +457,19 @@
 
               <!-- Mobile: Status + Actions aligned right -->
               <div class="flex flex-col items-end gap-1.5 sm:hidden">
-                <Badge variant={route.enabled ? 'success' : 'muted'} size="sm">
-                  {route.enabled ? 'Enabled' : 'Disabled'}
-                </Badge>
+                <div class="flex items-center gap-1">
+                  <Badge variant={route.enabled ? 'success' : 'muted'} size="sm">
+                    {route.enabled ? 'Enabled' : 'Disabled'}
+                  </Badge>
+                  {#if getCertForDomain(route.domain)}
+                    {@const cert = getCertForDomain(route.domain)}
+                    <Badge variant={cert.status === 'valid' ? 'success' : cert.status === 'warning' ? 'warning' : 'destructive'} size="sm">
+                      SSL
+                    </Badge>
+                  {:else if route.frontendSsl}
+                    <Badge variant="muted" size="sm">SSL?</Badge>
+                  {/if}
+                </div>
                 <div class="btn-group">
                   <button onclick={() => toggleRoute(route)} class="custom_btns" data-kt-tooltip>
                     <Icon name={route.enabled ? 'player-pause' : 'player-play'} size={14} />
@@ -476,15 +504,35 @@
                 </span>
 
                 <!-- Options -->
-                <div class="hidden lg:flex items-center gap-1">
-                  {#if route.httpsBackend}
-                    <Badge variant="warning" size="sm">HTTPS</Badge>
+                <div class="hidden md:flex items-center gap-1">
+                  <!-- Access Mode Badge -->
+                  <Badge variant={route.accessMode === 'public' ? 'warning' : 'info'} size="sm">
+                    {route.accessMode === 'public' ? 'Public' : 'VPN'}
+                  </Badge>
+                  <!-- Frontend SSL Badge with certificate status -->
+                  {#if getCertForDomain(route.domain)}
+                    {@const cert = getCertForDomain(route.domain)}
+                    <Badge
+                      variant={cert.status === 'valid' ? 'success' : cert.status === 'warning' ? 'warning' : 'destructive'}
+                      size="sm"
+                      title={`Expires: ${new Date(cert.notAfter).toLocaleDateString()} (${cert.daysLeft} days)`}
+                    >
+                      SSL {cert.daysLeft}d
+                    </Badge>
+                  {:else if route.frontendSsl}
+                    <Badge variant="muted" size="sm" title="SSL enabled, waiting for certificate">
+                      SSL Pending
+                    </Badge>
                   {/if}
-                  {#each (route.middlewares || []).slice(0, 2) as mw}
-                    <Badge variant="info" size="sm">{mw.replace('@file', '')}</Badge>
+                  <!-- Backend HTTPS Badge -->
+                  {#if route.httpsBackend}
+                    <Badge variant="muted" size="sm">HTTPS↗</Badge>
+                  {/if}
+                  {#each (route.middlewares || []).filter(m => !m.includes('vpn-only')).slice(0, 2) as mw}
+                    <Badge variant="muted" size="sm">{mw.replace('@file', '')}</Badge>
                   {/each}
-                  {#if (route.middlewares || []).length > 2}
-                    <span class="text-[10px] text-muted-foreground">+{route.middlewares.length - 2}</span>
+                  {#if (route.middlewares || []).filter(m => !m.includes('vpn-only')).length > 2}
+                    <span class="text-[10px] text-muted-foreground">+{route.middlewares.filter(m => !m.includes('vpn-only')).length - 2}</span>
                   {/if}
                 </div>
 
@@ -535,8 +583,8 @@
       placeholder="wiki.local"
       bind:value={formData.domain}
       prefixIcon="world-www"
-      suffixCheckbox={{ icon: "lock", label: "HTTPS", color: "warning" }}
-      bind:suffixCheckboxChecked={formData.httpsBackend}
+      suffixCheckbox={{ icon: "lock", label: "SSL", color: "warning" }}
+      bind:suffixCheckboxChecked={formData.frontendSsl}
     />
 
     <Select
@@ -555,6 +603,8 @@
         placeholder="10.8.0.5"
         bind:value={formData.targetIp}
         prefixIcon="network"
+        suffixCheckbox={{ icon: "lock", label: "HTTPS", color: "warning" }}
+        bind:suffixCheckboxChecked={formData.httpsBackend}
       />
       <Input
         label="Target Port"
@@ -571,6 +621,28 @@
       bind:value={formData.description}
       prefixIcon="file-text"
     />
+
+    <!-- Access Mode -->
+    <div>
+      <label class="text-sm font-medium text-foreground">Access Mode</label>
+      <div class="mt-2 flex gap-2">
+        <Checkbox
+          variant="chip"
+          checked={formData.accessMode === 'vpn'}
+          onchange={() => formData.accessMode = 'vpn'}
+          icon="lock"
+          label="VPN Only"
+        />
+        <Checkbox
+          variant="chip"
+          color="warning"
+          checked={formData.accessMode === 'public'}
+          onchange={() => formData.accessMode = 'public'}
+          icon="world"
+          label="Public"
+        />
+      </div>
+    </div>
 
     {#if availableMiddlewares.length > 0}
       <div>
@@ -595,21 +667,6 @@
       <Button variant="primary" onclick={submitForm}>
         {formModalMode === 'create' ? 'Create Route' : 'Save Changes'}
       </Button>
-    </div>
-  {/snippet}
-</Modal>
-
-<!-- Delete Confirmation Modal -->
-<Modal bind:open={showDeleteModal} title="Delete Domain Route" size="sm">
-  <p class="text-sm text-muted-foreground">
-    Are you sure you want to delete the route for <strong class="text-foreground">{deletingRoute?.domain}</strong>?
-    This action cannot be undone.
-  </p>
-
-  {#snippet footer()}
-    <div class="flex justify-between w-full">
-      <Button variant="outline" onclick={() => { showDeleteModal = false; deletingRoute = null }}>Cancel</Button>
-      <Button variant="destructive" onclick={deleteRoute}>Delete</Button>
     </div>
   {/snippet}
 </Modal>

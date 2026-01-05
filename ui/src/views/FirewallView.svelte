@@ -1,7 +1,8 @@
 <script>
-  import { onMount, onDestroy } from 'svelte'
-  import { toast, apiGet, apiPost, apiPut, apiDelete, getInitialTab } from '../stores/app.js'
+  import { onMount, onDestroy, untrack } from 'svelte'
+  import { toast, apiGet, apiPost, apiPut, apiDelete, getInitialTab, confirm, setConfirmLoading } from '../stores/app.js'
   import { loadState, saveState, createDebouncedSearch, getDefaultPerPage, lazyLoad } from '../stores/helpers.js'
+  import { generalInfoStore } from '../stores/websocket.js'
   import { timeAgo, formatRelativeDate, formatTime } from '$lib/utils/format.js'
   import LoadingSpinner from '../components/LoadingSpinner.svelte'
   import EmptyState from '../components/EmptyState.svelte'
@@ -14,6 +15,7 @@
   import Button from '../components/Button.svelte'
   import Tabs from '../components/Tabs.svelte'
   import Checkbox from '../components/Checkbox.svelte'
+  import DropdownButton from '../components/DropdownButton.svelte'
   let { loading = $bindable(true) } = $props()
 
   // Tabs with dynamic badge for blocked count
@@ -21,8 +23,7 @@
     { id: 'ports', label: 'Ports', icon: 'lock' },
     { id: 'blocked', label: 'Blocked', icon: 'ban', badge: (status?.blockedIPCount || 0) > 0 ? status?.blockedIPCount : undefined },
     { id: 'attempts', label: 'Activity', icon: 'activity' },
-    { id: 'jails', label: 'Jails', icon: 'shield' },
-    { id: 'countries', label: 'Countries', icon: 'world' }
+    { id: 'jails', label: 'Jails', icon: 'shield' }
   ])
 
   // Data state
@@ -32,11 +33,15 @@
   let loadingPorts = $state(false)
   let loadingJails = $state(false)
 
-  // Blocked IPs state (server-side pagination)
-  let blockedIPs = $state([])
+  // Blocked entries state (server-side pagination)
+  let blockedEntries = $state([])
   let blockedTotal = $state(0)
-  let blockedJails = $state([])
+  let blockedTypes = $state([])
+  let blockedSources = $state([])
   let loadingBlocked = $state(false)
+  let removingEntryId = $state(null)
+  let selectedBlockedEntries = $state([])
+  let deletingSelectedEntries = $state(false)
 
   // Attempts state (server-side pagination)
   let attempts = $state([])
@@ -49,13 +54,14 @@
   const savedAttemptsState = loadState('firewall_attempts')
 
   // UI state - read initial tab from URL hash
-  let activeTab = $state(getInitialTab('ports', ['ports', 'blocked', 'attempts', 'jails', 'countries']))
+  let activeTab = $state(getInitialTab('ports', ['ports', 'blocked', 'attempts', 'jails']))
 
   // Blocked tab state
   let blockedPage = $state(savedBlockedState.page || 1)
   let blockedPerPage = $state(savedBlockedState.perPage || getDefaultPerPage())
   let blockedSearch = $state(savedBlockedState.search || '')
-  let blockedJailFilter = $state(savedBlockedState.jail || '')
+  let blockedTypeFilter = $state(savedBlockedState.type || '')
+  let blockedSourceFilter = $state(savedBlockedState.source || '')
   let blockedSearchQuery = $state(savedBlockedState.search || '')
 
   // Attempts tab state
@@ -75,7 +81,8 @@
       page: blockedPage,
       perPage: blockedPerPage,
       search: blockedSearch,
-      jail: blockedJailFilter
+      type: blockedTypeFilter,
+      source: blockedSourceFilter
     })
   })
 
@@ -88,14 +95,38 @@
     })
   })
 
+  // Listen for WebSocket zone progress updates via custom event
+  // (store-based approach misses rapid messages)
+  function handleZoneUpdate(e) {
+    const info = e.detail
+    if (!info?.event) return
+
+    if (info.event === 'firewall:zones:progress' && info.country && info.rangeCount !== undefined) {
+      // Update the hitCount for this country in blockedEntries
+      blockedEntries = blockedEntries.map(entry => {
+        if (entry.entryType === 'country' && entry.value === info.country) {
+          return { ...entry, hitCount: info.rangeCount }
+        }
+        return entry
+      })
+    } else if (info.event === 'firewall:zones:complete') {
+      // Reload blocked entries to get final state
+      loadBlocked()
+    }
+  }
+
+  onMount(() => {
+    window.addEventListener('firewall-zone-update', handleZoneUpdate)
+  })
+
+  onDestroy(() => {
+    window.removeEventListener('firewall-zone-update', handleZoneUpdate)
+  })
+
   // Modals
   let showBlockModal = $state(false)
-  let showUnblockModal = $state(false)
   let showSSHModal = $state(false)
   let showJailModal = $state(false)
-  let showDeleteJailModal = $state(false)
-  let unblockingIP = $state(null)
-  let deletingJail = $state(null)
 
   // SSH port state
   let sshPort = $state(22)
@@ -129,22 +160,26 @@
   let importingSource = $state(null)
   let customURL = $state('')
 
+  // Sync status state
+  let syncStatus = $state(null)
+  let checkingSyncStatus = $state(false)
+  let refreshingZones = $state(false)
+
   // Country blocking state
   let availableCountries = $state([])
-  let blockedCountries = $state([])
-  let countryStatus = $state(null)
-  let loadingCountries = $state(false)
-  let blockingCountries = $state(false)
-  let selectedCountries = $state([])
-  let countrySearch = $state('')
   let showBlockCountriesModal = $state(false)
-  let showCountryActionsMenu = $state(false)
-  let refreshingZones = $state(false)
+  let countrySearch = $state('')
+  let selectedCountries = $state([])
+  let blockingCountries = $state(false)
 
   // Load status on mount
   async function loadStatus() {
     try {
       status = await apiGet('/api/fw/status')
+      // Extract sshPort from status (no longer separate API call)
+      if (status?.sshPort) {
+        sshPort = status.sshPort
+      }
     } catch (e) {
       console.error('Failed to load status:', e)
     } finally {
@@ -152,13 +187,46 @@
     }
   }
 
-  // Load SSH port
-  async function loadSSHPort() {
+  // Check sync status between DB and nftables
+  async function checkSyncStatus() {
+    checkingSyncStatus = true
     try {
-      const res = await apiGet('/api/fw/ssh')
-      sshPort = res.port || 22
+      syncStatus = await apiGet('/api/fw/sync-status')
+      if (!syncStatus.inSync) {
+        if (syncStatus.lastApplyError) {
+          toast('Firewall sync error: ' + syncStatus.lastApplyError, 'error')
+        } else if (!syncStatus.nftTableExists) {
+          toast('Firewall table not found in nftables', 'warning')
+        } else {
+          // Show detailed mismatch info
+          const mismatches = []
+          if (syncStatus.dbBlockedIPs !== syncStatus.nftBlockedIPs) {
+            mismatches.push(`IPs: DB=${syncStatus.dbBlockedIPs} vs NFT=${syncStatus.nftBlockedIPs}`)
+          }
+          if (syncStatus.dbBlockedRanges !== syncStatus.nftBlockedRanges) {
+            mismatches.push(`Ranges: DB=${syncStatus.dbBlockedRanges} vs NFT=${syncStatus.nftBlockedRanges}`)
+          }
+          if (syncStatus.dbAllowedPorts !== syncStatus.nftAllowedPorts) {
+            mismatches.push(`Ports: DB=${syncStatus.dbAllowedPorts} vs NFT=${syncStatus.nftAllowedPorts}`)
+          }
+          if (syncStatus.dbCountryRanges !== syncStatus.nftCountryRanges) {
+            mismatches.push(`Countries: DB=${syncStatus.dbCountryRanges} vs NFT=${syncStatus.nftCountryRanges}`)
+          }
+          if (syncStatus.applyPending) {
+            mismatches.push('Apply pending')
+          }
+          toast('Out of sync: ' + mismatches.join(', '), 'warning')
+        }
+      } else {
+        const parts = [`${syncStatus.dbBlockedIPs} IPs`, `${syncStatus.dbAllowedPorts} ports`]
+        if (syncStatus.dbBlockedRanges > 0) parts.push(`${syncStatus.dbBlockedRanges} ranges`)
+        if (syncStatus.dbCountryRanges > 0) parts.push(`${syncStatus.dbCountryRanges} country ranges`)
+        toast(`In sync: ${parts.join(', ')}`, 'success')
+      }
     } catch (e) {
-      console.error('Failed to load SSH port:', e)
+      toast('Failed to check sync status: ' + e.message, 'error')
+    } finally {
+      checkingSyncStatus = false
     }
   }
 
@@ -214,17 +282,20 @@
     try {
       const params = new URLSearchParams({
         limit: blockedPerPage.toString(),
-        offset: blockedOffset.toString()
+        offset: blockedOffset.toString(),
+        action: 'block' // Only show blocked entries (not allowed ports)
       })
       if (blockedSearch) params.set('search', blockedSearch)
-      if (blockedJailFilter) params.set('jail', blockedJailFilter)
+      if (blockedTypeFilter) params.set('type', blockedTypeFilter)
+      if (blockedSourceFilter) params.set('source', blockedSourceFilter)
 
-      const res = await apiGet(`/api/fw/blocked?${params}`)
-      blockedIPs = res.blocked || []
+      const res = await apiGet(`/api/fw/entries?${params}`)
+      blockedEntries = res.entries || []
       blockedTotal = res.total || 0
-      blockedJails = res.jails || []
+      blockedTypes = res.types || []
+      blockedSources = res.sources || []
     } catch (e) {
-      toast('Failed to load blocked IPs: ' + e.message, 'error')
+      toast('Failed to load blocked entries: ' + e.message, 'error')
     } finally {
       loadingBlocked = false
     }
@@ -274,8 +345,14 @@
     debouncedAttemptsSearch(attemptsSearchQuery)
   }
 
-  function setBlockedJailFilter(jail) {
-    blockedJailFilter = jail
+  function setBlockedTypeFilter(type) {
+    blockedTypeFilter = type
+    blockedPage = 1
+    loadBlocked()
+  }
+
+  function setBlockedSourceFilter(source) {
+    blockedSourceFilter = source
     blockedPage = 1
     loadBlocked()
   }
@@ -289,7 +366,8 @@
   function clearBlockedFilters() {
     blockedSearch = ''
     blockedSearchQuery = ''
-    blockedJailFilter = ''
+    blockedTypeFilter = ''
+    blockedSourceFilter = ''
     blockedPage = 1
     loadBlocked()
   }
@@ -315,24 +393,6 @@
     }
   }
 
-  async function loadCountries(showLoading = true) {
-    if (showLoading) loadingCountries = true
-    try {
-      const [avail, blocked, status] = await Promise.all([
-        apiGet('/api/geo/countries'),
-        apiGet('/api/geo/blocked'),
-        apiGet('/api/geo/blocked/status')
-      ])
-      availableCountries = avail || []
-      blockedCountries = blocked?.countries || []
-      countryStatus = status || {}
-    } catch (e) {
-      toast('Failed to load countries: ' + e.message, 'error')
-    } finally {
-      loadingCountries = false
-    }
-  }
-
   // Reload specific section
   async function reloadSection(section) {
     if (section === 'ports') {
@@ -346,8 +406,6 @@
     } else if (section === 'jails') {
       jails = []
       await loadJails()
-    } else if (section === 'countries') {
-      await loadCountries()
     }
   }
 
@@ -357,7 +415,6 @@
     else if (tabId === 'blocked') loadBlocked()
     else if (tabId === 'attempts') loadAttempts()
     else if (tabId === 'jails') loadJails()
-    else if (tabId === 'countries') loadCountries()
   }
 
   // Load initial tab data based on URL or default
@@ -427,12 +484,16 @@
       }
     }
     try {
-      const res = await apiPost('/api/fw/blocked', {
-        ip: blockForm.ip,
+      const isRange = cidrRegex.test(blockForm.ip)
+      const res = await apiPost('/api/fw/entries', {
+        type: isRange ? 'range' : 'ip',
+        value: blockForm.ip,
+        action: 'block',
+        direction: 'inbound',
         reason: blockForm.reason || 'Manual block',
         banTime
       })
-      const msg = res.isRange ? `Range ${res.ip} blocked` : `IP ${res.ip} blocked`
+      const msg = isRange ? `Range ${blockForm.ip} blocked` : `IP ${blockForm.ip} blocked`
       toast(msg, 'success')
       showBlockModal = false
       blockForm = { ip: '', reason: '', duration: '30d' }
@@ -442,24 +503,34 @@
     }
   }
 
-  function confirmUnblock(blocked) {
-    unblockingIP = blocked
-    showUnblockModal = true
-  }
+  async function confirmUnblock(entry) {
+    const label = entry.entryType === 'country' ? (entry.name || entry.value) : entry.value
+    const description = entry.entryType === 'country'
+      ? 'Traffic from this country will be allowed again.'
+      : entry.entryType === 'range'
+        ? 'This IP range will be able to connect again.'
+        : 'This IP will be able to connect again.'
 
-  async function unblockIP() {
-    if (!unblockingIP) return
+    const confirmed = await confirm({
+      title: 'Unblock Entry',
+      message: `Unblock ${label}?`,
+      description,
+      confirmText: 'Unblock',
+      variant: 'success'
+    })
+    if (!confirmed) return
+
+    removingEntryId = entry.id
+    setConfirmLoading(true)
     try {
-      const url = unblockingIP.jailName
-        ? `/api/fw/blocked/${unblockingIP.ip}?jail=${unblockingIP.jailName}`
-        : `/api/fw/blocked/${unblockingIP.ip}`
-      await apiDelete(url)
-      toast(`IP ${unblockingIP.ip} unblocked`, 'success')
-      showUnblockModal = false
-      unblockingIP = null
+      await apiDelete(`/api/fw/entries/${entry.id}`)
+      toast(`${label} unblocked`, 'success')
       await reloadSection('blocked')
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
+    } finally {
+      removingEntryId = null
+      setConfirmLoading(false)
     }
   }
 
@@ -547,22 +618,25 @@
     }
   }
 
-  function confirmDeleteJail(jail) {
-    deletingJail = jail
-    showDeleteJailModal = true
-  }
+  async function confirmDeleteJail(jail) {
+    const confirmed = await confirm({
+      title: 'Delete Jail',
+      message: `Delete jail "${jail.name}"?`,
+      description: 'This will stop the jail monitor and remove all associated blocked IPs.',
+      confirmText: 'Delete Jail'
+    })
+    if (!confirmed) return
 
-  async function deleteJail() {
-    if (!deletingJail) return
+    setConfirmLoading(true)
     try {
-      await apiDelete(`/api/fw/jails/${deletingJail.name}`)
-      toast(`Jail "${deletingJail.name}" deleted`, 'success')
-      showDeleteJailModal = false
-      deletingJail = null
+      await apiDelete(`/api/fw/jails/${jail.name}`)
+      toast(`Jail "${jail.name}" deleted`, 'success')
       await reloadSection('jails')
       await loadStatus()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
+    } finally {
+      setConfirmLoading(false)
     }
   }
 
@@ -585,7 +659,7 @@
     importingSource = source
     try {
       const body = source === 'custom' ? { url: customURL } : { source }
-      const res = await apiPost('/api/fw/blocklists/import', body)
+      const res = await apiPost('/api/fw/entries/import', body)
       toast(`Imported ${res.added} IPs from ${res.source} (${res.skipped} skipped)`, 'success')
       if (source === 'custom') customURL = ''
       await reloadSection('blocked')
@@ -597,52 +671,162 @@
     }
   }
 
-  async function deleteBlockedSource(source) {
-    if (!confirm(`Delete all IPs from "${source}"?`)) return
+  async function toggleEntryDirection(entry) {
+    const newDirection = entry.direction === 'inbound' ? 'both' : 'inbound'
     try {
-      const res = await apiDelete(`/api/fw/blocked/source/${source}`)
-      toast(`Deleted ${res.deleted} IPs from ${source}`, 'success')
-      await reloadSection('blocked')
-      await loadStatus()
+      await apiPost(`/api/fw/entries/${entry.id}/toggle`, { direction: newDirection })
+      const label = entry.entryType === 'country' ? entry.name || entry.value : entry.value
+      toast(`${label} direction changed to ${newDirection}`, 'success')
+      await loadBlocked()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
     }
   }
 
-  // Country blocking actions
-  async function blockSelectedCountries() {
-    if (selectedCountries.length === 0) return
+  // Toggle blocked entry selection
+  function toggleBlockedEntrySelection(id) {
+    if (selectedBlockedEntries.includes(id)) {
+      selectedBlockedEntries = selectedBlockedEntries.filter(e => e !== id)
+    } else {
+      selectedBlockedEntries = [...selectedBlockedEntries, id]
+    }
+  }
 
-    blockingCountries = true
+  // Select/deselect all blocked entries
+  function toggleAllBlockedEntries() {
+    if (selectedBlockedEntries.length === blockedEntries.length) {
+      selectedBlockedEntries = []
+    } else {
+      selectedBlockedEntries = blockedEntries.map(e => e.id)
+    }
+  }
+
+  // Delete selected blocked entries
+  async function deleteSelectedBlockedEntries() {
+    if (selectedBlockedEntries.length === 0) return
+    deletingSelectedEntries = true
+    const toDelete = [...selectedBlockedEntries]
+
     try {
-      const res = await apiPost('/api/geo/blocked', {
-        countryCodes: selectedCountries,
-        direction: 'inbound'
+      const result = await apiPost('/api/fw/entries/bulk', {
+        action: 'delete',
+        ids: toDelete
       })
+      selectedBlockedEntries = []
+      await loadBlocked()
+      await loadStatus()
+      toast(`Deleted ${result.affected} entries`, 'success')
+    } catch (e) {
+      toast(`Failed to delete entries: ${e.message}`, 'error')
+    } finally {
+      deletingSelectedEntries = false
+    }
+  }
 
-      if (selectedCountries.length === 1) {
-        // Single country response
-        if (res.warning) {
-          toast(`${res.name} added with warning: ${res.warning}`, 'warning')
-        } else {
-          toast(`${res.name} blocked (${res.rangeCount?.toLocaleString()} ranges)`, 'success')
-        }
-      } else {
-        // Bulk response
-        const totalRanges = res.results?.reduce((sum, r) => sum + (r.rangeCount || 0), 0) || 0
-        toast(`${res.count} countries blocked (${totalRanges.toLocaleString()} ranges)`, 'success')
-      }
+  // Set direction for selected entries
+  async function setSelectedDirection(direction) {
+    if (selectedBlockedEntries.length === 0) return
+    try {
+      const result = await apiPost('/api/fw/entries/bulk', {
+        action: `set_${direction}`,
+        ids: [...selectedBlockedEntries]
+      })
+      selectedBlockedEntries = []
+      await loadBlocked()
+      toast(`Updated ${result.affected} entries to ${direction}`, 'success')
+    } catch (e) {
+      toast(`Failed to update entries: ${e.message}`, 'error')
+    }
+  }
 
-      selectedCountries = []
-      countrySearch = ''
-      showBlockCountriesModal = false
-      await loadCountries(false)
+  // Delete all entries
+  async function confirmDeleteAll() {
+    const confirmed = await confirm({
+      title: 'Delete All Entries',
+      message: `This will permanently delete ${blockedTotal} blocked entries.`,
+      description: 'All IPs, ranges, and countries will be removed. Essential entries (system ports) will not be deleted.',
+      warning: 'This action cannot be undone!',
+      confirmText: 'Delete All'
+    })
+    if (!confirmed) return
+
+    setConfirmLoading(true)
+    try {
+      const result = await apiDelete('/api/fw/entries/all')
+      await loadBlocked()
+      await loadStatus()
+      toast(`Deleted ${result.deleted} entries`, 'success')
+    } catch (e) {
+      toast(`Failed to delete entries: ${e.message}`, 'error')
+    } finally {
+      setConfirmLoading(false)
+    }
+  }
+
+  async function refreshZones() {
+    refreshingZones = true
+    try {
+      const res = await apiPost('/api/geo/zones/refresh')
+      toast(`Refreshed ${res.updated} countries${res.errors > 0 ? ` (${res.errors} errors)` : ''}`, res.errors > 0 ? 'warning' : 'success')
+      await loadBlocked()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
     } finally {
-      blockingCountries = false
+      refreshingZones = false
     }
   }
+
+  // Country blocking functions
+  async function loadCountries() {
+    try {
+      const res = await apiGet('/api/geo/countries')
+      availableCountries = res.countries || res || []
+    } catch (e) {
+      toast('Failed to load countries: ' + e.message, 'error')
+    }
+  }
+
+  function openBlockCountriesModal() {
+    loadCountries()
+    showBlockCountriesModal = true
+  }
+
+  // Get list of blocked country codes from blocked entries
+  const blockedCountryCodes = $derived(
+    blockedEntries
+      .filter(e => e.entryType === 'country')
+      .map(e => e.value)
+  )
+
+  // Filter out already blocked countries
+  const unblockedCountries = $derived(
+    availableCountries.filter(c => !blockedCountryCodes.includes(c.code))
+  )
+
+  // Filtered by search
+  const filteredUnblockedCountries = $derived(
+    countrySearch
+      ? unblockedCountries.filter(c =>
+          c.name.toLowerCase().includes(countrySearch.toLowerCase()) ||
+          c.code.toLowerCase().includes(countrySearch.toLowerCase())
+        )
+      : unblockedCountries
+  )
+
+  // Group by continent
+  const countriesByContinent = $derived.by(() => {
+    const groups = {}
+    for (const country of filteredUnblockedCountries) {
+      const continent = country.continent || 'Other'
+      if (!groups[continent]) groups[continent] = []
+      groups[continent].push(country)
+    }
+    return groups
+  })
+
+  const sortedContinents = $derived(
+    Object.keys(countriesByContinent).sort()
+  )
 
   function toggleCountrySelection(code) {
     if (selectedCountries.includes(code)) {
@@ -653,166 +837,71 @@
   }
 
   function selectAllFilteredCountries() {
-    const filtered = filteredUnblockedCountries.map(c => c.code)
-    selectedCountries = [...new Set([...selectedCountries, ...filtered])]
+    selectedCountries = filteredUnblockedCountries.map(c => c.code)
   }
 
   function clearCountrySelection() {
     selectedCountries = []
   }
 
-  async function unblockCountry(code) {
-    try {
-      const res = await apiDelete(`/api/geo/blocked/${code}`)
-      if (res.status === 'removing') {
-        toast(`Removing ${code}...`, 'info')
-        await loadCountries(false)
-        // Poll for completion
-        pollCountryRemoval(code)
-      } else {
-        toast(`Country ${code} unblocked`, 'success')
-        await loadCountries(false)
-      }
-    } catch (e) {
-      toast('Failed: ' + e.message, 'error')
+  function toggleContinentSelection(continent) {
+    const continentCountries = countriesByContinent[continent] || []
+    const continentCodes = continentCountries.map(c => c.code)
+    const allSelected = continentCodes.every(c => selectedCountries.includes(c))
+
+    if (allSelected) {
+      selectedCountries = selectedCountries.filter(c => !continentCodes.includes(c))
+    } else {
+      const newSelection = new Set([...selectedCountries, ...continentCodes])
+      selectedCountries = [...newSelection]
     }
   }
 
-  function pollCountryRemoval(code, attempts = 0) {
-    if (attempts > 30) return // Stop after 30 seconds
-    setTimeout(async () => {
-      await loadCountries(false)
-      const country = blockedCountries.find(c => c.country_code === code)
-      if (country) {
-        // Still exists, keep polling
-        pollCountryRemoval(code, attempts + 1)
-      } else {
-        toast(`Country ${code} unblocked`, 'success')
+  function isContinentFullySelected(continent) {
+    const continentCountries = countriesByContinent[continent] || []
+    return continentCountries.length > 0 && continentCountries.every(c => selectedCountries.includes(c.code))
+  }
+
+  function isContinentPartiallySelected(continent) {
+    const continentCountries = countriesByContinent[continent] || []
+    const selectedCount = continentCountries.filter(c => selectedCountries.includes(c.code)).length
+    return selectedCount > 0 && selectedCount < continentCountries.length
+  }
+
+  async function blockSelectedCountries() {
+    if (selectedCountries.length === 0) return
+    blockingCountries = true
+    try {
+      // Create country entries via the entries API
+      for (const code of selectedCountries) {
+        const country = availableCountries.find(c => c.code === code)
+        await apiPost('/api/fw/entries', {
+          type: 'country',
+          value: code,
+          name: country?.name || code,
+          action: 'block',
+          direction: 'inbound',
+          reason: 'Country block'
+        })
       }
-    }, 1000)
-  }
-
-  async function toggleCountryDirection(code, currentDirection) {
-    const newDirection = currentDirection === 'inbound' ? 'both' : 'inbound'
-    try {
-      await apiPost('/api/geo/blocked', { countryCode: code, direction: newDirection })
-      toast(`${code} direction changed to ${newDirection}`, 'success')
-      await loadCountries(false)
-    } catch (e) {
-      toast('Failed: ' + e.message, 'error')
-    }
-  }
-
-  async function refreshZones() {
-    refreshingZones = true
-    try {
-      const res = await apiPost('/api/geo/zones/refresh')
-      toast(`Refreshed ${res.updated} countries${res.errors > 0 ? ` (${res.errors} errors)` : ''}`, res.errors > 0 ? 'warning' : 'success')
-      await loadCountries()
+      toast(`Blocking ${selectedCountries.length} countries...`, 'info')
+      showBlockCountriesModal = false
+      selectedCountries = []
+      countrySearch = ''
+      // Reload blocked entries to show new countries
+      await loadBlocked()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
     } finally {
-      refreshingZones = false
+      blockingCountries = false
     }
-  }
-
-  // Country flag emoji helper
-  function getFlagEmoji(code) {
-    if (!code || code.length !== 2) return ''
-    const codePoints = code.toUpperCase().split('').map(char => 127397 + char.charCodeAt())
-    return String.fromCodePoint(...codePoints)
-  }
-
-  // Get country name from config or blocked list
-  function getCountryName(code) {
-    const blockedArr = blockedCountries || []
-    const availArr = availableCountries || []
-    const blocked = blockedArr.find?.(c => c.country_code === code)
-    if (blocked) return blocked.name
-    const avail = availArr.find?.(c => c.code === code)
-    if (avail) return avail.name
-    return code
-  }
-
-  // Countries not yet blocked
-  const unblockedCountries = $derived.by(() => {
-    const avail = availableCountries || []
-    const blocked = blockedCountries || []
-    if (!avail.filter || !blocked.some) return []
-    return avail.filter(c => !blocked.some(b => b.country_code === c.code))
-  })
-
-  // Filtered unblocked countries (for search)
-  const filteredUnblockedCountries = $derived.by(() => {
-    const countries = unblockedCountries || []
-    if (!countries.filter) return []
-    const search = countrySearch?.trim() || ''
-    if (!search) return countries
-    return countries.filter(c =>
-      c.name.toLowerCase().includes(search.toLowerCase()) ||
-      c.code.toLowerCase().includes(search.toLowerCase()) ||
-      c.continent?.toLowerCase().includes(search.toLowerCase())
-    )
-  })
-
-  // Group countries by continent
-  const continentOrder = ['Africa', 'Asia', 'Europe', 'North America', 'Oceania', 'South America', 'Antarctica']
-  const countriesByContinent = $derived.by(() => {
-    const countries = filteredUnblockedCountries || []
-    const grouped = {}
-    for (const c of countries) {
-      const continent = c.continent || 'Other'
-      if (!grouped[continent]) grouped[continent] = []
-      grouped[continent].push(c)
-    }
-    // Sort countries within each continent
-    for (const continent of Object.keys(grouped)) {
-      grouped[continent].sort((a, b) => a.name.localeCompare(b.name))
-    }
-    return grouped
-  })
-
-  // Get sorted continents
-  const sortedContinents = $derived.by(() => {
-    const grouped = countriesByContinent || {}
-    return continentOrder.filter(c => grouped[c]?.length > 0)
-  })
-
-  // Select/deselect all countries in a continent
-  function toggleContinentSelection(continent) {
-    const countries = countriesByContinent[continent] || []
-    const codes = countries.map(c => c.code)
-    const allSelected = codes.every(code => selectedCountries.includes(code))
-    if (allSelected) {
-      // Deselect all
-      selectedCountries = selectedCountries.filter(c => !codes.includes(c))
-    } else {
-      // Select all
-      const newSelection = [...selectedCountries]
-      for (const code of codes) {
-        if (!newSelection.includes(code)) newSelection.push(code)
-      }
-      selectedCountries = newSelection
-    }
-  }
-
-  // Check if all countries in a continent are selected
-  function isContinentFullySelected(continent) {
-    const countries = countriesByContinent[continent] || []
-    if (countries.length === 0) return false
-    return countries.every(c => selectedCountries.includes(c.code))
-  }
-
-  // Check if some countries in a continent are selected
-  function isContinentPartiallySelected(continent) {
-    const countries = countriesByContinent[continent] || []
-    const selectedCount = countries.filter(c => selectedCountries.includes(c.code)).length
-    return selectedCount > 0 && selectedCount < countries.length
   }
 
   // Helpers
   function formatTimeRemaining(expiresAt) {
-    if (!expiresAt || expiresAt.startsWith('0001-')) return 'Permanent'
+    if (!expiresAt) return 'Permanent'
+    const expStr = typeof expiresAt === 'string' ? expiresAt : expiresAt.toISOString?.() || String(expiresAt)
+    if (expStr.startsWith('0001-')) return 'Permanent'
     const expires = new Date(expiresAt)
     const now = new Date()
     const diff = expires - now
@@ -842,7 +931,6 @@
   onMount(() => {
     loadStatus()
     loadInitialTab() // Load data for the active tab (from URL or default)
-    loadSSHPort() // Load SSH port for the SSH change feature
   })
 
   onDestroy(() => {
@@ -865,7 +953,7 @@
         </div>
         <div class="flex-1 min-w-0">
           <h3 class="text-sm font-medium text-foreground mb-1">
-            {status?.enabled ? 'Firewall Active' : 'Firewall Inactive'}
+            Firewall Active
           </h3>
           <p class="text-xs text-muted-foreground leading-relaxed">
             Default policy: <strong>{status?.defaultPolicy || 'drop'}</strong>. Managing ports, blocked IPs, country blocking, and intrusion detection jails.
@@ -1008,46 +1096,93 @@
                   type="search"
                   value={blockedSearchQuery}
                   oninput={handleBlockedSearchInput}
-                  placeholder="Search IP, reason..."
+                  placeholder="Search IP, country, reason..."
                   prefixIcon="search"
                   class="sm:w-64"
                 />
-                {#if blockedJails.length > 0}
+                {#if blockedTypes.length > 1}
                   <Select
-                    value={blockedJailFilter}
-                    onchange={(e) => setBlockedJailFilter(e.target.value)}
-                    class="sm:w-40"
+                    value={blockedTypeFilter}
+                    onchange={(e) => setBlockedTypeFilter(e.target.value)}
+                    class="sm:w-32"
                   >
-                    <option value="">All jails</option>
-                    {#each blockedJails as jail}
-                      <option value={jail}>{jail}</option>
+                    <option value="">All types</option>
+                    {#each blockedTypes as type}
+                      <option value={type}>{type}</option>
+                    {/each}
+                  </Select>
+                {/if}
+                {#if blockedSources.length > 1}
+                  <Select
+                    value={blockedSourceFilter}
+                    onchange={(e) => setBlockedSourceFilter(e.target.value)}
+                    class="sm:w-36"
+                  >
+                    <option value="">All sources</option>
+                    {#each blockedSources as source}
+                      <option value={source}>{source}</option>
                     {/each}
                   </Select>
                 {/if}
               </div>
               <div class="data-table-header-end">
                 <div class="kt-btn-group">
-                  <Button onclick={openImportModal} variant="outline" size="sm" icon="download">
-                    Import
-                  </Button>
-                  <Button onclick={() => showBlockModal = true} size="sm" icon="plus">
-                    Block IP
-                  </Button>
+                  <!-- Block dropdown -->
+                  <DropdownButton
+                    label="Block"
+                    icon="plus"
+                    items={[
+                      { label: 'IP / Range', icon: 'ban', onclick: () => showBlockModal = true },
+                      { label: 'Import Blocklist', icon: 'download', onclick: openImportModal },
+                      ...(status?.countryBlockingEnabled ? [
+                        { divider: true },
+                        { label: 'Countries', icon: 'world', onclick: openBlockCountriesModal }
+                      ] : [])
+                    ]}
+                  />
+
+                  <!-- Actions dropdown -->
+                  <DropdownButton
+                    label="Actions"
+                    icon="settings"
+                    variant="outline"
+                    items={[
+                      { label: refreshingZones ? 'Refreshing...' : 'Refresh Zones', icon: 'refresh', iconClass: refreshingZones ? 'animate-spin' : '', onclick: refreshZones, disabled: refreshingZones || !status?.countryBlockingEnabled },
+                      { label: checkingSyncStatus ? 'Checking...' : 'Check Sync', icon: 'circle-check', onclick: checkSyncStatus, disabled: checkingSyncStatus },
+                      { divider: true },
+                      { label: 'Delete All...', icon: 'trash', variant: 'destructive', onclick: confirmDeleteAll, disabled: blockedTotal === 0 }
+                    ]}
+                  />
+
+                  <!-- Bulk dropdown (when items selected) -->
+                  {#if selectedBlockedEntries.length > 0}
+                    <DropdownButton
+                      label="Bulk ({selectedBlockedEntries.length})"
+                      icon="layers-subtract"
+                      variant="destructive"
+                      items={[
+                        { label: 'Delete', icon: 'trash', variant: 'destructive', onclick: deleteSelectedBlockedEntries },
+                        { divider: true },
+                        { label: 'Set Inbound', icon: 'arrow-down', onclick: () => setSelectedDirection('inbound') },
+                        { label: 'Set Both', icon: 'arrows-vertical', onclick: () => setSelectedDirection('both') }
+                      ]}
+                    />
+                  {/if}
                 </div>
               </div>
             </div>
 
             <!-- Content -->
-            {#if loadingBlocked && blockedIPs.length === 0}
+            {#if loadingBlocked && blockedEntries.length === 0}
               <div class="data-table-loading">
                 <LoadingSpinner size="lg" />
               </div>
-            {:else if blockedIPs.length === 0}
+            {:else if blockedEntries.length === 0}
               <div class="data-table-empty">
                 <EmptyState
                   icon="shield-check"
-                  title="No blocked IPs"
-                  description={blockedSearch || blockedJailFilter ? 'No results match your filters' : 'IPs will appear here when blocked by the firewall'}
+                  title="No blocked entries"
+                  description={blockedSearch || blockedTypeFilter || blockedSourceFilter ? 'No results match your filters' : 'IPs, ranges, and countries will appear here when blocked'}
                 />
               </div>
             {:else}
@@ -1055,58 +1190,112 @@
                 <table>
                   <thead>
                     <tr>
-                      <th>Blocked / Source</th>
-                      <th>IP / Range</th>
+                      <th class="w-8">
+                        <Checkbox
+                          checked={blockedEntries.length > 0 && selectedBlockedEntries.length === blockedEntries.length}
+                          indeterminate={selectedBlockedEntries.length > 0 && selectedBlockedEntries.length < blockedEntries.length}
+                          onchange={() => toggleAllBlockedEntries()}
+                        />
+                      </th>
+                      <th>Added / Source</th>
+                      <th>Value</th>
+                      <th>Direction</th>
                       <th>Expires</th>
                       <th></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {#each blockedIPs as blocked}
-                      <tr>
+                    {#each blockedEntries as entry}
+                      <tr class="{removingEntryId === entry.id ? 'opacity-50' : ''} {selectedBlockedEntries.includes(entry.id) ? 'bg-primary/5' : ''}">
+                        <td>
+                          <Checkbox
+                            checked={selectedBlockedEntries.includes(entry.id)}
+                            onchange={() => toggleBlockedEntrySelection(entry.id)}
+                            disabled={removingEntryId === entry.id}
+                          />
+                        </td>
                         <td class="data-table-cell-nowrap">
                           <div class="flex items-center gap-1.5">
                             <Icon name="clock" size={14} class="text-muted-foreground" />
                             <div>
-                              <div class="text-xs font-medium">{formatRelativeDate(blocked.blockedAt)}, {formatTime(blocked.blockedAt)}</div>
-                              <button onclick={() => setBlockedJailFilter(blocked.jailName)} class="text-[10px] text-muted-foreground hover:text-foreground">
-                                {blocked.source || blocked.jailName || 'manual'}
+                              <div class="text-xs font-medium">{formatRelativeDate(entry.createdAt)}, {formatTime(entry.createdAt)}</div>
+                              <button onclick={() => setBlockedSourceFilter(entry.source)} class="text-[10px] text-muted-foreground hover:text-foreground">
+                                {entry.source || 'manual'}
                               </button>
                             </div>
                           </div>
                         </td>
                         <td>
                           <div class="flex items-center gap-2">
-                            <Icon name={blocked.isRange ? 'network' : 'globe'} size={14} class="text-muted-foreground" />
-                            <code class="text-xs font-mono">{blocked.ip}</code>
-                            {#if blocked.isRange}
-                              <Badge variant="info" size="sm">Range</Badge>
+                            {#if entry.entryType === 'country'}
+                              <img
+                                src="https://flagcdn.com/{entry.value.toLowerCase()}.svg"
+                                width="18"
+                                alt={entry.value}
+                                class="rounded-sm shadow-sm"
+                                loading="lazy"
+                              />
+                              <span class="text-sm font-medium">{entry.name || entry.value}</span>
+                              <Badge variant="secondary" size="sm" title="{entry.hitCount || 0} IP ranges">
+                                <Icon name="network" size={10} class="mr-0.5" />
+                                {(entry.hitCount || 0).toLocaleString()}
+                              </Badge>
+                            {:else}
+                              <Icon name={entry.entryType === 'range' ? 'network' : 'globe'} size={14} class="text-muted-foreground" />
+                              <code class="text-xs font-mono">{entry.value}</code>
+                              {#if entry.entryType === 'range'}
+                                <Badge variant="info" size="sm">Range</Badge>
+                              {/if}
                             {/if}
                           </div>
-                          {#if blocked.reason}
-                            <div class="text-[10px] text-muted-foreground mt-0.5 ml-5 truncate max-w-48" title={blocked.reason}>
-                              {blocked.reason}
-                            </div>
-                          {/if}
-                          {#if blocked.escalatedFrom}
-                            <div class="text-[10px] text-muted-foreground mt-0.5 ml-5">
-                              Escalated from {blocked.escalatedFrom}
+                          {#if entry.reason && entry.entryType !== 'country'}
+                            <div class="text-[10px] text-muted-foreground mt-0.5 ml-5 truncate max-w-48" title={entry.reason}>
+                              {entry.reason}
                             </div>
                           {/if}
                         </td>
                         <td class="data-table-cell-nowrap">
-                          {#if blocked.expiresAt}
+                          <button
+                            onclick={() => toggleEntryDirection(entry)}
+                            class="cursor-pointer hover:opacity-80 transition-opacity"
+                            disabled={removingEntryId === entry.id}
+                          >
+                            <Badge variant={entry.direction === 'both' ? 'warning' : 'secondary'} size="sm">
+                              {#if entry.direction === 'both'}
+                                <Icon name="arrow-left" size={10} class="mr-0.5" />
+                                <Icon name="arrow-right" size={10} class="mr-1" />
+                                Both
+                              {:else if entry.direction === 'outbound'}
+                                <Icon name="arrow-right" size={10} class="mr-1" />
+                                Out
+                              {:else}
+                                <Icon name="arrow-left" size={10} class="mr-1" />
+                                In
+                              {/if}
+                            </Badge>
+                          </button>
+                        </td>
+                        <td class="data-table-cell-nowrap">
+                          {#if entry.expiresAt}
                             <Badge variant="warning" size="sm">
-                              {formatTimeRemaining(blocked.expiresAt)}
+                              {formatTimeRemaining(entry.expiresAt)}
                             </Badge>
                           {:else}
-                            <Badge variant="danger" size="sm">Permanent</Badge>
+                            <Badge variant="mono" size="sm">Permanent</Badge>
                           {/if}
                         </td>
                         <td class="data-table-cell-actions">
-                          <button onclick={() => confirmUnblock(blocked)} class="icon-btn" title="Unblock">
-                            <Icon name="lock-open" size={14} />
-                          </button>
+                          {#if removingEntryId === entry.id}
+                            <div class="w-4 h-4 border-2 border-muted border-t-primary rounded-full animate-spin"></div>
+                          {:else if entry.essential}
+                            <span class="p-1.5 text-dim" title="Essential entry">
+                              <Icon name="lock" size={14} />
+                            </span>
+                          {:else}
+                            <button onclick={() => confirmUnblock(entry)} class="icon-btn" title="Unblock">
+                              <Icon name="lock-open" size={14} />
+                            </button>
+                          {/if}
                         </td>
                       </tr>
                     {/each}
@@ -1339,206 +1528,6 @@
             </div>
           {/if}
 
-        <!-- Countries Tab -->
-        {:else if activeTab === 'countries'}
-          {#if loadingCountries}
-            <div class="flex flex-col items-center justify-center py-8">
-              <div class="w-6 h-6 border-2 border-muted border-t-primary rounded-full animate-spin"></div>
-              <p class="mt-2 text-sm text-muted-foreground">Loading countries...</p>
-            </div>
-          {:else if countryStatus?.enabled === false}
-            <!-- Country blocking disabled -->
-            <div class="rounded-xl border border-info/30 bg-info/5 p-6 text-center">
-              <div class="flex justify-center mb-4">
-                <div class="w-12 h-12 rounded-full bg-info/10 flex items-center justify-center">
-                  <Icon name="world-off" size={24} class="text-info" />
-                </div>
-              </div>
-              <h3 class="text-lg font-semibold text-foreground mb-2">Country Blocking Disabled</h3>
-              <p class="text-sm text-muted-foreground mb-4">
-                Country blocking is currently disabled. Enable it in Settings to block traffic from specific countries.
-              </p>
-              <a href="/settings" class="kt-btn kt-btn-primary kt-btn-sm">
-                <Icon name="settings" size={14} class="mr-1" />
-                Go to Settings
-              </a>
-            </div>
-          {:else}
-            <div class="space-y-6">
-              <!-- Currently Blocked Countries -->
-              <div class="rounded-xl border border-border bg-card overflow-hidden">
-                <!-- Table Header -->
-                <div class="px-4 py-3 border-b border-border bg-muted/50">
-                  <div class="flex items-center justify-between">
-                    <div class="flex items-center gap-3">
-                      <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-destructive/10 text-destructive">
-                        <Icon name="shield" size={16} />
-                      </div>
-                      <div>
-                        <h4 class="text-sm font-semibold text-foreground">Blocked Countries</h4>
-                        <p class="text-xs text-muted-foreground">
-                          {blockedCountries.length} {blockedCountries.length === 1 ? 'country' : 'countries'} · {countryStatus?.total_ranges?.toLocaleString() || 0} IP ranges
-                        </p>
-                      </div>
-                    </div>
-                    <div class="flex items-center gap-2">
-                      <!-- Desktop buttons -->
-                      <div class="hidden sm:flex kt-btn-group">
-                        <Button
-                          onclick={() => showBlockCountriesModal = true}
-                          size="sm"
-                          icon="plus"
-                          disabled={unblockedCountries.length === 0}
-                        >
-                          Block Countries
-                        </Button>
-                        <Button
-                          onclick={refreshZones}
-                          variant="outline"
-                          size="sm"
-                          icon={refreshingZones ? undefined : 'refresh'}
-                          disabled={refreshingZones || blockedCountries.length === 0}
-                        >
-                          {#if refreshingZones}
-                            <Icon name="refresh" size={14} class="animate-spin" />
-                          {/if}
-                          {refreshingZones ? 'Refreshing...' : 'Refresh'}
-                        </Button>
-                      </div>
-
-                      <!-- Mobile dropdown -->
-                      <div class="relative sm:hidden">
-                        <Button
-                          onclick={() => showCountryActionsMenu = !showCountryActionsMenu}
-                          variant="outline"
-                          size="sm"
-                          icon="dots"
-                        />
-                        {#if showCountryActionsMenu}
-                          <div class="kt-dropdown" role="menu">
-                            <button
-                              onclick={() => { showBlockCountriesModal = true; showCountryActionsMenu = false }}
-                              disabled={unblockedCountries.length === 0}
-                              class="kt-dropdown-item"
-                            >
-                              <Icon name="plus" size={14} class="kt-dropdown-item-icon" />
-                              Block Countries
-                            </button>
-                            <div class="kt-dropdown-divider"></div>
-                            <button
-                              onclick={() => { refreshZones(); showCountryActionsMenu = false }}
-                              disabled={refreshingZones || blockedCountries.length === 0}
-                              class="kt-dropdown-item"
-                            >
-                              <Icon name="refresh" size={14} class="kt-dropdown-item-icon {refreshingZones ? 'animate-spin' : ''}" />
-                              {refreshingZones ? 'Refreshing...' : 'Refresh Zones'}
-                            </button>
-                          </div>
-                          <button class="kt-dropdown-backdrop" onclick={() => showCountryActionsMenu = false} aria-label="Close menu"></button>
-                        {/if}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {#if blockedCountries.length > 0}
-                  <div class="overflow-x-auto">
-                    <table class="w-full">
-                      <thead>
-                        <tr class="border-b border-border/50 bg-muted/30">
-                          <th class="px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Country</th>
-                          <th class="px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Direction</th>
-                          <th class="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">IP Ranges</th>
-                          <th class="px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Added</th>
-                          <th class="px-4 py-2.5 w-12"></th>
-                        </tr>
-                      </thead>
-                      <tbody class="divide-y divide-border/50">
-                        {#each blockedCountries as country}
-                          <tr class="group transition-colors {country.status === 'removing' ? 'opacity-50 bg-muted' : 'hover:bg-muted/50'}">
-                            <td class="px-3 py-2">
-                              <div class="flex items-center gap-3">
-                                <img
-                                  src="https://flagcdn.com/{country.country_code.toLowerCase()}.svg"
-                                  width="24"
-                                  alt={country.country_code}
-                                  class="rounded-sm shadow-sm"
-                                  loading="lazy"
-                                />
-                                <div class="font-medium text-foreground">
-                                  {country.name}<sup class="ml-1 text-[10px] text-muted-foreground font-mono">{country.country_code}</sup>
-                                </div>
-                                {#if country.status === 'removing'}
-                                  <Badge variant="warning" size="sm">
-                                    <Icon name="refresh" size={10} class="mr-1 animate-spin" />
-                                    Removing...
-                                  </Badge>
-                                {/if}
-                              </div>
-                            </td>
-                            <td class="px-3 py-2">
-                              <button
-                                onclick={() => toggleCountryDirection(country.country_code, country.direction || 'inbound')}
-                                class="cursor-pointer hover:opacity-80 transition-opacity"
-                                disabled={country.status === 'removing'}
-                                data-kt-tooltip
-                              >
-                                <Badge variant={country.direction === 'both' ? 'warning' : 'secondary'} size="sm">
-                                  {#if country.direction === 'both'}
-                                    <Icon name="arrow-left" size={10} class="mr-0.5" />
-                                    <Icon name="arrow-right" size={10} class="mr-1" />
-                                    Both
-                                  {:else}
-                                    <Icon name="arrow-left" size={10} class="mr-1" />
-                                    Inbound
-                                  {/if}
-                                </Badge>
-                                <span data-kt-tooltip-content class="kt-tooltip hidden">Click to toggle direction</span>
-                              </button>
-                            </td>
-                            <td class="px-3 py-2 text-right">
-                              <Badge variant="secondary" size="sm">
-                                <Icon name="network" size={12} class="mr-1" />
-                                {country.range_count?.toLocaleString() || '0'}
-                              </Badge>
-                            </td>
-                            <td class="px-3 py-2">
-                              <Badge variant="secondary" size="sm">
-                                <Icon name="clock" size={12} class="mr-1" />
-                                {timeAgo(country.created_at)}
-                              </Badge>
-                            </td>
-                            <td class="px-3 py-2">
-                              {#if country.status === 'removing'}
-                                <div class="w-4 h-4 border-2 border-muted border-t-primary rounded-full animate-spin"></div>
-                              {:else}
-                                <button
-                                  onclick={() => unblockCountry(country.country_code)}
-                                  class="custom_btns"
-                                  data-kt-tooltip
-                                >
-                                  <Icon name="lock-open" size={16} />
-                                  <span data-kt-tooltip-content class="kt-tooltip hidden">Unblock country</span>
-                                </button>
-                              {/if}
-                            </td>
-                          </tr>
-                        {/each}
-                      </tbody>
-                    </table>
-                  </div>
-                {:else}
-                  <div class="flex flex-col items-center justify-center py-12 text-center">
-                    <div class="flex h-12 w-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
-                      <Icon name="world" size={24} />
-                    </div>
-                    <h4 class="mt-4 text-sm font-medium text-muted-foreground">No countries blocked</h4>
-                    <p class="mt-1 text-xs text-muted-foreground">Select countries above to block traffic</p>
-                  </div>
-                {/if}
-              </div>
-            </div>
-          {/if}
         {/if}
       </div>
     </div>
@@ -1579,27 +1568,6 @@
   {/snippet}
 </Modal>
 
-<!-- Unblock Confirmation Modal -->
-<Modal bind:open={showUnblockModal} title="Unblock IP" size="sm">
-  {#if unblockingIP}
-    <div class="text-center">
-      <div class="w-12 h-12 rounded-full bg-success/10 flex items-center justify-center mx-auto mb-4">
-        <Icon name="lock-open" size={24} class="text-success" />
-      </div>
-      <p class="text-foreground mb-2">
-        Unblock <strong>{unblockingIP.ip}</strong>?
-      </p>
-      <p class="text-sm text-muted-foreground">
-        This IP will be able to connect again.
-      </p>
-    </div>
-  {/if}
-
-  {#snippet footer()}
-    <Button onclick={() => { showUnblockModal = false; unblockingIP = null }} variant="secondary">Cancel</Button>
-    <Button onclick={unblockIP} icon="lock-open">Unblock</Button>
-  {/snippet}
-</Modal>
 
 <!-- Change SSH Port Modal -->
 <Modal bind:open={showSSHModal} title="Change SSH Port" size="sm">
@@ -1760,32 +1728,6 @@
     </Button>
     <Button onclick={saveJail} icon={jailForm.id ? 'check' : 'plus'} disabled={savingJail}>
       {savingJail ? 'Saving...' : (jailForm.id ? 'Save Changes' : 'Create Jail')}
-    </Button>
-  {/snippet}
-</Modal>
-
-<!-- Delete Jail Confirmation Modal -->
-<Modal bind:open={showDeleteJailModal} title="Delete Jail" size="sm">
-  {#if deletingJail}
-    <div class="text-center">
-      <div class="w-12 h-12 rounded-full bg-destructive/10 flex items-center justify-center mx-auto mb-4">
-        <Icon name="trash" size={24} class="text-destructive" />
-      </div>
-      <p class="text-foreground mb-2">
-        Delete jail <strong>{deletingJail.name}</strong>?
-      </p>
-      <p class="text-sm text-muted-foreground">
-        This will stop the jail monitor and remove all associated blocked IPs.
-      </p>
-    </div>
-  {/if}
-
-  {#snippet footer()}
-    <Button onclick={() => { showDeleteJailModal = false; deletingJail = null }} variant="secondary">
-      Cancel
-    </Button>
-    <Button onclick={deleteJail} variant="destructive" icon="trash">
-      Delete Jail
     </Button>
   {/snippet}
 </Modal>

@@ -3,9 +3,13 @@ package firewall
 import (
 	"context"
 	"database/sql"
+	"net"
 	"sync"
+	"time"
 
+	"api/internal/geolocation"
 	"api/internal/helper"
+	"api/internal/nftables"
 )
 
 // jailMonitor tracks a running jail monitor
@@ -14,16 +18,41 @@ type jailMonitor struct {
 	name   string
 }
 
+// jailConfig holds config needed for jail monitoring (internal use)
+type jailConfig struct {
+	ID          int64
+	Name        string
+	LogFile     string
+	FilterRegex string
+	MaxRetry    int
+	FindTime    int
+	BanTime     int
+	LastLogPos  int64
+	Enabled     bool
+}
+
+// blockCache caches blocked IPs and parsed CIDR ranges to avoid repeated DB queries
+type blockCache struct {
+	mu         sync.RWMutex
+	blockedIPs map[string]bool // direct IP lookups
+	ranges     []*net.IPNet    // parsed CIDR ranges
+	updatedAt  time.Time
+	ttl        time.Duration
+}
+
 // Service handles firewall operations
 type Service struct {
 	db           *sql.DB
 	dbMutex      sync.RWMutex
 	config       Config
 	dnsCache     *lruDNSCache
+	blockCache   *blockCache            // cached blocked IPs/ranges for fast lookup
 	ctx          context.Context
 	cancel       context.CancelFunc
 	jailMonitors map[int64]*jailMonitor
 	jailMutex    sync.RWMutex
+	nft          *nftables.Service      // nftables service for rule application
+	geo          *geolocation.Service   // geolocation service for country zones
 }
 
 // Config holds firewall configuration
@@ -40,9 +69,10 @@ type Config struct {
 	TrafficMonitorInterval int                    `json:"-"`
 	CleanupInterval        int                    `json:"-"`
 	DNSLookupTimeout       int                    `json:"-"`
+	ServerIP               string                 `json:"-"` // Server's own IP for self-protection
 }
 
-// Jail represents a blocking rule configuration
+// Jail represents a blocking rule configuration (fail2ban-style)
 type Jail struct {
 	ID                int64  `json:"id"`
 	Name              string `json:"name"`
@@ -59,21 +89,6 @@ type Jail struct {
 	EscalateEnabled   bool   `json:"escalateEnabled"`
 	EscalateThreshold int    `json:"escalateThreshold"`
 	EscalateWindow    int    `json:"escalateWindow"`
-}
-
-// BlockedIP represents a blocked IP address
-type BlockedIP struct {
-	ID            int64  `json:"id"`
-	IP            string `json:"ip"`
-	JailName      string `json:"jailName"`
-	Reason        string `json:"reason"`
-	BlockedAt     string `json:"blockedAt"`
-	ExpiresAt     string `json:"expiresAt,omitempty"`
-	HitCount      int    `json:"hitCount"`
-	Manual        bool   `json:"manual"`
-	IsRange       bool   `json:"isRange"`
-	EscalatedFrom string `json:"escalatedFrom,omitempty"`
-	Source        string `json:"source"`
 }
 
 // Attempt represents a logged connection attempt
@@ -97,14 +112,6 @@ type TrafficLog struct {
 	Protocol  string `json:"protocol"`
 	Domain    string `json:"domain"`
 	Country   string `json:"country"`
-}
-
-// AllowedPort represents an allowed port
-type AllowedPort struct {
-	Port      int    `json:"port"`
-	Protocol  string `json:"protocol"`
-	Essential bool   `json:"essential"`
-	Service   string `json:"service,omitempty"`
 }
 
 // BlocklistSource represents a blocklist source configuration

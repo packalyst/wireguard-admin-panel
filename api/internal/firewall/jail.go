@@ -22,28 +22,10 @@ func (s *Service) runJailMonitors() {
 	}
 	defer rows.Close()
 
-	var jails []struct {
-		ID          int64
-		Name        string
-		LogFile     string
-		FilterRegex string
-		MaxRetry    int
-		FindTime    int
-		BanTime     int
-		LastLogPos  int64
-	}
+	var jails []jailConfig
 
 	for rows.Next() {
-		var j struct {
-			ID          int64
-			Name        string
-			LogFile     string
-			FilterRegex string
-			MaxRetry    int
-			FindTime    int
-			BanTime     int
-			LastLogPos  int64
-		}
+		var j jailConfig
 		if err := rows.Scan(&j.ID, &j.Name, &j.LogFile, &j.FilterRegex, &j.MaxRetry, &j.FindTime, &j.BanTime, &j.LastLogPos); err != nil {
 			log.Printf("Warning: failed to scan jail: %v", err)
 			continue
@@ -88,18 +70,7 @@ func (s *Service) stopJailMonitor(jailID int64) {
 
 // restartJailMonitor restarts a jail monitor by reading its config from DB
 func (s *Service) restartJailMonitor(jailID int64) {
-	var j struct {
-		ID          int64
-		Name        string
-		LogFile     string
-		FilterRegex string
-		MaxRetry    int
-		FindTime    int
-		BanTime     int
-		LastLogPos  int64
-		Enabled     bool
-	}
-
+	var j jailConfig
 	err := s.db.QueryRow(`SELECT id, name, log_file, filter_regex, max_retry, find_time, ban_time, last_log_pos, enabled
 		FROM jails WHERE id = ?`, jailID).Scan(
 		&j.ID, &j.Name, &j.LogFile, &j.FilterRegex, &j.MaxRetry, &j.FindTime, &j.BanTime, &j.LastLogPos, &j.Enabled)
@@ -232,7 +203,7 @@ func (s *Service) processJailLogFile(name, logFile string, regex *regexp.Regexp,
 
 // ensureDefaultJails inserts default jails and ports if they don't exist
 func (s *Service) ensureDefaultJails() error {
-	sshPort := strconv.Itoa(getSSHPort())
+	sshPort := strconv.Itoa(helper.GetSSHPort())
 
 	defaultJails := []Jail{
 		{Name: "portscan", Enabled: true, LogFile: "/var/log/kern.log",
@@ -251,23 +222,5 @@ func (s *Service) ensureDefaultJails() error {
 
 	s.db.Exec(`UPDATE jails SET port = ? WHERE name = 'sshd'`, sshPort)
 
-	var portCount int
-	if err := s.db.QueryRow("SELECT COUNT(*) FROM allowed_ports").Scan(&portCount); err != nil {
-		log.Printf("Warning: failed to count ports: %v", err)
-	}
-	if portCount == 0 {
-		for _, ep := range s.config.EssentialPorts {
-			s.db.Exec("INSERT OR IGNORE INTO allowed_ports (port, protocol, essential, service) VALUES (?, ?, 1, ?)",
-				ep.Port, ep.Protocol, ep.Service)
-		}
-		log.Printf("Initialized essential ports: %d ports", len(s.config.EssentialPorts))
-	}
-
 	return nil
-}
-
-// getSSHPort gets the current SSH port from the system
-func getSSHPort() int {
-	// Default SSH port
-	return 22
 }

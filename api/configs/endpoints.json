@@ -21,7 +21,7 @@
       "writeBufferSize": 1024,
       "broadcastBufferSize": 256,
       "statusCheckIntervalSec": 10,
-      "channels": ["stats", "nodes_updated", "docker", "docker_logs"]
+      "channels": ["general_info", "nodes_updated", "docker", "docker_logs"]
     }
   },
   "services": {
@@ -68,9 +68,14 @@
       "enabled": true,
       "endpoints": [
         {"path": "/status", "methods": ["GET"], "handler": "GetStatus", "description": "Get firewall status"},
-        {"path": "/blocked", "methods": ["GET"], "handler": "GetBlocked", "description": "List blocked IPs"},
-        {"path": "/blocked", "methods": ["POST"], "handler": "BlockIP", "description": "Block an IP"},
-        {"path": "/blocked/{ip}", "methods": ["DELETE"], "handler": "UnblockIP", "description": "Unblock an IP"},
+        {"path": "/entries", "methods": ["GET"], "handler": "GetEntries", "description": "List firewall entries (IPs, ranges, countries, ports)"},
+        {"path": "/entries", "methods": ["POST"], "handler": "CreateEntry", "description": "Create firewall entry"},
+        {"path": "/entries/{id}", "methods": ["DELETE"], "handler": "DeleteEntry", "description": "Delete firewall entry"},
+        {"path": "/entries/{id}/toggle", "methods": ["POST"], "handler": "ToggleEntry", "description": "Toggle entry enabled/disabled"},
+        {"path": "/entries/bulk", "methods": ["POST"], "handler": "BulkEntries", "description": "Bulk operations on entries"},
+        {"path": "/entries/import", "methods": ["POST"], "handler": "ImportEntries", "description": "Import from blocklist"},
+        {"path": "/entries/source/{source}", "methods": ["DELETE"], "handler": "DeleteBySource", "description": "Delete all entries from source"},
+        {"path": "/entries/all", "methods": ["DELETE"], "handler": "DeleteAll", "description": "Delete all non-essential entries"},
         {"path": "/attempts", "methods": ["GET"], "handler": "GetAttempts", "description": "List connection attempts"},
         {"path": "/ports", "methods": ["GET"], "handler": "GetPorts", "description": "List allowed ports"},
         {"path": "/ports", "methods": ["POST"], "handler": "AddPort", "description": "Add allowed port"},
@@ -86,11 +91,9 @@
         {"path": "/config", "methods": ["GET"], "handler": "GetConfig", "description": "Get configuration"},
         {"path": "/config", "methods": ["PUT"], "handler": "UpdateConfig", "description": "Update configuration"},
         {"path": "/apply", "methods": ["POST"], "handler": "ApplyRules", "description": "Apply firewall rules"},
-        {"path": "/ssh", "methods": ["GET"], "handler": "GetSSHPort", "description": "Get current SSH port"},
+        {"path": "/sync-status", "methods": ["GET"], "handler": "SyncStatus", "description": "Get sync status between DB and nftables"},
         {"path": "/ssh", "methods": ["POST"], "handler": "ChangeSSHPort", "description": "Change SSH port"},
-        {"path": "/blocklists", "methods": ["GET"], "handler": "GetBlocklists", "description": "Get available blocklist sources"},
-        {"path": "/blocklists/import", "methods": ["POST"], "handler": "ImportBlocklist", "description": "Import blocklist from source"},
-        {"path": "/blocked/source/{source}", "methods": ["DELETE"], "handler": "DeleteBlockedSource", "description": "Delete all IPs from source"}
+        {"path": "/blocklists", "methods": ["GET"], "handler": "GetBlocklists", "description": "Get available blocklist sources"}
       ]
     },
     "wireguard": {
@@ -199,10 +202,6 @@
         {"path": "/status", "methods": ["GET"], "handler": "GetStatus", "description": "Get service status"},
         {"path": "/update", "methods": ["POST"], "handler": "TriggerUpdate", "description": "Trigger database update"},
         {"path": "/countries", "methods": ["GET"], "handler": "GetCountries", "description": "Get available countries"},
-        {"path": "/blocked", "methods": ["GET"], "handler": "GetBlockedCountries", "description": "Get blocked countries"},
-        {"path": "/blocked", "methods": ["POST"], "handler": "BlockCountry", "description": "Block a country"},
-        {"path": "/blocked/{code}", "methods": ["DELETE"], "handler": "UnblockCountry", "description": "Unblock a country"},
-        {"path": "/blocked/status", "methods": ["GET"], "handler": "GetBlockingStatus", "description": "Get blocking status"},
         {"path": "/zones/refresh", "methods": ["POST"], "handler": "RefreshZones", "description": "Refresh all country zones"}
       ]
     },
@@ -215,7 +214,9 @@
         {"path": "/{id}", "methods": ["GET"], "handler": "Get", "description": "Get domain route"},
         {"path": "/{id}", "methods": ["PUT"], "handler": "Update", "description": "Update domain route"},
         {"path": "/{id}", "methods": ["DELETE"], "handler": "Delete", "description": "Delete domain route"},
-        {"path": "/{id}/toggle", "methods": ["POST"], "handler": "Toggle", "description": "Toggle domain route"}
+        {"path": "/{id}/toggle", "methods": ["POST"], "handler": "Toggle", "description": "Toggle domain route"},
+        {"path": "/certificates", "methods": ["GET"], "handler": "GetCertificates", "description": "Get SSL certificate info"},
+        {"path": "/system-domain", "methods": ["GET"], "handler": "GetSystemDomain", "description": "Get main SSL domain info"}
       ]
     }
   },

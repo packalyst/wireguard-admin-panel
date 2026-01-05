@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { toast, apiGet, apiPost, apiDelete } from '../stores/app.js'
+  import { toast, apiGet, apiPost, apiDelete, confirm, setConfirmLoading } from '../stores/app.js'
   import Icon from '../components/Icon.svelte'
   import Badge from '../components/Badge.svelte'
   import Button from '../components/Button.svelte'
@@ -33,8 +33,6 @@
     loadData()
   })
 
-  let showDeleteModal = $state(false)
-  let deletingRoute = $state(null)
   let searchQuery = $state('')
 
   // Get node info for a route
@@ -110,31 +108,40 @@
     }
   }
 
-  function confirmDelete(route) {
-    deletingRoute = route
-    showDeleteModal = true
-  }
+  async function confirmDelete(route) {
+    const isExit = route.isExitNode
+    const nodeName = route.node?.givenName || route.node?.name
 
-  async function deleteRoute() {
-    if (!deletingRoute) return
+    const confirmed = await confirm({
+      title: 'Delete Route',
+      message: isExit
+        ? `Remove Exit Node from ${nodeName}?`
+        : `Delete route ${route.prefix}?`,
+      description: isExit
+        ? 'This will remove both IPv4 and IPv6 exit routes.'
+        : 'This action cannot be undone.'
+    })
+    if (!confirmed) return
+
+    setConfirmLoading(true)
     try {
       // For combined exit nodes, delete both routes
-      if (deletingRoute.combined) {
-        if (deletingRoute.ipv4Route) {
-          await apiDelete(`/api/hs/routes/${deletingRoute.ipv4Route.id}`)
+      if (route.combined) {
+        if (route.ipv4Route) {
+          await apiDelete(`/api/hs/routes/${route.ipv4Route.id}`)
         }
-        if (deletingRoute.ipv6Route) {
-          await apiDelete(`/api/hs/routes/${deletingRoute.ipv6Route.id}`)
+        if (route.ipv6Route) {
+          await apiDelete(`/api/hs/routes/${route.ipv6Route.id}`)
         }
       } else {
-        await apiDelete(`/api/hs/routes/${deletingRoute.id}`)
+        await apiDelete(`/api/hs/routes/${route.id}`)
       }
       toast('Route deleted', 'success')
-      showDeleteModal = false
-      deletingRoute = null
       loadData()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
+    } finally {
+      setConfirmLoading(false)
     }
   }
 
@@ -262,32 +269,3 @@
   {/if}
 </div>
 
-<!-- Delete Confirmation Modal -->
-<Modal bind:open={showDeleteModal} title="Delete Route" size="sm">
-  {#if deletingRoute}
-    <div class="text-center">
-      <div class="w-12 h-12 rounded-full bg-destructive/10 flex items-center justify-center mx-auto mb-4">
-        <Icon name="alert-triangle" size={24} class="text-destructive" />
-      </div>
-      <p class="text-foreground mb-2">
-        {#if deletingRoute.isExitNode}
-          Remove <strong>Exit Node</strong> from <strong>{deletingRoute.node?.givenName || deletingRoute.node?.name}</strong>?
-        {:else}
-          Delete route <strong class="font-mono">{deletingRoute.prefix}</strong>?
-        {/if}
-      </p>
-      <p class="text-sm text-muted-foreground">
-        {#if deletingRoute.isExitNode}
-          This will remove both IPv4 and IPv6 exit routes.
-        {:else}
-          This action cannot be undone.
-        {/if}
-      </p>
-    </div>
-  {/if}
-
-  {#snippet footer()}
-    <Button onclick={() => { showDeleteModal = false; deletingRoute = null }} variant="secondary">Cancel</Button>
-    <Button onclick={deleteRoute} variant="destructive">Delete</Button>
-  {/snippet}
-</Modal>

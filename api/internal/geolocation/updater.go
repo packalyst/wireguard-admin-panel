@@ -99,9 +99,9 @@ func (s *Service) updateBlockingProvider() {
 	updated, errors := provider.RefreshAllZones()
 
 	if updated > 0 {
-		// Reapply nftables rules after update
-		if err := s.ReapplyAllCountryBlocking(); err != nil {
-			log.Printf("Error reapplying country blocking rules: %v", err)
+		// Trigger nftables apply after zone update
+		if s.nft != nil {
+			s.nft.RequestApply()
 		}
 	}
 
@@ -131,35 +131,3 @@ func (s *Service) TriggerUpdate(updateServices string) (map[string]string, error
 	return results, nil
 }
 
-// CheckForUpdates checks if any providers need updates
-func (s *Service) CheckForUpdates() map[string]bool {
-	needsUpdate := make(map[string]bool)
-
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	if s.lookupProvider != nil {
-		needsUpdate["lookup"] = s.lookupProvider.NeedsUpdate()
-	}
-
-	if s.blockingProvider != nil {
-		needsUpdate["blocking"] = s.blockingProvider.NeedsUpdate()
-	}
-
-	return needsUpdate
-}
-
-// GetLastUpdateTimes returns the last update times for each service
-func (s *Service) GetLastUpdateTimes() map[string]string {
-	times := make(map[string]string)
-
-	if val, err := settings.GetSetting("geo_last_update_lookup"); err == nil {
-		times["lookup"] = val
-	}
-
-	if val, err := settings.GetSetting("geo_last_update_blocking"); err == nil {
-		times["blocking"] = val
-	}
-
-	return times
-}

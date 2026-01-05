@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { toast, apiGet, apiPost } from '../stores/app.js'
+  import { toast, apiGet, apiPost, confirm, setConfirmLoading } from '../stores/app.js'
   import { copyWithToast } from '../stores/helpers.js'
   import { parseDate, formatDateShort, formatExpiryDate, isExpired, getDaysUntilExpiry } from '$lib/utils/format.js'
   import Icon from '../components/Icon.svelte'
@@ -18,9 +18,6 @@
   let users = $state([])
   let authKeys = $state([])
   let showCreateModal = $state(false)
-  let showExpireModal = $state(false)
-  let expiringKey = $state(null)
-  let expiring = $state(false)
   let createForm = $state({ user: '', reusable: false, ephemeral: false, expiration: '90' })
   let creating = $state(false)
   let searchQuery = $state('')
@@ -109,24 +106,26 @@
     }
   }
 
-  function confirmExpireKey(key) {
-    expiringKey = key
-    showExpireModal = true
-  }
+  async function confirmExpireKey(key) {
+    const confirmed = await confirm({
+      title: 'Expire Auth Key',
+      message: 'Expire this key?',
+      description: 'This key will no longer work to register new devices. This action cannot be undone.',
+      details: `<p><strong>Key:</strong> <code class="font-mono">${key.key?.substring(0, 16)}...</code></p><p><strong>User:</strong> ${key.userName || key.user}</p>`,
+      confirmText: 'Expire Key',
+      alert: true
+    })
+    if (!confirmed) return
 
-  async function expireKey() {
-    if (!expiringKey) return
-    expiring = true
+    setConfirmLoading(true)
     try {
-      await apiPost('/api/hs/preauthkeys/expire', { user: expiringKey.userName || expiringKey.user, key: expiringKey.key })
+      await apiPost('/api/hs/preauthkeys/expire', { user: key.userName || key.user, key: key.key })
       toast('Key expired', 'success')
-      showExpireModal = false
-      expiringKey = null
       loadData()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
     } finally {
-      expiring = false
+      setConfirmLoading(false)
     }
   }
 
@@ -309,29 +308,3 @@
   {/snippet}
 </Modal>
 
-<!-- Expire Confirmation Modal -->
-<Modal bind:open={showExpireModal} title="Expire Auth Key" size="sm">
-  {#if expiringKey}
-    <div class="space-y-4">
-      <div class="kt-alert kt-alert-destructive">
-        <Icon name="alert-triangle" size={18} />
-        <div>
-          <p class="font-medium">Expire this key?</p>
-          <p class="text-sm opacity-80 mt-0.5">This key will no longer work to register new devices. This action cannot be undone.</p>
-        </div>
-      </div>
-
-      <div class="text-xs text-muted-foreground">
-        <p><strong>Key:</strong> <code class="font-mono">{expiringKey.key?.substring(0, 16)}...</code></p>
-        <p><strong>User:</strong> {expiringKey.userName || expiringKey.user}</p>
-      </div>
-    </div>
-  {/if}
-
-  {#snippet footer()}
-    <Button onclick={() => { showExpireModal = false; expiringKey = null }} variant="secondary" disabled={expiring}>Cancel</Button>
-    <Button onclick={expireKey} variant="destructive" icon="ban" disabled={expiring}>
-      {expiring ? 'Expiring...' : 'Expire Key'}
-    </Button>
-  {/snippet}
-</Modal>

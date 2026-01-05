@@ -3,38 +3,47 @@ package firewall
 import (
 	"fmt"
 	"log"
+	"net"
 	"strings"
 	"time"
+
+	"api/internal/nftables"
 )
 
 // blockIP blocks an IP address from a jail
 func (s *Service) blockIP(ip, jailName, reason string, banTime int) {
-	s.blockIPWithOptions(ip, jailName, reason, banTime, false, "", "jail:"+jailName)
+	s.blockIPWithOptions(ip, jailName, reason, banTime, false, "jail:"+jailName)
 }
 
 // blockIPWithOptions blocks an IP with additional options
-func (s *Service) blockIPWithOptions(ip, jailName, reason string, banTime int, isRange bool, escalatedFrom, source string) {
+func (s *Service) blockIPWithOptions(ip, jailName, reason string, banTime int, isRange bool, source string) {
 	var expiresAt interface{}
 	if banTime > 0 {
 		expiresAt = time.Now().Add(time.Duration(banTime) * time.Second)
 	}
 
+	entryType := nftables.EntryTypeIP
+	if isRange || strings.Contains(ip, "/") {
+		entryType = nftables.EntryTypeRange
+	}
+
+	// Use jailName as the "name" field for filtering
 	_, err := s.db.Exec(`
-		INSERT INTO blocked_ips (ip, jail_name, reason, expires_at, hit_count, manual, is_range, escalated_from, source)
-		VALUES (?, ?, ?, ?, 1, 0, ?, ?, ?)
-		ON CONFLICT(ip, jail_name) DO UPDATE SET
+		INSERT INTO firewall_entries (entry_type, value, action, direction, protocol, source, reason, name, expires_at, enabled, hit_count)
+		VALUES (?, ?, 'block', 'inbound', 'both', ?, ?, ?, ?, 1, 1)
+		ON CONFLICT(entry_type, value, protocol) DO UPDATE SET
 			hit_count = hit_count + 1,
-			blocked_at = CURRENT_TIMESTAMP,
+			created_at = CURRENT_TIMESTAMP,
 			expires_at = excluded.expires_at,
 			reason = excluded.reason
-	`, ip, jailName, reason, expiresAt, isRange, escalatedFrom, source)
+	`, entryType, ip, source, reason, jailName, expiresAt)
 
 	if err == nil {
 		log.Printf("Blocked IP %s (jail: %s, reason: %s, isRange: %v)", ip, jailName, reason, isRange)
-		s.ApplyRules()
+		s.RequestApply()
 
 		// Check for auto-escalation (only for individual IPs, not ranges)
-		if !isRange {
+		if entryType == nftables.EntryTypeIP {
 			s.checkEscalation(ip, jailName, banTime)
 		}
 	}
@@ -60,11 +69,11 @@ func (s *Service) checkEscalation(ip, jailName string, banTime int) {
 	// Count distinct IPs from this subnet blocked within the escalation window
 	var count int
 	err = s.db.QueryRow(`
-		SELECT COUNT(DISTINCT ip) FROM blocked_ips
-		WHERE jail_name = ?
-		AND is_range = 0
-		AND ip LIKE ?
-		AND blocked_at > datetime('now', '-' || ? || ' seconds')
+		SELECT COUNT(DISTINCT value) FROM firewall_entries
+		WHERE name = ?
+		AND entry_type = 'ip'
+		AND value LIKE ?
+		AND created_at > datetime('now', '-' || ? || ' seconds')
 	`, jailName, strings.TrimSuffix(subnet, ".0/24")+".%", escalateWindow).Scan(&count)
 	if err != nil {
 		log.Printf("Error checking escalation: %v", err)
@@ -77,20 +86,19 @@ func (s *Service) checkEscalation(ip, jailName string, banTime int) {
 		// Block the entire /24 range
 		log.Printf("Auto-escalating: blocking %s (jail: %s, IPs: %d)", subnet, jailName, count)
 
+		var expiresAt interface{}
+		if banTime > 0 {
+			expiresAt = time.Now().Add(time.Duration(banTime) * time.Second)
+		}
+
 		// Insert the range block
 		_, err := s.db.Exec(`
-			INSERT INTO blocked_ips (ip, jail_name, reason, expires_at, hit_count, manual, is_range, escalated_from, source)
-			VALUES (?, ?, ?, ?, ?, 0, 1, ?, ?)
-			ON CONFLICT(ip, jail_name) DO NOTHING
-		`, subnet, jailName,
+			INSERT INTO firewall_entries (entry_type, value, action, direction, protocol, source, reason, name, expires_at, enabled, hit_count)
+			VALUES ('range', ?, 'block', 'inbound', 'both', 'escalated', ?, ?, ?, 1, ?)
+			ON CONFLICT(entry_type, value, protocol) DO NOTHING
+		`, subnet,
 			fmt.Sprintf("Auto-escalated: %d IPs from this range blocked", count),
-			func() interface{} {
-				if banTime > 0 {
-					return time.Now().Add(time.Duration(banTime) * time.Second)
-				}
-				return nil
-			}(),
-			count, jailName, "escalated")
+			jailName, expiresAt, count)
 
 		if err != nil {
 			log.Printf("Error inserting escalated range: %v", err)
@@ -99,10 +107,10 @@ func (s *Service) checkEscalation(ip, jailName string, banTime int) {
 
 		// Remove individual IPs that are now covered by the range
 		result, err := s.db.Exec(`
-			DELETE FROM blocked_ips
-			WHERE jail_name = ?
-			AND is_range = 0
-			AND ip LIKE ?
+			DELETE FROM firewall_entries
+			WHERE name = ?
+			AND entry_type = 'ip'
+			AND value LIKE ?
 		`, jailName, strings.TrimSuffix(subnet, ".0/24")+".%")
 		if err == nil {
 			if deleted, _ := result.RowsAffected(); deleted > 0 {
@@ -110,42 +118,93 @@ func (s *Service) checkEscalation(ip, jailName string, banTime int) {
 			}
 		}
 
-		s.ApplyRules()
+		s.RequestApply()
 	}
 }
 
-// isIPBlocked checks if an IP is currently blocked
+// isIPBlocked checks if an IP is currently blocked (uses cache for performance)
 func (s *Service) isIPBlocked(ip string) bool {
-	var count int
+	s.refreshBlockCacheIfNeeded()
+
+	s.blockCache.mu.RLock()
+	defer s.blockCache.mu.RUnlock()
+
 	// Check direct IP match
-	err := s.db.QueryRow(`
-		SELECT COUNT(*) FROM blocked_ips
-		WHERE ip = ? AND (expires_at IS NULL OR expires_at > datetime('now'))
-	`, ip).Scan(&count)
-	if err == nil && count > 0 {
+	if s.blockCache.blockedIPs[ip] {
 		return true
 	}
 
-	// Check if IP is in any blocked CIDR range
-	rows, err := s.db.Query(`
-		SELECT ip FROM blocked_ips
-		WHERE is_range = 1 AND (expires_at IS NULL OR expires_at > datetime('now'))
-	`)
-	if err != nil {
+	// Check CIDR ranges
+	parsedIP := net.ParseIP(ip)
+	if parsedIP == nil {
 		return false
 	}
-	defer rows.Close()
 
-	for rows.Next() {
-		var cidr string
-		if err := rows.Scan(&cidr); err != nil {
-			continue
-		}
-		if isIPInRange(ip, cidr) {
+	for _, network := range s.blockCache.ranges {
+		if network.Contains(parsedIP) {
 			return true
 		}
 	}
 	return false
+}
+
+// refreshBlockCacheIfNeeded refreshes the block cache if TTL has expired
+func (s *Service) refreshBlockCacheIfNeeded() {
+	s.blockCache.mu.RLock()
+	needsRefresh := time.Since(s.blockCache.updatedAt) > s.blockCache.ttl
+	s.blockCache.mu.RUnlock()
+
+	if !needsRefresh {
+		return
+	}
+
+	s.blockCache.mu.Lock()
+	defer s.blockCache.mu.Unlock()
+
+	// Double-check after acquiring write lock
+	if time.Since(s.blockCache.updatedAt) <= s.blockCache.ttl {
+		return
+	}
+
+	// Load blocked IPs
+	blockedIPs := make(map[string]bool)
+	rows, err := s.db.Query(`
+		SELECT value FROM firewall_entries
+		WHERE entry_type = 'ip' AND enabled = 1
+		AND (expires_at IS NULL OR expires_at > datetime('now'))
+	`)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var ip string
+			if rows.Scan(&ip) == nil {
+				blockedIPs[ip] = true
+			}
+		}
+	}
+
+	// Load and parse CIDR ranges
+	var ranges []*net.IPNet
+	rows2, err := s.db.Query(`
+		SELECT value FROM firewall_entries
+		WHERE entry_type = 'range' AND enabled = 1
+		AND (expires_at IS NULL OR expires_at > datetime('now'))
+	`)
+	if err == nil {
+		defer rows2.Close()
+		for rows2.Next() {
+			var cidr string
+			if rows2.Scan(&cidr) == nil {
+				if _, network, err := net.ParseCIDR(cidr); err == nil {
+					ranges = append(ranges, network)
+				}
+			}
+		}
+	}
+
+	s.blockCache.blockedIPs = blockedIPs
+	s.blockCache.ranges = ranges
+	s.blockCache.updatedAt = time.Now()
 }
 
 // recordAttempt logs a connection attempt

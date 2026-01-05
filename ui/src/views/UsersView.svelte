@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { toast, apiGet, apiPost, apiPut, apiDelete } from '../stores/app.js'
+  import { toast, apiGet, apiPost, apiPut, apiDelete, confirm, setConfirmLoading } from '../stores/app.js'
   import { formatRelativeDate } from '$lib/utils/format.js'
   import Icon from '../components/Icon.svelte'
   import Input from '../components/Input.svelte'
@@ -37,14 +37,11 @@
   // Modals
   let showCreateModal = $state(false)
   let showEditModal = $state(false)
-  let showDeleteModal = $state(false)
   let editingUser = $state(null)
-  let deletingUser = $state(null)
 
   // Form state
   let newUserName = $state('')
   let creating = $state(false)
-  let deleting = $state(false)
   let selectedColor = $state('')
   let selectedAvatar = $state('')
   let searchQuery = $state('')
@@ -136,34 +133,39 @@
     }
   }
 
-  function confirmDeleteUser(user) {
-    deletingUser = user
-    showDeleteModal = true
-  }
-
   function getUserNodes(userName) {
     return nodes.filter(n => n.user?.name === userName)
   }
 
-  async function deleteUser() {
-    if (!deletingUser) return
-    deleting = true
+  async function confirmDeleteUser(user) {
+    const userNodeCount = getNodeCount(user.name)
+    const description = userNodeCount > 0
+      ? `This will also delete ${userNodeCount} node${userNodeCount > 1 ? 's' : ''}. This action cannot be undone.`
+      : 'This action cannot be undone.'
+
+    const confirmed = await confirm({
+      title: 'Delete User',
+      message: `Delete ${user.name}?`,
+      description,
+      confirmText: 'Delete'
+    })
+    if (!confirmed) return
+
+    setConfirmLoading(true)
     try {
       // First delete all nodes belonging to this user
-      const userNodes = getUserNodes(deletingUser.name)
+      const userNodes = getUserNodes(user.name)
       for (const node of userNodes) {
         await apiDelete(`/api/hs/nodes/${node.id}`)
       }
       // Then delete the user
-      await apiDelete(`/api/hs/users/${deletingUser.name}`)
+      await apiDelete(`/api/hs/users/${user.name}`)
       toast('User and nodes deleted', 'success')
-      showDeleteModal = false
-      deletingUser = null
       loadData()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
     } finally {
-      deleting = false
+      setConfirmLoading(false)
     }
   }
 
@@ -377,29 +379,3 @@
   {/snippet}
 </Modal>
 
-<!-- Delete Confirmation Modal -->
-<Modal bind:open={showDeleteModal} title="Delete User" size="sm">
-  {#if deletingUser}
-    {@const userNodeCount = getNodeCount(deletingUser.name)}
-    <div class="kt-alert kt-alert-destructive">
-      <Icon name="alert-triangle" size={18} />
-      <div>
-        <p class="font-medium">Delete {deletingUser.name}?</p>
-        <p class="text-sm opacity-80 mt-0.5">
-          {#if userNodeCount > 0}
-            This will also delete {userNodeCount} node{userNodeCount > 1 ? 's' : ''}. This action cannot be undone.
-          {:else}
-            This action cannot be undone.
-          {/if}
-        </p>
-      </div>
-    </div>
-  {/if}
-
-  {#snippet footer()}
-    <Button onclick={() => { showDeleteModal = false; deletingUser = null }} variant="secondary" disabled={deleting}>Cancel</Button>
-    <Button onclick={deleteUser} variant="destructive" icon="trash" disabled={deleting}>
-      {deleting ? 'Deleting...' : 'Delete'}
-    </Button>
-  {/snippet}
-</Modal>

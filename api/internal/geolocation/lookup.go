@@ -62,21 +62,6 @@ func (s *Service) LookupBulk(ips []string) (map[string]*GeoResult, map[string]st
 	return results, errors
 }
 
-// LookupIPWithFallback performs a lookup with optional fallback behavior
-func (s *Service) LookupIPWithFallback(ip string) *GeoResult {
-	result, err := s.LookupIP(ip)
-	if err != nil {
-		// Return empty result on error
-		return &GeoResult{
-			IP:          ip,
-			CountryCode: "",
-			CountryName: "",
-			Provider:    "none",
-		}
-	}
-	return result
-}
-
 // IsLookupAvailable returns whether IP lookup is available
 func (s *Service) IsLookupAvailable() bool {
 	s.mu.RLock()
@@ -84,12 +69,3 @@ func (s *Service) IsLookupAvailable() bool {
 	return s.lookupProvider != nil && s.lookupProvider.IsAvailable()
 }
 
-// GetLookupProviderName returns the name of the current lookup provider
-func (s *Service) GetLookupProviderName() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.lookupProvider != nil {
-		return s.lookupProvider.Name()
-	}
-	return "none"
-}

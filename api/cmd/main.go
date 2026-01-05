@@ -19,6 +19,7 @@ import (
 	"api/internal/geolocation"
 	"api/internal/headscale"
 	"api/internal/helper"
+	"api/internal/nftables"
 	"api/internal/router"
 	"api/internal/settings"
 	"api/internal/setup"
@@ -113,8 +114,23 @@ func main() {
 		}
 	}
 
+	// Initialize nftables service (used by firewall and VPN ACL)
+	nftSvc, err := nftables.New()
+	if err != nil {
+		log.Printf("Warning: Failed to initialize nftables service: %v", err)
+	} else {
+		// Set WebSocket broadcast function
+		nftSvc.SetBroadcastFunc(ws.Broadcast)
+
+		// Register VPN ACL table
+		db, _ := database.GetDB()
+		nftSvc.RegisterTable(nftables.NewVPNACLTable(db))
+
+		log.Println("nftables service initialized")
+	}
+
 	if config.IsServiceEnabled("firewall") {
-		fwSvc, err := firewall.New(dataDir)
+		fwSvc, err := firewall.New(dataDir, nftSvc)
 		if err != nil {
 			log.Printf("Warning: Failed to initialize firewall service: %v", err)
 		} else {

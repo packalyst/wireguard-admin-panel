@@ -10,43 +10,51 @@ import (
 	"strings"
 
 	"api/internal/helper"
+	"api/internal/nftables"
 	"api/internal/router"
 )
 
-// handleGetPorts returns allowed ports
+// PortEntry represents an allowed port for API response
+type PortEntry struct {
+	ID        int64  `json:"id,omitempty"`
+	Port      int    `json:"port"`
+	Protocol  string `json:"protocol"`
+	Essential bool   `json:"essential"`
+	Service   string `json:"service,omitempty"`
+	Source    string `json:"source,omitempty"`
+}
+
+// handleGetPorts returns allowed ports (from firewall_entries + Docker)
 func (s *Service) handleGetPorts(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.db.Query("SELECT port, protocol, essential, COALESCE(service, '') FROM allowed_ports ORDER BY port")
+	// Get ports from firewall_entries
+	rows, err := s.db.Query(`SELECT id, value, protocol, essential, COALESCE(name, ''), source
+		FROM firewall_entries WHERE entry_type = 'port' AND action = 'allow' AND enabled = 1
+		ORDER BY CAST(value AS INTEGER)`)
 	if err != nil {
 		router.JSONError(w, "database error", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
 
-	ports := []AllowedPort{}
+	ports := []PortEntry{}
+	portMap := make(map[string]bool) // key: "port-protocol"
+
 	for rows.Next() {
-		var p AllowedPort
-		if err := rows.Scan(&p.Port, &p.Protocol, &p.Essential, &p.Service); err != nil {
+		var p PortEntry
+		var portStr string
+		if err := rows.Scan(&p.ID, &portStr, &p.Protocol, &p.Essential, &p.Service, &p.Source); err != nil {
 			continue
 		}
+		p.Port, _ = strconv.Atoi(portStr)
 		ports = append(ports, p)
+		portMap[fmt.Sprintf("%d-%s", p.Port, p.Protocol)] = true
 	}
 
-	// Add Docker exposed ports
+	// Add Docker exposed ports (mark as essential since they're required for containers)
 	dockerPorts := s.getDockerExposedPorts()
 	for _, dp := range dockerPorts {
-		found := false
-		for i, existing := range ports {
-			if existing.Port == dp.Port && existing.Protocol == dp.Protocol {
-				if existing.Service != "" && dp.Service != "" {
-					ports[i].Service = existing.Service + ", " + dp.Service
-				} else if dp.Service != "" {
-					ports[i].Service = dp.Service
-				}
-				found = true
-				break
-			}
-		}
-		if !found {
+		key := fmt.Sprintf("%d-%s", dp.Port, dp.Protocol)
+		if !portMap[key] {
 			ports = append(ports, dp)
 		}
 	}
@@ -64,10 +72,17 @@ func (s *Service) handleAddPort(w http.ResponseWriter, r *http.Request) {
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
-	if req.Protocol == "" {
-		req.Protocol = "tcp"
+
+	if req.Port < 1 || req.Port > 65535 {
+		router.JSONError(w, "invalid port number (must be 1-65535)", http.StatusBadRequest)
+		return
 	}
 
+	if req.Protocol == "" {
+		req.Protocol = nftables.ProtocolTCP
+	}
+
+	// Check if it's an essential port
 	isEssential := false
 	for _, ep := range s.config.EssentialPorts {
 		if req.Port == ep.Port && req.Protocol == ep.Protocol {
@@ -79,10 +94,24 @@ func (s *Service) handleAddPort(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.db.Exec("INSERT OR IGNORE INTO allowed_ports (port, protocol, essential, service) VALUES (?, ?, ?, ?)",
-		req.Port, req.Protocol, isEssential, req.Service)
-	s.ApplyRules()
-	router.JSON(w, map[string]interface{}{"port": req.Port, "protocol": req.Protocol, "essential": isEssential, "service": req.Service})
+	_, err := s.db.Exec(`INSERT INTO firewall_entries
+		(entry_type, value, action, direction, protocol, source, name, essential, enabled)
+		VALUES ('port', ?, 'allow', 'inbound', ?, 'manual', ?, ?, 1)
+		ON CONFLICT(entry_type, value, protocol) DO UPDATE SET
+		name = excluded.name, enabled = 1`,
+		strconv.Itoa(req.Port), req.Protocol, req.Service, isEssential)
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	s.RequestApply()
+	router.JSON(w, map[string]interface{}{
+		"port":      req.Port,
+		"protocol":  req.Protocol,
+		"essential": isEssential,
+		"service":   req.Service,
+	})
 }
 
 // handleRemovePort removes an allowed port
@@ -94,22 +123,22 @@ func (s *Service) handleRemovePort(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if essential
 	var essential bool
-	_ = s.db.QueryRow("SELECT essential FROM allowed_ports WHERE port = ?", port).Scan(&essential)
-	if essential {
+	err = s.db.QueryRow("SELECT essential FROM firewall_entries WHERE entry_type = 'port' AND value = ?", portStr).Scan(&essential)
+	if err == nil && essential {
 		router.JSONError(w, "cannot remove essential port", http.StatusForbidden)
 		return
 	}
 
-	s.db.Exec("DELETE FROM allowed_ports WHERE port = ?", port)
-	s.ApplyRules()
-	w.WriteHeader(http.StatusNoContent)
-}
+	_, err = s.db.Exec("DELETE FROM firewall_entries WHERE entry_type = 'port' AND value = ? AND essential = 0", portStr)
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-// handleGetSSHPort returns current SSH port
-func (s *Service) handleGetSSHPort(w http.ResponseWriter, r *http.Request) {
-	port := helper.GetSSHPort()
-	router.JSON(w, map[string]interface{}{"port": port})
+	s.RequestApply()
+	router.JSON(w, map[string]interface{}{"status": "removed", "port": port})
 }
 
 // handleChangeSSHPort changes the SSH port
@@ -140,8 +169,13 @@ func (s *Service) handleChangeSSHPort(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Add new port to firewall
-	_, err := s.db.Exec("INSERT OR IGNORE INTO allowed_ports (port, protocol, essential, service) VALUES (?, 'tcp', 1, 'SSH')", req.Port)
+	// Add new port to firewall as essential
+	_, err := s.db.Exec(`INSERT INTO firewall_entries
+		(entry_type, value, action, direction, protocol, source, name, essential, enabled)
+		VALUES ('port', ?, 'allow', 'inbound', 'tcp', 'system', 'SSH', 1, 1)
+		ON CONFLICT(entry_type, value, protocol) DO UPDATE SET
+		name = 'SSH', essential = 1, enabled = 1`,
+		strconv.Itoa(req.Port))
 	if err != nil {
 		router.JSONError(w, "failed to add new port to firewall: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -155,7 +189,7 @@ func (s *Service) handleChangeSSHPort(w http.ResponseWriter, r *http.Request) {
 	// Update sshd_config
 	_, err = helper.SetSSHPort(req.Port)
 	if err != nil {
-		s.db.Exec("DELETE FROM allowed_ports WHERE port = ? AND service = 'SSH'", req.Port)
+		s.db.Exec("DELETE FROM firewall_entries WHERE entry_type = 'port' AND value = ? AND name = 'SSH'", strconv.Itoa(req.Port))
 		s.ApplyRules()
 		router.JSONError(w, "failed to update sshd_config: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -167,16 +201,16 @@ func (s *Service) handleChangeSSHPort(w http.ResponseWriter, r *http.Request) {
 		cmd = exec.Command("nsenter", "-t", "1", "-m", "-u", "-i", "-n", "-p", "--", "systemctl", "restart", "ssh")
 		if _, err2 := cmd.CombinedOutput(); err2 != nil {
 			helper.SetSSHPort(oldPort)
-			s.db.Exec("DELETE FROM allowed_ports WHERE port = ? AND service = 'SSH'", req.Port)
+			s.db.Exec("DELETE FROM firewall_entries WHERE entry_type = 'port' AND value = ? AND name = 'SSH'", strconv.Itoa(req.Port))
 			s.ApplyRules()
 			router.JSONError(w, "failed to restart SSH", http.StatusInternalServerError)
 			return
 		}
 	}
 
-	// Remove old port from firewall
+	// Remove old SSH port from firewall
 	if oldPort != req.Port {
-		s.db.Exec("DELETE FROM allowed_ports WHERE port = ? AND service = 'SSH'", oldPort)
+		s.db.Exec("DELETE FROM firewall_entries WHERE entry_type = 'port' AND value = ? AND name = 'SSH'", strconv.Itoa(oldPort))
 		s.config.EssentialPorts = helper.BuildEssentialPorts()
 		s.ApplyRules()
 	}
@@ -193,7 +227,7 @@ func (s *Service) handleChangeSSHPort(w http.ResponseWriter, r *http.Request) {
 }
 
 // getDockerExposedPorts returns ports exposed by Docker containers
-func (s *Service) getDockerExposedPorts() []AllowedPort {
+func (s *Service) getDockerExposedPorts() []PortEntry {
 	client := helper.NewDockerHTTPClientWithTimeout(helper.DockerQuickTimeout)
 
 	req, err := http.NewRequest("GET", "http://docker/v1.44/containers/json", nil)
@@ -221,7 +255,7 @@ func (s *Service) getDockerExposedPorts() []AllowedPort {
 		return nil
 	}
 
-	portMap := make(map[string]AllowedPort)
+	portMap := make(map[string]PortEntry)
 
 	for _, c := range rawContainers {
 		containerName := ""
@@ -233,18 +267,19 @@ func (s *Service) getDockerExposedPorts() []AllowedPort {
 			if p.PublicPort > 0 && (p.IP == "" || p.IP == "0.0.0.0" || p.IP == "::") {
 				key := fmt.Sprintf("%d-%s", p.PublicPort, p.Type)
 				if _, exists := portMap[key]; !exists {
-					portMap[key] = AllowedPort{
+					portMap[key] = PortEntry{
 						Port:      p.PublicPort,
 						Protocol:  p.Type,
 						Essential: true,
 						Service:   fmt.Sprintf("Docker: %s", containerName),
+						Source:    "docker",
 					}
 				}
 			}
 		}
 	}
 
-	ports := []AllowedPort{}
+	ports := []PortEntry{}
 	for _, p := range portMap {
 		ports = append(ports, p)
 	}

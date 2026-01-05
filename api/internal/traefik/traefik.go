@@ -2,7 +2,10 @@ package traefik
 
 import (
 	"bufio"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"log"
 	"net/http"
@@ -741,6 +744,8 @@ type DomainRouteConfig struct {
 	TargetPort   int
 	HTTPSBackend bool
 	Middlewares  []string
+	AccessMode   string // "vpn" or "public"
+	FrontendSSL  bool   // use websecure entrypoint with TLS
 }
 
 // GenerateDomainRoutes writes domain routes to Traefik's dynamic config directory
@@ -758,6 +763,8 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig) error {
 
 		for _, route := range routes {
 			name := helper.SanitizeDomainName(route.Domain)
+
+			// HTTP router (web entrypoint) - always created
 			sb.WriteString(fmt.Sprintf("    domain-%s:\n", name))
 			sb.WriteString(fmt.Sprintf("      rule: \"Host(`%s`)\"\n", route.Domain))
 			sb.WriteString(fmt.Sprintf("      service: domain-%s-svc\n", name))
@@ -771,6 +778,34 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig) error {
 				}
 			}
 			sb.WriteString("\n")
+
+			// HTTPS router (websecure entrypoint) - only if FrontendSSL is enabled
+			if route.FrontendSSL {
+				sb.WriteString(fmt.Sprintf("    domain-%s-secure:\n", name))
+				sb.WriteString(fmt.Sprintf("      rule: \"Host(`%s`)\"\n", route.Domain))
+				sb.WriteString(fmt.Sprintf("      service: domain-%s-svc\n", name))
+				sb.WriteString("      priority: 50\n")
+				sb.WriteString("      entryPoints:\n")
+				sb.WriteString("        - websecure\n")
+				if len(route.Middlewares) > 0 {
+					sb.WriteString("      middlewares:\n")
+					for _, mw := range route.Middlewares {
+						sb.WriteString(fmt.Sprintf("        - %s\n", mw))
+					}
+				}
+				// TLS configuration based on access mode
+				if route.AccessMode == "public" {
+					// Public mode: use Let's Encrypt
+					sb.WriteString("      tls:\n")
+					sb.WriteString("        certResolver: letsencrypt\n")
+					sb.WriteString("        domains:\n")
+					sb.WriteString(fmt.Sprintf("          - main: \"%s\"\n", route.Domain))
+				} else {
+					// VPN mode: use default/self-signed cert
+					sb.WriteString("      tls: {}\n")
+				}
+				sb.WriteString("\n")
+			}
 		}
 
 		sb.WriteString("  services:\n")
@@ -796,4 +831,98 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig) error {
 
 	log.Printf("Generated Traefik domain routes config with %d routes", len(routes))
 	return nil
+}
+
+// CertificateInfo holds certificate data parsed from acme.json
+type CertificateInfo struct {
+	Domain    string    `json:"domain"`
+	NotBefore time.Time `json:"notBefore"`
+	NotAfter  time.Time `json:"notAfter"`
+	Issuer    string    `json:"issuer"`
+	Status    string    `json:"status"`   // "valid", "warning", "critical", "expired"
+	DaysLeft  int       `json:"daysLeft"`
+}
+
+// acmeStorage represents the structure of acme.json
+type acmeStorage struct {
+	Letsencrypt struct {
+		Account struct {
+			Email string `json:"Email"`
+		} `json:"Account"`
+		Certificates []struct {
+			Domain struct {
+				Main string   `json:"main"`
+				SANs []string `json:"sans"`
+			} `json:"domain"`
+			Certificate string `json:"certificate"`
+			Key         string `json:"key"`
+		} `json:"Certificates"`
+	} `json:"letsencrypt"`
+}
+
+// GetCertificates parses acme.json and returns certificate info
+func GetCertificates() ([]CertificateInfo, error) {
+	acmePath := helper.GetEnvOptional("TRAEFIK_ACME", "/traefik/acme.json")
+
+	data, err := os.ReadFile(acmePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []CertificateInfo{}, nil // No certificates yet
+		}
+		return nil, fmt.Errorf("failed to read acme.json: %v", err)
+	}
+
+	if len(data) == 0 {
+		return []CertificateInfo{}, nil
+	}
+
+	var storage acmeStorage
+	if err := json.Unmarshal(data, &storage); err != nil {
+		return nil, fmt.Errorf("failed to parse acme.json: %v", err)
+	}
+
+	certs := []CertificateInfo{}
+	now := time.Now()
+
+	for _, cert := range storage.Letsencrypt.Certificates {
+		// Decode certificate to get expiration
+		certPEM, err := base64.StdEncoding.DecodeString(cert.Certificate)
+		if err != nil {
+			log.Printf("Warning: failed to decode certificate for %s: %v", cert.Domain.Main, err)
+			continue
+		}
+
+		block, _ := pem.Decode(certPEM)
+		if block == nil {
+			log.Printf("Warning: failed to decode PEM block for %s", cert.Domain.Main)
+			continue
+		}
+
+		x509Cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			log.Printf("Warning: failed to parse certificate for %s: %v", cert.Domain.Main, err)
+			continue
+		}
+
+		daysLeft := int(x509Cert.NotAfter.Sub(now).Hours() / 24)
+		status := "valid"
+		if daysLeft <= 0 {
+			status = "expired"
+		} else if daysLeft <= 7 {
+			status = "critical"
+		} else if daysLeft <= 30 {
+			status = "warning"
+		}
+
+		certs = append(certs, CertificateInfo{
+			Domain:    cert.Domain.Main,
+			NotBefore: x509Cert.NotBefore,
+			NotAfter:  x509Cert.NotAfter,
+			Issuer:    x509Cert.Issuer.CommonName,
+			Status:    status,
+			DaysLeft:  daysLeft,
+		})
+	}
+
+	return certs, nil
 }

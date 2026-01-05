@@ -137,9 +137,9 @@ func checkAndBroadcastStatus() {
 // checkAndBroadcastNodes checks node status and broadcasts if changed
 func checkAndBroadcastNodes() {
 	// Skip if no subscribers for either channel
-	hasStatsSubscribers := serviceInstance.hub.ChannelSubscriberCount("stats") > 0
+	hasInfoSubscribers := serviceInstance.hub.ChannelSubscriberCount("general_info") > 0
 	hasNodesSubscribers := serviceInstance.hub.ChannelSubscriberCount("nodes_updated") > 0
-	if !hasStatsSubscribers && !hasNodesSubscribers {
+	if !hasInfoSubscribers && !hasNodesSubscribers {
 		return
 	}
 
@@ -171,10 +171,13 @@ func checkAndBroadcastNodes() {
 		lastNodeStats = stats
 		lastNodeStatsMu.Unlock()
 
-		if hasStatsSubscribers {
+		if hasInfoSubscribers {
 			log.Printf("Node status changed, broadcasting: online=%d, offline=%d, hs=%d, wg=%d",
 				stats.Online, stats.Offline, stats.HsNodes, stats.WgPeers)
-			serviceInstance.hub.Broadcast("stats", stats)
+			serviceInstance.hub.Broadcast("general_info", map[string]interface{}{
+				"event": "stats",
+				"data":  stats,
+			})
 		}
 
 		// Notify nodes_updated if node counts changed
@@ -263,10 +266,13 @@ func BroadcastNodeStats() {
 	lastNodeStatsMu.Unlock()
 
 	// Broadcast stats if there are subscribers
-	if serviceInstance.hub.ChannelSubscriberCount("stats") > 0 {
+	if serviceInstance.hub.ChannelSubscriberCount("general_info") > 0 {
 		log.Printf("Broadcasting node stats: online=%d, offline=%d, hs=%d, wg=%d",
 			stats.Online, stats.Offline, stats.HsNodes, stats.WgPeers)
-		serviceInstance.hub.Broadcast("stats", stats)
+		serviceInstance.hub.Broadcast("general_info", map[string]interface{}{
+			"event": "stats",
+			"data":  stats,
+		})
 	}
 
 	// Notify nodes_updated subscribers if node counts changed

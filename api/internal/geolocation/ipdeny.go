@@ -39,8 +39,8 @@ func (p *IPDenyProvider) NeedsUpdate() bool {
 	var count int
 	err := p.db.QueryRow(`
 		SELECT COUNT(*) FROM country_zones_cache c
-		INNER JOIN blocked_countries b ON c.country_code = b.country_code
-		WHERE b.enabled = 1 AND c.updated_at < datetime('now', '-7 days')
+		INNER JOIN firewall_entries f ON c.country_code = f.value
+		WHERE f.entry_type = 'country' AND f.enabled = 1 AND c.updated_at < datetime('now', '-7 days')
 	`).Scan(&count)
 
 	if err != nil {
@@ -113,7 +113,7 @@ func (p *IPDenyProvider) RefreshAllZones() (int, int) {
 		return 0, 1
 	}
 
-	rows, err := p.db.Query("SELECT country_code FROM blocked_countries WHERE enabled = 1")
+	rows, err := p.db.Query("SELECT value FROM firewall_entries WHERE entry_type = 'country' AND enabled = 1")
 	if err != nil {
 		return 0, 1
 	}
@@ -156,6 +156,18 @@ func (p *IPDenyProvider) RefreshAllZones() (int, int) {
 	return updated, errors
 }
 
+// parseZonesToCIDRs parses a zones string into a slice of CIDRs
+func parseZonesToCIDRs(zones string) []string {
+	var cidrs []string
+	for _, line := range strings.Split(zones, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			cidrs = append(cidrs, line)
+		}
+	}
+	return cidrs
+}
+
 // GetCountryCIDRs returns CIDR ranges for a specific country
 func (p *IPDenyProvider) GetCountryCIDRs(countryCode string) ([]string, error) {
 	if p.db == nil {
@@ -168,15 +180,7 @@ func (p *IPDenyProvider) GetCountryCIDRs(countryCode string) ([]string, error) {
 		return nil, err
 	}
 
-	var cidrs []string
-	for _, line := range strings.Split(zones, "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" && !strings.HasPrefix(line, "#") {
-			cidrs = append(cidrs, line)
-		}
-	}
-
-	return cidrs, nil
+	return parseZonesToCIDRs(zones), nil
 }
 
 // GetAllBlockedCIDRs returns all CIDRs for enabled blocked countries
@@ -185,15 +189,16 @@ func (p *IPDenyProvider) GetAllBlockedCIDRs(outboundOnly bool) ([]string, error)
 		return nil, fmt.Errorf("database not available")
 	}
 
+	// Query firewall_entries for blocked countries and join with country_zones_cache
 	var query string
 	if outboundOnly {
 		query = `SELECT c.zones FROM country_zones_cache c
-			INNER JOIN blocked_countries b ON c.country_code = b.country_code
-			WHERE b.enabled = 1 AND b.direction = 'both'`
+			INNER JOIN firewall_entries f ON c.country_code = f.value
+			WHERE f.entry_type = 'country' AND f.enabled = 1 AND f.direction = 'both'`
 	} else {
 		query = `SELECT c.zones FROM country_zones_cache c
-			INNER JOIN blocked_countries b ON c.country_code = b.country_code
-			WHERE b.enabled = 1`
+			INNER JOIN firewall_entries f ON c.country_code = f.value
+			WHERE f.entry_type = 'country' AND f.enabled = 1`
 	}
 
 	rows, err := p.db.Query(query)
@@ -208,12 +213,7 @@ func (p *IPDenyProvider) GetAllBlockedCIDRs(outboundOnly bool) ([]string, error)
 		if err := rows.Scan(&zones); err != nil {
 			continue
 		}
-		for _, line := range strings.Split(zones, "\n") {
-			line = strings.TrimSpace(line)
-			if line != "" && !strings.HasPrefix(line, "#") {
-				allCIDRs = append(allCIDRs, line)
-			}
-		}
+		allCIDRs = append(allCIDRs, parseZonesToCIDRs(zones)...)
 	}
 
 	return allCIDRs, nil

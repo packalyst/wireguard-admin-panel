@@ -106,9 +106,6 @@ func (s *Service) processVPNTrafficLog(logFile string, trafficRegex *regexp.Rege
 		`, srcIP, dstIP, dstPort, proto, domain, country)
 	}
 
-	// Cleanup old traffic logs
-	s.db.Exec("DELETE FROM traffic_logs WHERE id NOT IN (SELECT id FROM traffic_logs ORDER BY timestamp DESC LIMIT ?)", s.config.MaxTrafficLogs)
-
 	return currentSize
 }
 
@@ -130,22 +127,18 @@ func (s *Service) runExpirationCleanup() {
 
 // cleanupExpiredData removes expired bans and old attempts
 func (s *Service) cleanupExpiredData() {
-	// Remove expired bans
-	result, err := s.db.Exec("DELETE FROM blocked_ips WHERE expires_at IS NOT NULL AND expires_at < datetime('now')")
+	// Remove expired entries from firewall_entries
+	result, err := s.db.Exec("DELETE FROM firewall_entries WHERE expires_at IS NOT NULL AND expires_at < datetime('now')")
 	if err == nil {
 		if count, _ := result.RowsAffected(); count > 0 {
-			log.Printf("Cleaned up %d expired bans", count)
-			s.ApplyRules()
+			log.Printf("Cleaned up %d expired firewall entries", count)
+			s.RequestApply()
 		}
 	}
 
 	// Cleanup old attempts
 	s.db.Exec("DELETE FROM attempts WHERE id NOT IN (SELECT id FROM attempts ORDER BY timestamp DESC LIMIT ?)", s.config.MaxAttempts)
-}
 
-// Stop cancels all background goroutines
-func (s *Service) Stop() {
-	if s.cancel != nil {
-		s.cancel()
-	}
+	// Cleanup old traffic logs
+	s.db.Exec("DELETE FROM traffic_logs WHERE id NOT IN (SELECT id FROM traffic_logs ORDER BY timestamp DESC LIMIT ?)", s.config.MaxTrafficLogs)
 }

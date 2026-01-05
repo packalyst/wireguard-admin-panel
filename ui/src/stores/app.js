@@ -101,6 +101,55 @@ export function toast(message, type = 'info') {
   }
 }
 
+// Global confirm modal store
+export const confirmModalStore = writable({
+  open: false,
+  title: '',
+  message: '',
+  description: '',
+  details: '',
+  warning: '',
+  alert: false,
+  confirmText: 'Confirm',
+  cancelText: 'Cancel',
+  variant: 'destructive',
+  loading: false,
+  resolve: null
+})
+
+// Show confirm modal and return a Promise
+export function confirm(options) {
+  return new Promise((resolve) => {
+    confirmModalStore.set({
+      open: true,
+      title: options.title || 'Confirm',
+      message: options.message || 'Are you sure?',
+      description: options.description || '',
+      details: options.details || '',
+      warning: options.warning || '',
+      alert: options.alert || false,
+      confirmText: options.confirmText || 'Confirm',
+      cancelText: options.cancelText || 'Cancel',
+      variant: options.variant || 'destructive',
+      loading: false,
+      resolve
+    })
+  })
+}
+
+// Close confirm modal (called by ConfirmModal component)
+export function closeConfirmModal(confirmed) {
+  confirmModalStore.update(state => {
+    if (state.resolve) state.resolve(confirmed)
+    return { ...state, open: false, resolve: null }
+  })
+}
+
+// Set loading state on confirm modal
+export function setConfirmLoading(loading) {
+  confirmModalStore.update(state => ({ ...state, loading }))
+}
+
 // Auth header helper (consolidated token retrieval)
 function getAuthHeaders(extraHeaders = {}) {
   const token = localStorage.getItem('session_token')
