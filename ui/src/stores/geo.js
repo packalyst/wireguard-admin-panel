@@ -36,8 +36,8 @@ export async function lookupIPs(ips) {
     if (res.results) {
       geoCache = { ...geoCache, ...res.results }
     }
-  } catch (e) {
-    console.warn('Geo lookup failed:', e)
+  } catch {
+    // Ignore lookup errors
   }
 
   return geoCache

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"api/internal/database"
 	"api/internal/helper"
 	"api/internal/nftables"
 	"api/internal/router"
@@ -74,9 +75,7 @@ func (s *Service) handleGetEntries(w http.ResponseWriter, r *http.Request) {
 			&e.HitCount, &e.CreatedAt); err != nil {
 			continue
 		}
-		if expiresAt.Valid {
-			e.ExpiresAt = &expiresAt.Time
-		}
+		e.ExpiresAt = database.TimePointerFromNull(expiresAt)
 		entries = append(entries, e)
 	}
 

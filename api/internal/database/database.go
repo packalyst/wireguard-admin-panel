@@ -132,26 +132,41 @@ func createSchema(db *sql.DB) error {
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
+	-- Attempts indexes
 	CREATE INDEX IF NOT EXISTS idx_attempts_timestamp ON attempts(timestamp);
 	CREATE INDEX IF NOT EXISTS idx_attempts_ip ON attempts(source_ip);
 	CREATE INDEX IF NOT EXISTS idx_attempts_jail ON attempts(jail_name);
+	CREATE INDEX IF NOT EXISTS idx_attempts_timestamp_id ON attempts(timestamp DESC, id);
+
+	-- Traffic logs indexes
 	CREATE INDEX IF NOT EXISTS idx_traffic_timestamp ON traffic_logs(timestamp);
 	CREATE INDEX IF NOT EXISTS idx_traffic_client_ip ON traffic_logs(client_ip);
 	CREATE INDEX IF NOT EXISTS idx_traffic_dest_ip ON traffic_logs(dest_ip);
+	CREATE INDEX IF NOT EXISTS idx_traffic_timestamp_protocol ON traffic_logs(timestamp, protocol);
+	CREATE INDEX IF NOT EXISTS idx_traffic_timestamp_client ON traffic_logs(timestamp, client_ip);
+	CREATE INDEX IF NOT EXISTS idx_traffic_timestamp_id ON traffic_logs(timestamp DESC, id);
+
+	-- Firewall entries indexes
 	CREATE UNIQUE INDEX IF NOT EXISTS idx_firewall_entries_unique ON firewall_entries(entry_type, value, protocol);
 	CREATE INDEX IF NOT EXISTS idx_firewall_entries_type ON firewall_entries(entry_type);
 	CREATE INDEX IF NOT EXISTS idx_firewall_entries_enabled ON firewall_entries(enabled);
 	CREATE INDEX IF NOT EXISTS idx_firewall_entries_expires ON firewall_entries(expires_at);
 	CREATE INDEX IF NOT EXISTS idx_firewall_entries_source ON firewall_entries(source);
+	CREATE INDEX IF NOT EXISTS idx_firewall_entries_type_enabled_direction ON firewall_entries(entry_type, enabled, direction);
+
+	-- Country zones cache indexes
+	CREATE INDEX IF NOT EXISTS idx_country_zones_code_updated ON country_zones_cache(country_code, updated_at);
 	`
 
-	// New tables for auth and settings
+	// App schema - users, settings, sessions, domain routes
 	appSchema := `
 	-- Users table for authentication
 	CREATE TABLE IF NOT EXISTS users (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		username TEXT UNIQUE NOT NULL,
 		password_hash TEXT NOT NULL,
+		totp_secret_enc TEXT,
+		totp_enabled INTEGER DEFAULT 0,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		last_login DATETIME
 	);
@@ -168,13 +183,13 @@ func createSchema(db *sql.DB) error {
 	CREATE TABLE IF NOT EXISTS sessions (
 		id TEXT PRIMARY KEY,
 		user_id INTEGER NOT NULL,
+		ip_address TEXT DEFAULT '',
+		user_agent TEXT DEFAULT '',
+		last_active DATETIME,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		expires_at DATETIME NOT NULL,
 		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 	);
-
-	CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
-	CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 
 	-- Domain routes for Traefik reverse proxy
 	CREATE TABLE IF NOT EXISTS domain_routes (
@@ -194,8 +209,16 @@ func createSchema(db *sql.DB) error {
 		FOREIGN KEY (vpn_client_id) REFERENCES vpn_clients(id) ON DELETE SET NULL
 	);
 
+	-- Sessions indexes
+	CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+	CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+	CREATE INDEX IF NOT EXISTS idx_sessions_user_expires_lastactive ON sessions(user_id, expires_at, last_active DESC);
+
+	-- Domain routes indexes
 	CREATE INDEX IF NOT EXISTS idx_domain_routes_domain ON domain_routes(domain);
 	CREATE INDEX IF NOT EXISTS idx_domain_routes_client ON domain_routes(vpn_client_id);
+	CREATE INDEX IF NOT EXISTS idx_domain_routes_enabled_domain ON domain_routes(enabled, domain);
+	CREATE INDEX IF NOT EXISTS idx_domain_routes_vpn_enabled ON domain_routes(vpn_client_id, enabled);
 	`
 
 	// VPN ACL tables - unified view of all VPN clients and access control
@@ -208,6 +231,10 @@ func createSchema(db *sql.DB) error {
 		type TEXT NOT NULL CHECK(type IN ('wireguard', 'headscale')),
 		external_id TEXT,
 		raw_data TEXT,
+		public_key TEXT,
+		private_key_enc TEXT,
+		preshared_key_enc TEXT,
+		enabled INTEGER DEFAULT 1,
 		acl_policy TEXT NOT NULL DEFAULT 'selected' CHECK(acl_policy IN ('block_all', 'selected', 'allow_all')),
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -237,10 +264,13 @@ func createSchema(db *sql.DB) error {
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
-	CREATE INDEX IF NOT EXISTS idx_vpn_acl_source ON vpn_acl_rules(source_client_id);
-	CREATE INDEX IF NOT EXISTS idx_vpn_acl_target ON vpn_acl_rules(target_client_id);
+	-- VPN clients indexes
 	CREATE INDEX IF NOT EXISTS idx_vpn_clients_type ON vpn_clients(type);
 	CREATE INDEX IF NOT EXISTS idx_vpn_clients_external_id ON vpn_clients(external_id);
+
+	-- VPN ACL rules indexes
+	CREATE INDEX IF NOT EXISTS idx_vpn_acl_source ON vpn_acl_rules(source_client_id);
+	CREATE INDEX IF NOT EXISTS idx_vpn_acl_target ON vpn_acl_rules(target_client_id);
 	`
 
 	// Execute firewall schema
@@ -258,152 +288,7 @@ func createSchema(db *sql.DB) error {
 		return fmt.Errorf("failed to create VPN schema: %v", err)
 	}
 
-	// Run migrations for existing databases
-	if err := runMigrations(db); err != nil {
-		return fmt.Errorf("failed to run migrations: %v", err)
-	}
-
-	log.Printf("Database schema up to date")
-	return nil
-}
-
-// runMigrations handles schema updates for existing databases
-func runMigrations(db *sql.DB) error {
-	var count int
-
-	// Drop old tables if they exist (clean migration to unified firewall_entries)
-	oldTables := []string{"blocked_ips", "blocked_countries", "allowed_ports"}
-	for _, table := range oldTables {
-		_, _ = db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s", table))
-	}
-
-	// Add raw_data column to vpn_clients for storing full client data
-	err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('vpn_clients') WHERE name='raw_data'`).Scan(&count)
-	if err != nil {
-		return err
-	}
-	if count == 0 {
-		_, err = db.Exec(`ALTER TABLE vpn_clients ADD COLUMN raw_data TEXT`)
-		if err != nil {
-			return fmt.Errorf("failed to add raw_data column: %v", err)
-		}
-		log.Printf("Migration: added 'raw_data' column to vpn_clients")
-	}
-
-	// Migrate old ACL policies to new simplified model
-	_, _ = db.Exec(`UPDATE vpn_clients SET acl_policy = 'selected' WHERE acl_policy = 'snapshot_all'`)
-	_, _ = db.Exec(`UPDATE vpn_clients SET acl_policy = 'allow_all' WHERE acl_policy = 'allow_all_future'`)
-
-	// Add WireGuard peer columns to vpn_clients for storing encrypted keys
-	wgColumns := []struct {
-		name string
-		def  string
-	}{
-		{"public_key", "TEXT"},
-		{"private_key_enc", "TEXT"},
-		{"preshared_key_enc", "TEXT"},
-		{"enabled", "INTEGER DEFAULT 1"},
-	}
-	for _, col := range wgColumns {
-		err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('vpn_clients') WHERE name=?`, col.name).Scan(&count)
-		if err != nil {
-			return err
-		}
-		if count == 0 {
-			_, err = db.Exec(`ALTER TABLE vpn_clients ADD COLUMN ` + col.name + ` ` + col.def)
-			if err != nil {
-				return fmt.Errorf("failed to add %s column: %v", col.name, err)
-			}
-			log.Printf("Migration: added '%s' column to vpn_clients", col.name)
-		}
-	}
-
-	// Migration: Add middlewares column to domain_routes
-	var hasMiddlewares int
-	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('domain_routes') WHERE name='middlewares'`).Scan(&hasMiddlewares)
-	if err != nil {
-		return err
-	}
-	if hasMiddlewares == 0 {
-		_, err = db.Exec(`ALTER TABLE domain_routes ADD COLUMN middlewares TEXT DEFAULT '[]'`)
-		if err != nil {
-			return fmt.Errorf("failed to add middlewares column: %v", err)
-		}
-		// Migrate vpn_only=1 to middlewares containing vpn-only@file
-		_, _ = db.Exec(`UPDATE domain_routes SET middlewares = '["vpn-only@file"]' WHERE vpn_only = 1`)
-		log.Printf("Migration: added 'middlewares' column to domain_routes")
-	}
-
-	// Migration: Add session tracking columns (ip_address, user_agent, last_active)
-	sessionCols := []struct {
-		name string
-		def  string
-	}{
-		{"ip_address", "TEXT DEFAULT ''"},
-		{"user_agent", "TEXT DEFAULT ''"},
-		{"last_active", "DATETIME"},
-	}
-	for _, col := range sessionCols {
-		err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name=?`, col.name).Scan(&count)
-		if err != nil {
-			return err
-		}
-		if count == 0 {
-			_, err = db.Exec(`ALTER TABLE sessions ADD COLUMN ` + col.name + ` ` + col.def)
-			if err != nil {
-				return fmt.Errorf("failed to add sessions.%s column: %v", col.name, err)
-			}
-			log.Printf("Migration: added '%s' column to sessions", col.name)
-			if col.name == "last_active" {
-				_, _ = db.Exec(`UPDATE sessions SET last_active = created_at WHERE last_active IS NULL`)
-			}
-		}
-	}
-
-	// Migration: Add 2FA columns to users table
-	twoFACols := []struct {
-		name string
-		def  string
-	}{
-		{"totp_secret_enc", "TEXT"},
-		{"totp_enabled", "INTEGER DEFAULT 0"},
-	}
-	for _, col := range twoFACols {
-		err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('users') WHERE name=?`, col.name).Scan(&count)
-		if err != nil {
-			return err
-		}
-		if count == 0 {
-			_, err = db.Exec(`ALTER TABLE users ADD COLUMN ` + col.name + ` ` + col.def)
-			if err != nil {
-				return fmt.Errorf("failed to add users.%s column: %v", col.name, err)
-			}
-			log.Printf("Migration: added '%s' column to users", col.name)
-		}
-	}
-
-	// Migration: Add access_mode and frontend_ssl columns to domain_routes
-	domainRouteCols := []struct {
-		name string
-		def  string
-	}{
-		{"access_mode", "TEXT DEFAULT 'vpn'"},
-		{"frontend_ssl", "BOOLEAN DEFAULT 0"},
-	}
-	for _, col := range domainRouteCols {
-		err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('domain_routes') WHERE name=?`, col.name).Scan(&count)
-		if err != nil {
-			return err
-		}
-		if count == 0 {
-			_, err = db.Exec(`ALTER TABLE domain_routes ADD COLUMN ` + col.name + ` ` + col.def)
-			if err != nil {
-				return fmt.Errorf("failed to add domain_routes.%s column: %v", col.name, err)
-			}
-			log.Printf("Migration: added '%s' column to domain_routes", col.name)
-		}
-	}
-
+	log.Printf("Database schema initialized")
 	return nil
 }
 

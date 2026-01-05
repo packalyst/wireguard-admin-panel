@@ -1,6 +1,7 @@
 <script>
-  import { onMount } from 'svelte'
   import { toast, apiGet, apiPost, apiPut, apiDelete, confirm, setConfirmLoading } from '../stores/app.js'
+  import { useDataLoader } from '$lib/composables/index.js'
+  import { filterByFields } from '$lib/utils/data.js'
   import Icon from '../components/Icon.svelte'
   import Badge from '../components/Badge.svelte'
   import Button from '../components/Button.svelte'
@@ -14,10 +15,27 @@
 
   let { loading = $bindable(true) } = $props()
 
-  let routes = $state([])
-  let vpnClients = $state([])
-  let availableMiddlewares = $state([])
-  let certificates = $state([]) // Certificate info from Let's Encrypt
+  // Multi-source data loading
+  const loader = useDataLoader([
+    { fn: () => apiGet('/api/domains'), key: 'routes', extract: 'routes', isArray: true },
+    { fn: () => apiGet('/api/vpn/clients'), key: 'clients', isArray: true },
+    { fn: () => apiGet('/api/traefik/overview'), key: 'traefik', default: {} },
+    { fn: () => apiGet('/api/domains/certificates').catch(() => ({ certificates: [] })), key: 'certs', default: { certificates: [] } }
+  ])
+
+  const routes = $derived(loader.data.routes || [])
+  const vpnClients = $derived(loader.data.clients || [])
+  const certificates = $derived(loader.data.certs?.certificates || [])
+  const availableMiddlewares = $derived.by(() => {
+    const mws = loader.data.traefik?.middlewares || []
+    return mws
+      .filter(m => m.provider === 'file' && !m.name.includes('@internal'))
+      .map(m => ({ name: m.name, type: m.type }))
+  })
+
+  // Sync loading state to parent
+  $effect(() => { loading = loader.loading })
+
   let searchQuery = $state('')
 
   // Modal states
@@ -50,46 +68,14 @@
     frontendSsl: false
   })
 
-  async function loadData() {
-    try {
-      const [routesRes, clientsRes, traefikRes, certsRes] = await Promise.all([
-        apiGet('/api/domains'),
-        apiGet('/api/vpn/clients'),
-        apiGet('/api/traefik/overview'),
-        apiGet('/api/domains/certificates').catch(() => ({ certificates: [] }))
-      ])
-      routes = routesRes.routes || []
-      vpnClients = Array.isArray(clientsRes) ? clientsRes : []
-      certificates = certsRes.certificates || []
-      // Extract middleware names from Traefik, filter out internal ones
-      const mws = traefikRes.middlewares || []
-      availableMiddlewares = mws
-        .filter(m => m.provider === 'file' && !m.name.includes('@internal'))
-        .map(m => ({ name: m.name, type: m.type }))
-    } catch (e) {
-      toast('Failed to load domain routes: ' + e.message, 'error')
-    } finally {
-      loading = false
-    }
-  }
-
   // Certificate lookup by domain
   function getCertForDomain(domain) {
     return certificates.find(c => c.domain === domain)
   }
 
-  onMount(() => {
-    loadData()
-  })
-
   // Filtered routes
   const filteredRoutes = $derived(
-    routes.filter(r =>
-      r.domain?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      r.targetIp?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      r.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      r.vpnClientName?.toLowerCase().includes(searchQuery.toLowerCase())
-    )
+    filterByFields(routes, ['domain', 'targetIp', 'description', 'vpnClientName'], searchQuery)
   )
 
   // VPN client options for select
@@ -159,7 +145,7 @@
     try {
       await apiDelete(`/api/domains/${route.id}`)
       toast('Domain route deleted', 'success')
-      loadData()
+      loader.reload()
     } catch (e) {
       toast('Failed to delete route: ' + e.message, 'error')
     } finally {
@@ -198,7 +184,7 @@
       })
       toast('Domain route created', 'success')
       closeFormModal()
-      loadData()
+      loader.reload()
     } catch (e) {
       toast('Failed to create route: ' + e.message, 'error')
     }
@@ -220,7 +206,7 @@
       })
       toast('Domain route updated', 'success')
       closeFormModal()
-      loadData()
+      loader.reload()
     } catch (e) {
       toast('Failed to update route: ' + e.message, 'error')
     }
@@ -238,7 +224,7 @@
     try {
       await apiPost(`/api/domains/${route.id}/toggle`)
       toast(`Route ${route.enabled ? 'disabled' : 'enabled'}`, 'success')
-      loadData()
+      loader.reload()
     } catch (e) {
       toast('Failed to toggle route: ' + e.message, 'error')
     }
@@ -394,7 +380,7 @@
     if (created > 0) {
       toast(`Created ${created} route(s)`, 'success')
       showScanModal = false
-      loadData()
+      loader.reload()
     }
     if (errors.length > 0) {
       toast(`${errors.length} failed: ${errors[0]}`, 'warning')

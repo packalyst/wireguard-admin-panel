@@ -1,8 +1,9 @@
 <script>
-  import { onMount } from 'svelte'
   import { toast, apiGet, apiPost, apiDelete, confirm, setConfirmLoading } from '../stores/app.js'
   import { copyWithToast } from '../stores/helpers.js'
   import { parseDate, formatDateShort, formatExpiryDate, isExpired, getDaysUntilExpiry } from '$lib/utils/format.js'
+  import { useDataLoader } from '$lib/composables/index.js'
+  import { filterByFields, sortByMultiple } from '$lib/utils/data.js'
   import Icon from '../components/Icon.svelte'
   import Button from '../components/Button.svelte'
   import Modal from '../components/Modal.svelte'
@@ -14,39 +15,41 @@
 
   let { loading = $bindable(true) } = $props()
 
-  let apiKeys = $state([])
+  // Data loading with useDataLoader
+  const loader = useDataLoader(
+    () => apiGet('/api/hs/apikeys'),
+    { extract: 'apiKeys', isArray: true, errorMsg: 'Failed to load API keys' }
+  )
+
+  // Transform keys to add _expired flag
+  const apiKeys = $derived(
+    (loader.data || []).map(k => ({ ...k, _expired: isExpired(k.expiration) }))
+  )
+
+  // Sync loading state to parent
+  $effect(() => { loading = loader.loading })
+
   let showCreateModal = $state(false)
   let newExpiration = $state('90')
   let newKey = $state(null)
   let creating = $state(false)
   let searchQuery = $state('')
 
-  async function loadKeys() {
-    try {
-      const res = await apiGet('/api/hs/apikeys')
-      const keys = res.apiKeys || []
-      apiKeys = keys.map(k => ({ ...k, _expired: isExpired(k.expiration) }))
-    } catch (e) {
-      toast('Failed to load API keys: ' + e.message, 'error')
-    } finally {
-      loading = false
-    }
-  }
-
   // Filtered and sorted keys - active first, then by expiration date
-  const filteredKeys = $derived(
-    apiKeys
-      .filter(k => k.prefix.toLowerCase().includes(searchQuery.toLowerCase()))
-      .sort((a, b) => {
-        // Active keys first
-        if (a._expired !== b._expired) return a._expired ? 1 : -1
-        // Then by expiration date (soonest first for active, most recent for expired)
-        const dateA = parseDate(a.expiration)
-        const dateB = parseDate(b.expiration)
-        if (!dateA || !dateB) return 0
-        return a._expired ? dateB - dateA : dateA - dateB
-      })
-  )
+  const filteredKeys = $derived.by(() => {
+    const filtered = filterByFields(apiKeys, ['prefix'], searchQuery)
+    return sortByMultiple(filtered, [
+      { fn: (a, b) => a._expired - b._expired },
+      {
+        fn: (a, b) => {
+          const dateA = parseDate(a.expiration)
+          const dateB = parseDate(b.expiration)
+          if (!dateA || !dateB) return 0
+          return a._expired ? dateB - dateA : dateA - dateB
+        }
+      }
+    ])
+  })
 
   async function createKey() {
     creating = true
@@ -57,7 +60,7 @@
       const res = await apiPost('/api/hs/apikeys', { expiration: expiration.toISOString() })
       newKey = res.apiKey
       toast('API key created', 'success')
-      loadKeys()
+      loader.reload()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
     } finally {
@@ -79,7 +82,7 @@
     try {
       await apiDelete(`/api/hs/apikeys/${key.prefix}`)
       toast('Key expired', 'success')
-      loadKeys()
+      loader.reload()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
     } finally {
@@ -88,8 +91,6 @@
   }
 
   const copyToClipboard = (text) => copyWithToast(text, toast)
-
-  onMount(loadKeys)
 </script>
 
 <div class="space-y-4">

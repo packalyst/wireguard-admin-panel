@@ -1,6 +1,6 @@
 <script>
-  import { onMount } from 'svelte'
-  import { toast, apiGet } from '../stores/app.js'
+  import { apiGet } from '../stores/app.js'
+  import { useDataLoader } from '$lib/composables/index.js'
   import Icon from '../components/Icon.svelte'
   import Badge from '../components/Badge.svelte'
   import LoadingSpinner from '../components/LoadingSpinner.svelte'
@@ -10,27 +10,30 @@
 
   let { loading = $bindable(true) } = $props()
 
-  let routers = $state([])
-  let services = $state([])
-  let middlewares = $state([])
-  let overview = $state(null)
+  // Data loading
+  const loader = useDataLoader(
+    () => apiGet('/api/traefik/overview'),
+    { errorMsg: 'Failed to load Traefik data' }
+  )
 
-  async function loadData() {
-    try {
-      const data = await apiGet('/api/traefik/overview')
-      const routersRes = data.routers || []
-      const servicesRes = data.services || []
-      const middlewaresRes = data.middlewares || []
-      routers = Array.isArray(routersRes) ? routersRes : Object.entries(routersRes).map(([name, r]) => ({ ...r, name }))
-      services = Array.isArray(servicesRes) ? servicesRes : Object.entries(servicesRes).map(([name, s]) => ({ ...s, name }))
-      middlewares = Array.isArray(middlewaresRes) ? middlewaresRes : Object.entries(middlewaresRes).map(([name, m]) => ({ ...m, name }))
-      overview = data.overview
-    } catch (e) {
-      toast('Failed to load Traefik data: ' + e.message, 'error')
-    } finally {
-      loading = false
-    }
-  }
+  // Transform data - handle both array and object formats
+  const routers = $derived.by(() => {
+    const res = loader.data?.routers || []
+    return Array.isArray(res) ? res : Object.entries(res).map(([name, r]) => ({ ...r, name }))
+  })
+
+  const services = $derived.by(() => {
+    const res = loader.data?.services || []
+    return Array.isArray(res) ? res : Object.entries(res).map(([name, s]) => ({ ...s, name }))
+  })
+
+  const middlewares = $derived.by(() => {
+    const res = loader.data?.middlewares || []
+    return Array.isArray(res) ? res : Object.entries(res).map(([name, m]) => ({ ...m, name }))
+  })
+
+  // Sync loading state to parent
+  $effect(() => { loading = loader.loading })
 
   // Stats
   const activeRouters = $derived(routers.filter(r => r.status === 'enabled').length)
@@ -60,7 +63,6 @@
     return '-'
   }
 
-  onMount(loadData)
 </script>
 
 <div class="space-y-4">

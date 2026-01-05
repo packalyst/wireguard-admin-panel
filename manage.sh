@@ -738,6 +738,11 @@ if [ "$DOCKER_RUNNING" = true ]; then
                 rm -rf adguard/work/*
                 rm -rf traefik/logs/*
 
+                # Clean nftables tables created by the application
+                echo -e "${YELLOW}Cleaning nftables tables...${NC}"
+                sudo nft delete table inet firewall 2>/dev/null && echo -e "  ${GREEN}✓${NC} Removed inet firewall table" || true
+                sudo nft delete table inet vpn_acl 2>/dev/null && echo -e "  ${GREEN}✓${NC} Removed inet vpn_acl table" || true
+
                 echo -e "${GREEN}✓ Everything cleaned${NC}"
             fi
             exit 0

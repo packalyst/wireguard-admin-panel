@@ -381,8 +381,8 @@
       originalGeoSettings = { ...geoSettings }
       geoStatus = status
       geoProviders = settings.providers || null
-    } catch (e) {
-      console.error('Failed to load geolocation settings:', e)
+    } catch {
+      // Ignore errors
     } finally {
       loadingGeo = false
     }

@@ -79,24 +79,36 @@ const toastVariants = {
   info: 'info'
 }
 const toastIcons = {
-  success: '<span class="icon-[tabler--check] text-lg"></span>',
-  error: '<span class="icon-[tabler--alert-circle] text-lg"></span>',
-  warning: '<span class="icon-[tabler--alert-triangle] text-lg"></span>',
-  info: '<span class="icon-[tabler--info-circle] text-lg"></span>'
+  success: '<span class="icon-[tabler--check] text-lg text-success"></span>',
+  error: '<span class="icon-[tabler--alert-circle] text-lg text-destructive"></span>',
+  warning: '<span class="icon-[tabler--alert-triangle] text-lg text-warning"></span>',
+  info: '<span class="icon-[tabler--info-circle] text-lg text-info"></span>'
+}
+const toastTextClass = {
+  success: 'text-success',
+  error: 'text-destructive',
+  warning: 'text-warning',
+  info: 'text-info'
 }
 
 // Toast using KTUI
 export function toast(message, type = 'info') {
   if (window.KTToast) {
     window.KTToast.show({
+      dismiss:false,
+      cancel: {
+        label: `<span class="icon-[tabler--circle-x] text-base ${toastTextClass[type] || toastTextClass.info}"></span>`,
+        onClick: function () {},
+      },
       message,
-      variant: toastVariants[type] || 'info',
-      appearance: 'light',
+      variant: 'secondary',
+      appearance: 'solid',
       progress: true,
       size: 'sm',
       pauseOnHover: true,
       position: 'bottom-end',
-      icon: toastIcons[type] || toastIcons.info
+      icon: toastIcons[type] || toastIcons.info,
+      className: toastTextClass[type] || toastTextClass.info
     })
   }
 }

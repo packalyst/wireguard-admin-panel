@@ -16,7 +16,6 @@ export async function copyToClipboard(text) {
       return fallbackCopy(text)
     }
   } catch (err) {
-    console.error('Failed to copy:', err)
     return fallbackCopy(text)
   }
 }
@@ -40,7 +39,6 @@ export function fallbackCopy(text) {
     document.execCommand('copy')
     return true
   } catch (err) {
-    console.error('Fallback copy failed:', err)
     return false
   } finally {
     document.body.removeChild(textArea)

@@ -1,7 +1,8 @@
 <script>
-  import { onMount } from 'svelte'
   import { toast, apiGet, apiPost, apiPut, apiDelete, confirm, setConfirmLoading } from '../stores/app.js'
   import { formatRelativeDate } from '$lib/utils/format.js'
+  import { useDataLoader } from '$lib/composables/index.js'
+  import { filterByFields } from '$lib/utils/data.js'
   import Icon from '../components/Icon.svelte'
   import Input from '../components/Input.svelte'
   import Button from '../components/Button.svelte'
@@ -12,27 +13,17 @@
 
   let { loading = $bindable(true) } = $props()
 
-  let users = $state([])
-  let nodes = $state([])
+  // Multi-source data loading
+  const loader = useDataLoader([
+    { fn: () => apiGet('/api/hs/users'), key: 'users', extract: 'users', isArray: true },
+    { fn: () => apiGet('/api/hs/nodes'), key: 'nodes', extract: 'nodes', isArray: true }
+  ])
 
-  async function loadData() {
-    try {
-      const [usersRes, nodesRes] = await Promise.all([
-        apiGet('/api/hs/users'),
-        apiGet('/api/hs/nodes')
-      ])
-      users = usersRes.users || []
-      nodes = nodesRes.nodes || []
-    } catch (e) {
-      toast('Failed to load users: ' + e.message, 'error')
-    } finally {
-      loading = false
-    }
-  }
+  const users = $derived(loader.data.users || [])
+  const nodes = $derived(loader.data.nodes || [])
 
-  onMount(() => {
-    loadData()
-  })
+  // Sync loading state to parent
+  $effect(() => { loading = loader.loading })
 
   // Modals
   let showCreateModal = $state(false)
@@ -113,7 +104,7 @@
       toast('User created', 'success')
       showCreateModal = false
       newUserName = ''
-      loadData()
+      loader.reload()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
     } finally {
@@ -127,7 +118,7 @@
     try {
       await apiPut(`/api/hs/users/${user.name}/rename/${newName}`)
       toast('User renamed', 'success')
-      loadData()
+      loader.reload()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
     }
@@ -161,7 +152,7 @@
       // Then delete the user
       await apiDelete(`/api/hs/users/${user.name}`)
       toast('User and nodes deleted', 'success')
-      loadData()
+      loader.reload()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
     } finally {

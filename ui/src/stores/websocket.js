@@ -41,10 +41,7 @@ let activeSubscriptions = new Set()
  */
 export function connect() {
   const token = localStorage.getItem('session_token')
-  if (!token) {
-    console.warn('No session token, skipping WebSocket connection')
-    return
-  }
+  if (!token) return
 
   // Clean up existing connection
   if (ws) {
@@ -58,8 +55,6 @@ export function connect() {
     ws = new WebSocket(wsUrl)
 
     ws.onopen = () => {
-      console.log('WebSocket connected, sending auth...')
-      // Send auth message with token (more secure than URL query param)
       ws.send(JSON.stringify({ action: 'auth', token }))
     }
 
@@ -72,13 +67,12 @@ export function connect() {
           const msg = JSON.parse(msgStr)
           handleMessage(msg)
         }
-      } catch (err) {
-        console.error('Failed to parse WebSocket message:', err)
+      } catch {
+        // Ignore parse errors
       }
     }
 
     ws.onclose = (event) => {
-      console.log('WebSocket closed:', event.code, event.reason)
       wsConnected.set(false)
       ws = null
 
@@ -94,11 +88,9 @@ export function connect() {
       }
     }
 
-    ws.onerror = (error) => {
-      console.error('WebSocket error:', error)
-    }
-  } catch (err) {
-    console.error('Failed to create WebSocket:', err)
+    ws.onerror = () => {}
+  } catch {
+    // Ignore connection errors
   }
 }
 
@@ -110,7 +102,6 @@ function handleMessage(msg) {
 
   // Handle init message (sent on connect with user info - confirms auth success)
   if (type === 'init') {
-    console.log('WebSocket authenticated successfully')
     wsConnected.set(true)
     wsReconnecting.set(false)
     reconnectAttempts = 0
@@ -161,7 +152,6 @@ function scheduleReconnect() {
 
   wsReconnecting.set(true)
   reconnectAttempts++
-  console.log(`Scheduling WebSocket reconnect (attempt ${reconnectAttempts}/${maxReconnectAttempts})`)
 
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null

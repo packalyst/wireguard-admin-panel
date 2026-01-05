@@ -209,9 +209,7 @@ func (s *Service) handleGetClients(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&c.ID, &c.Name, &c.IP, &c.Type, &externalID, &rawData, &c.ACLPolicy, &c.CreatedAt, &c.UpdatedAt, &c.AllowedCount); err != nil {
 			continue
 		}
-		if externalID.Valid {
-			c.ExternalID = externalID.String
-		}
+		c.ExternalID = database.StringFromNull(externalID, "")
 		if rawData.Valid {
 			c.RawData = json.RawMessage(rawData.String)
 		}
@@ -247,9 +245,7 @@ func (s *Service) handleGetClient(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if externalID.Valid {
-		c.ExternalID = externalID.String
-	}
+	c.ExternalID = database.StringFromNull(externalID, "")
 
 	// Get ACL rules for this client
 	rules := s.getClientACLRules(c.ID)

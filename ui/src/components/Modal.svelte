@@ -17,10 +17,9 @@
   } = $props()
 
   const sizes = {
-    sm: 'max-w-[400px]',
-    md: 'max-w-[500px]',
-    lg: 'max-w-[650px]',
-    xl: 'max-w-[800px]'
+    sm: 'max-w-md',   // 448px
+    md: 'max-w-xl',   // 576px
+    lg: 'max-w-2xl'   // 672px
   }
 
   let modalElement = $state(null)
@@ -93,7 +92,7 @@
   data-kt-modal-backdrop-static="true"
   onclick={(e) => { if (e.target === modalElement) handleClose() }}
 >
-  <div class="kt-modal-content {sizes[size]} top-[5%]">
+  <div class="kt-modal-content w-full {sizes[size]} top-[5%]">
     <div class="kt-modal-header {headerClass}">
       {#if header}
         {@render header()}

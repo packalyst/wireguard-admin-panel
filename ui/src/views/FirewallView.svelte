@@ -180,8 +180,8 @@
       if (status?.sshPort) {
         sshPort = status.sshPort
       }
-    } catch (e) {
-      console.error('Failed to load status:', e)
+    } catch {
+      // Ignore errors
     } finally {
       loading = false
     }

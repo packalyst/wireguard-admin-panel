@@ -4,6 +4,7 @@
   import { subscribe, unsubscribe, nodesUpdatedStore } from '../stores/websocket.js'
   import { loadState, saveState, copyWithToast } from '../stores/helpers.js'
   import { formatDate, timeAgo } from '$lib/utils/format.js'
+  import { useDataLoader } from '$lib/composables/index.js'
   import Icon from '../components/Icon.svelte'
   import Badge from '../components/Badge.svelte'
   import Modal from '../components/Modal.svelte'
@@ -17,11 +18,22 @@
 
   let { loading = $bindable(true) } = $props()
 
+  // Multi-source data loading
+  const loader = useDataLoader([
+    { fn: () => apiGet('/api/vpn/clients'), key: 'clients', isArray: true },
+    { fn: () => apiGet('/api/hs/routes'), key: 'routes', extract: 'routes', isArray: true }
+  ])
+
+  const vpnClients = $derived(loader.data.clients || [])
+  const routes = $derived(loader.data.routes || [])
+
+  // Sync loading state to parent
+  $effect(() => { loading = loader.loading })
+
   // VPN Router state (minimal - for Access tab visibility)
   let routerRunning = $state(false)
 
   // ACL state
-  let vpnClients = $state([])
   let selectedVpnClient = $state(null)
   let aclPolicy = $state('selected')
   let allowedClientIds = $state([])
@@ -30,8 +42,6 @@
   let aclSyncing = $state(false)
   let hasDNS = $state(false)
 
-  let routes = $state([])
-
   // React to WebSocket nodes_updated notifications
   // The store is a counter that increments on each notification
   let lastNodesUpdate = 0
@@ -39,24 +49,9 @@
     const updateCount = $nodesUpdatedStore
     if (updateCount > lastNodesUpdate) {
       lastNodesUpdate = updateCount
-      loadData()
+      loader.reload()
     }
   })
-
-  async function loadData() {
-    try {
-      const [clientsRes, routesRes] = await Promise.all([
-        apiGet('/api/vpn/clients'),
-        apiGet('/api/hs/routes')
-      ])
-      vpnClients = Array.isArray(clientsRes) ? clientsRes : []
-      routes = routesRes.routes || []
-    } catch (e) {
-      toast('Failed to load nodes: ' + e.message, 'error')
-    } finally {
-      loading = false
-    }
-  }
 
   async function checkRouterStatus() {
     try {
@@ -67,11 +62,11 @@
     }
   }
 
-  // ACL functions - sync now happens automatically on loadData via /api/vpn/clients
+  // ACL functions - sync now happens automatically on loader.reload via /api/vpn/clients
   async function syncVpnClients() {
     aclSyncing = true
     try {
-      await loadData()
+      await loader.reload()
       toast('VPN clients synced', 'success')
     } catch (e) {
       toast('Failed to sync clients: ' + e.message, 'error')
@@ -117,7 +112,7 @@
       await apiPost('/api/vpn/apply')
       toast('Access rules saved and applied', 'success')
       // Reload data to refresh client list and ACL states
-      await loadData()
+      await loader.reload()
       // Reload current client's ACL data
       if (selectedNode?._ip) {
         await loadVpnClientByIp(selectedNode._ip)
@@ -157,7 +152,6 @@
   }
 
   onMount(() => {
-    loadData()
     checkRouterStatus()
     subscribe('nodes_updated')
   })
@@ -375,7 +369,7 @@
       }
       toast('Node renamed', 'success')
       editingName = false
-      loadData()
+      loader.reload()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
     }
@@ -388,7 +382,7 @@
       await apiPut(`/api/hs/nodes/${selectedNode.id}/tags`, { tags })
       toast('Tags updated', 'success')
       editingTags = false
-      loadData()
+      loader.reload()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
     }
@@ -405,7 +399,7 @@
       }
       toast('Node deleted', 'success')
       closeModal()
-      loadData()
+      loader.reload()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
     } finally {
@@ -421,7 +415,7 @@
       await apiPost(`/api/hs/nodes/${selectedNode.id}/expire`)
       toast('Node key expired', 'success')
       confirmAction = null
-      loadData()
+      loader.reload()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
     } finally {
@@ -437,7 +431,7 @@
       toast(newState ? 'Peer enabled' : 'Peer disabled', 'success')
       // Update selectedNode immediately for UI feedback
       selectedNode = { ...selectedNode, enabled: newState }
-      loadData()
+      loader.reload()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
     }
@@ -449,7 +443,7 @@
       const data = await apiPost('/api/wg/peers', { name: newPeerName })
       createdPeer = data
       toast('Peer created', 'success')
-      loadData()
+      loader.reload()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
     }
@@ -476,8 +470,7 @@
     if (!selectedNode) return
     try {
       const config = await apiGetText(`/api/wg/peers/${selectedNode._wgId}/config?mode=${tunnelMode}`)
-      await navigator.clipboard.writeText(config)
-      toast('Configuration copied', 'success')
+      copyToClipboard(config)
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
     }

@@ -198,9 +198,7 @@ func (s *Service) Login(username, password, totpCode, ipAddress, userAgent strin
 	if err != nil {
 		return nil, fmt.Errorf("failed to query user: %v", err)
 	}
-	if lastLogin.Valid {
-		user.LastLogin = lastLogin.Time
-	}
+	user.LastLogin = database.TimeFromNull(lastLogin, time.Time{})
 
 	// Verify password
 	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password)); err != nil {
@@ -273,9 +271,7 @@ func (s *Service) ValidateSession(token string) (*User, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to validate session: %v", err)
 	}
-	if lastLogin.Valid {
-		user.LastLogin = lastLogin.Time
-	}
+	user.LastLogin = database.TimeFromNull(lastLogin, time.Time{})
 
 	// Update session activity (only if > 1 minute since last update)
 	go s.updateSessionActivity(token)

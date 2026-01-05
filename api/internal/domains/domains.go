@@ -91,15 +91,10 @@ func ApplyRoutes() error {
 		}
 
 		// Set access mode (default to vpn for backwards compatibility)
-		rc.AccessMode = "vpn"
-		if accessMode.Valid && accessMode.String != "" {
-			rc.AccessMode = accessMode.String
-		}
+		rc.AccessMode = database.StringFromNullNotEmpty(accessMode, "vpn")
 
 		// Set frontend SSL
-		if frontendSSL.Valid {
-			rc.FrontendSSL = frontendSSL.Bool
-		}
+		rc.FrontendSSL = database.BoolFromNull(frontendSSL, false)
 
 		// Auto-add vpn-only middleware for VPN access mode
 		if rc.AccessMode == "vpn" {
@@ -223,14 +218,9 @@ func (s *Service) handleList(w http.ResponseWriter, r *http.Request) {
 			route.Middlewares = []string{}
 		}
 		// Set access mode (default vpn)
-		route.AccessMode = "vpn"
-		if accessMode.Valid && accessMode.String != "" {
-			route.AccessMode = accessMode.String
-		}
+		route.AccessMode = database.StringFromNullNotEmpty(accessMode, "vpn")
 		// Set frontend SSL
-		if frontendSSL.Valid {
-			route.FrontendSSL = frontendSSL.Bool
-		}
+		route.FrontendSSL = database.BoolFromNull(frontendSSL, false)
 		routes = append(routes, route)
 	}
 
@@ -288,14 +278,9 @@ func (s *Service) handleGet(w http.ResponseWriter, r *http.Request) {
 		route.Middlewares = []string{}
 	}
 	// Set access mode (default vpn)
-	route.AccessMode = "vpn"
-	if accessMode.Valid && accessMode.String != "" {
-		route.AccessMode = accessMode.String
-	}
+	route.AccessMode = database.StringFromNullNotEmpty(accessMode, "vpn")
 	// Set frontend SSL
-	if frontendSSL.Valid {
-		route.FrontendSSL = frontendSSL.Bool
-	}
+	route.FrontendSSL = database.BoolFromNull(frontendSSL, false)
 
 	router.JSON(w, route)
 }
@@ -449,10 +434,7 @@ func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "route not found", http.StatusNotFound)
 		return
 	}
-	oldMode := "vpn"
-	if oldAccessMode.Valid && oldAccessMode.String != "" {
-		oldMode = oldAccessMode.String
-	}
+	oldMode := database.StringFromNullNotEmpty(oldAccessMode, "vpn")
 
 	// Determine if we need to delete old AdGuard entry
 	needsAdGuardCleanup := false
@@ -575,10 +557,7 @@ func (s *Service) handleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Step 1: Delete AdGuard rewrite only for VPN mode routes
-	mode := "vpn"
-	if accessMode.Valid && accessMode.String != "" {
-		mode = accessMode.String
-	}
+	mode := database.StringFromNullNotEmpty(accessMode, "vpn")
 	if mode == "vpn" {
 		if err := adguard.DeleteDomainRewrite(domain, s.traefikIP); err != nil {
 			router.JSONError(w, "failed to delete DNS rewrite: "+err.Error(), http.StatusInternalServerError)

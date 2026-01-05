@@ -6,6 +6,8 @@ import (
 	"net"
 	"sort"
 	"strings"
+
+	"api/internal/database"
 )
 
 // FirewallTable builds the inet firewall table
@@ -128,9 +130,7 @@ func (t *FirewallTable) loadEntries() ([]FirewallEntry, error) {
 			log.Printf("nftables/firewall: scan error: %v", err)
 			continue
 		}
-		if expiresAt.Valid {
-			e.ExpiresAt = &expiresAt.Time
-		}
+		e.ExpiresAt = database.TimePointerFromNull(expiresAt)
 		entries = append(entries, e)
 	}
 

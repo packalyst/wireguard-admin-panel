@@ -74,8 +74,8 @@
       }
       // Check if AdGuard password needs to be configured
       showAdguardBanner = !setupStatus.adguardPassChanged
-    } catch (e) {
-      console.error('Setup check failed:', e)
+    } catch {
+      // Ignore errors
     }
 
     // Setup is complete, check for existing session

@@ -44,26 +44,6 @@ func ValidateIP(ip string) error {
 	return nil
 }
 
-// ValidateIPv4 validates specifically an IPv4 address
-func ValidateIPv4(ip string) error {
-	if ip == "" {
-		return &ValidationError{Field: "ip", Message: "IP address is required"}
-	}
-
-	ip = strings.TrimSpace(ip)
-	parsed := net.ParseIP(ip)
-	if parsed == nil {
-		return &ValidationError{Field: "ip", Message: "invalid IP address format"}
-	}
-
-	// Check if it's IPv4 (To4() returns nil for IPv6)
-	if parsed.To4() == nil {
-		return &ValidationError{Field: "ip", Message: "must be an IPv4 address"}
-	}
-
-	return nil
-}
-
 // ValidatePort validates a port number (1-65535)
 func ValidatePort(port int) error {
 	if port < 1 || port > 65535 {
@@ -129,39 +109,6 @@ func ValidateDomain(domain string) error {
 	return nil
 }
 
-// ValidateHostname validates a simple hostname (single label, no dots)
-func ValidateHostname(hostname string) error {
-	if hostname == "" {
-		return &ValidationError{Field: "hostname", Message: "hostname is required"}
-	}
-
-	hostname = strings.TrimSpace(hostname)
-
-	if len(hostname) > 63 {
-		return &ValidationError{Field: "hostname", Message: "hostname too long (max 63 characters)"}
-	}
-
-	if !hostnameRegex.MatchString(hostname) {
-		return &ValidationError{Field: "hostname", Message: "invalid hostname format (use alphanumeric and hyphens)"}
-	}
-
-	return nil
-}
-
-// ValidatePortRange validates a port range
-func ValidatePortRange(start, end int) error {
-	if err := ValidatePort(start); err != nil {
-		return &ValidationError{Field: "port_start", Message: "start port must be between 1 and 65535"}
-	}
-	if err := ValidatePort(end); err != nil {
-		return &ValidationError{Field: "port_end", Message: "end port must be between 1 and 65535"}
-	}
-	if start > end {
-		return &ValidationError{Field: "port_range", Message: "start port must be less than or equal to end port"}
-	}
-	return nil
-}
-
 // ValidateCIDR validates a CIDR notation (e.g., 192.168.1.0/24)
 func ValidateCIDR(cidr string) error {
 	if cidr == "" {
@@ -183,6 +130,33 @@ func IsPrivateIP(ip string) bool {
 		return false
 	}
 	return parsed.IsPrivate() || parsed.IsLoopback() || parsed.IsLinkLocalUnicast()
+}
+
+// IsPrivateIPOrCIDR checks if an IP or CIDR is in a private range
+// Handles both single IPs (192.168.1.1) and CIDR notation (192.168.1.0/24)
+func IsPrivateIPOrCIDR(input string) bool {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return false
+	}
+
+	var ip net.IP
+	if strings.Contains(input, "/") {
+		// Parse as CIDR - check the network address
+		parsedIP, _, err := net.ParseCIDR(input)
+		if err != nil {
+			return false
+		}
+		ip = parsedIP
+	} else {
+		// Parse as single IP
+		ip = net.ParseIP(input)
+		if ip == nil {
+			return false
+		}
+	}
+
+	return ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast()
 }
 
 // SanitizeDomainName creates a safe identifier from a domain name

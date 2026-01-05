@@ -6,6 +6,8 @@ import (
 	"net"
 	"strings"
 	"time"
+
+	"api/internal/helper"
 )
 
 // escapeLikePattern escapes SQL LIKE special characters to prevent wildcard injection
@@ -57,45 +59,10 @@ func getSubnet24(ip string) string {
 	return ""
 }
 
-// isIPInRange checks if an IP is within a CIDR range
-func isIPInRange(ip, cidr string) bool {
-	parsedIP := net.ParseIP(ip)
-	if parsedIP == nil {
-		return false
-	}
-	_, ipNet, err := net.ParseCIDR(cidr)
-	if err != nil {
-		return false
-	}
-	return ipNet.Contains(parsedIP)
-}
-
-// isPrivateRange checks if a CIDR is in private IP space
-func isPrivateRange(cidr string) bool {
-	ip, _, err := net.ParseCIDR(cidr)
-	if err != nil {
-		// Try as single IP
-		ip = net.ParseIP(cidr)
-		if ip == nil {
-			return false
-		}
-	}
-
-	privateRanges := []string{
-		"10.0.0.0/8",
-		"172.16.0.0/12",
-		"192.168.0.0/16",
-		"127.0.0.0/8",
-		"100.64.0.0/10", // CGNAT/Tailscale
-	}
-
-	for _, pr := range privateRanges {
-		_, prNet, _ := net.ParseCIDR(pr)
-		if prNet.Contains(ip) {
-			return true
-		}
-	}
-	return false
+// isPrivateRange checks if an IP or CIDR is in private IP space
+// Uses helper.IsPrivateIPOrCIDR for consistent behavior across packages
+func isPrivateRange(input string) bool {
+	return helper.IsPrivateIPOrCIDR(input)
 }
 
 // isIgnoredIP checks if an IP should be ignored

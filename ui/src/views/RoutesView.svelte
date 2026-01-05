@@ -1,6 +1,7 @@
 <script>
-  import { onMount } from 'svelte'
   import { toast, apiGet, apiPost, apiDelete, confirm, setConfirmLoading } from '../stores/app.js'
+  import { useDataLoader } from '$lib/composables/index.js'
+  import { filterByFields } from '$lib/utils/data.js'
   import Icon from '../components/Icon.svelte'
   import Badge from '../components/Badge.svelte'
   import Button from '../components/Button.svelte'
@@ -11,27 +12,17 @@
 
   let { loading = $bindable(true) } = $props()
 
-  let routes = $state([])
-  let nodes = $state([])
+  // Multi-source data loading
+  const loader = useDataLoader([
+    { fn: () => apiGet('/api/hs/routes'), key: 'routes', extract: 'routes', isArray: true },
+    { fn: () => apiGet('/api/hs/nodes'), key: 'nodes', extract: 'nodes', isArray: true }
+  ])
 
-  async function loadData() {
-    try {
-      const [routesRes, nodesRes] = await Promise.all([
-        apiGet('/api/hs/routes'),
-        apiGet('/api/hs/nodes')
-      ])
-      routes = routesRes.routes || []
-      nodes = nodesRes.nodes || []
-    } catch (e) {
-      toast('Failed to load routes: ' + e.message, 'error')
-    } finally {
-      loading = false
-    }
-  }
+  const routes = $derived(loader.data.routes || [])
+  const nodes = $derived(loader.data.nodes || [])
 
-  onMount(() => {
-    loadData()
-  })
+  // Sync loading state to parent
+  $effect(() => { loading = loader.loading })
 
   let searchQuery = $state('')
 
@@ -102,7 +93,7 @@
       const action = route.enabled ? 'disable' : 'enable'
       await apiPost(`/api/hs/routes/${route.id}/${action}`)
       toast(`Route ${route.enabled ? 'disabled' : 'enabled'}`, 'success')
-      loadData()
+      loader.reload()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
     }
@@ -137,7 +128,7 @@
         await apiDelete(`/api/hs/routes/${route.id}`)
       }
       toast('Route deleted', 'success')
-      loadData()
+      loader.reload()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
     } finally {
