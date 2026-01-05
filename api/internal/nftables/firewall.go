@@ -21,7 +21,7 @@ func NewFirewallTable(db *sql.DB, countryProvider CountryZonesProvider) *Firewal
 	return &FirewallTable{db: db, countryProvider: countryProvider}
 }
 
-func (t *FirewallTable) Name() string     { return "firewall" }
+func (t *FirewallTable) Name() string     { return "wgadmin_firewall" }
 func (t *FirewallTable) Family() string   { return "inet" }
 func (t *FirewallTable) Priority() int    { return 10 }
 
@@ -226,7 +226,7 @@ func (t *FirewallTable) cleanOverlappingRanges() int {
 func (t *FirewallTable) buildScript(blockedIPsIn, blockedIPsOut, blockedRangesIn, blockedRangesOut, tcpPorts, udpPorts, countryIn, countryOut []string) string {
 	var sb strings.Builder
 
-	sb.WriteString(TableHeader("inet", "firewall"))
+	sb.WriteString(TableHeader("inet", "wgadmin_firewall"))
 
 	// Sets - inbound
 	sb.WriteString(BuildSet("blocked_ips", "ipv4_addr", nil, blockedIPsIn))

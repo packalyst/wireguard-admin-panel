@@ -489,7 +489,8 @@
   <Toolbar bind:search placeholder="Search nodes by name, IP or user...">
     <!-- Mobile: Filter dropdown button -->
     <div class="relative sm:hidden">
-      <span
+      <button
+        type="button"
         onclick={() => showFiltersDropdown = !showFiltersDropdown}
         class="kt-badge kt-badge-outline kt-badge-secondary cursor-pointer"
       >
@@ -498,19 +499,19 @@
         {#if statusFilter !== 'all' || typeFilter !== 'all'}
           <span class="kt-badge kt-badge-xs kt-badge-primary">{(statusFilter !== 'all' ? 1 : 0) + (typeFilter !== 'all' ? 1 : 0)}</span>
         {/if}
-      </span>
+      </button>
 
       {#if showFiltersDropdown}
         <div class="absolute right-0 top-full z-20 mt-2 w-48 rounded-lg border border-border bg-card p-2 shadow-lg">
           <div class="mb-2 text-[10px] font-medium uppercase text-muted-foreground">Status</div>
-          <span onclick={() => { statusFilter = 'all'; typeFilter = 'all' }} class="kt-badge kt-badge-outline {statusFilter === 'all' && typeFilter === 'all' ? 'kt-badge-primary' : 'kt-badge-secondary'} w-full justify-center mb-1 cursor-pointer">All ({allNodes.length})</span>
-          <span onclick={() => statusFilter = 'online'} class="kt-badge kt-badge-outline {statusFilter === 'online' ? 'kt-badge-success' : 'kt-badge-secondary'} w-full justify-center mb-1 cursor-pointer">Online</span>
-          <span onclick={() => statusFilter = 'offline'} class="kt-badge kt-badge-outline {statusFilter === 'offline' ? 'kt-badge-warning' : 'kt-badge-secondary'} w-full justify-center mb-1 cursor-pointer">Offline</span>
+          <button type="button" onclick={() => { statusFilter = 'all'; typeFilter = 'all' }} class="kt-badge kt-badge-outline {statusFilter === 'all' && typeFilter === 'all' ? 'kt-badge-primary' : 'kt-badge-secondary'} w-full justify-center mb-1 cursor-pointer">All ({allNodes.length})</button>
+          <button type="button" onclick={() => statusFilter = 'online'} class="kt-badge kt-badge-outline {statusFilter === 'online' ? 'kt-badge-success' : 'kt-badge-secondary'} w-full justify-center mb-1 cursor-pointer">Online</button>
+          <button type="button" onclick={() => statusFilter = 'offline'} class="kt-badge kt-badge-outline {statusFilter === 'offline' ? 'kt-badge-warning' : 'kt-badge-secondary'} w-full justify-center mb-1 cursor-pointer">Offline</button>
 
           <div class="my-2 border-t border-border"></div>
           <div class="mb-2 text-[10px] font-medium uppercase text-muted-foreground">Type</div>
-          <span onclick={() => typeFilter = 'tailscale'} class="kt-badge kt-badge-outline {typeFilter === 'tailscale' ? 'kt-badge-info' : 'kt-badge-secondary'} w-full justify-center mb-1 cursor-pointer"><Icon name="cloud" size={12} /> Tailscale ({vpnClients.filter(c => c.type === 'headscale').length})</span>
-          <span onclick={() => typeFilter = 'wireguard'} class="kt-badge kt-badge-outline {typeFilter === 'wireguard' ? 'kt-badge-success' : 'kt-badge-secondary'} w-full justify-center cursor-pointer"><Icon name="shield" size={12} /> WireGuard ({vpnClients.filter(c => c.type === 'wireguard').length})</span>
+          <button type="button" onclick={() => typeFilter = 'tailscale'} class="kt-badge kt-badge-outline {typeFilter === 'tailscale' ? 'kt-badge-info' : 'kt-badge-secondary'} w-full justify-center mb-1 cursor-pointer"><Icon name="cloud" size={12} /> Tailscale ({vpnClients.filter(c => c.type === 'headscale').length})</button>
+          <button type="button" onclick={() => typeFilter = 'wireguard'} class="kt-badge kt-badge-outline {typeFilter === 'wireguard' ? 'kt-badge-success' : 'kt-badge-secondary'} w-full justify-center cursor-pointer"><Icon name="shield" size={12} /> WireGuard ({vpnClients.filter(c => c.type === 'wireguard').length})</button>
         </div>
       {/if}
     </div>
@@ -518,47 +519,52 @@
     <!-- Desktop: Filter badges -->
     <div class="hidden flex-wrap items-center gap-2 sm:flex">
       <!-- All / Reset -->
-      <span
+      <button
+        type="button"
         onclick={() => { statusFilter = 'all'; typeFilter = 'all' }}
         class="kt-badge kt-badge-outline {statusFilter === 'all' && typeFilter === 'all' ? 'kt-badge-primary' : 'kt-badge-secondary'} cursor-pointer"
       >
         All
         <span class="kt-badge kt-badge-xs kt-badge-primary">{allNodes.length}</span>
-      </span>
+      </button>
 
       <!-- Status filters -->
-      <span
+      <button
+        type="button"
         onclick={() => statusFilter = statusFilter === 'online' ? 'all' : 'online'}
         class="kt-badge kt-badge-outline {statusFilter === 'online' ? 'kt-badge-success' : 'kt-badge-secondary'} cursor-pointer"
       >
         Online
-      </span>
-      <span
+      </button>
+      <button
+        type="button"
         onclick={() => statusFilter = statusFilter === 'offline' ? 'all' : 'offline'}
         class="kt-badge kt-badge-outline {statusFilter === 'offline' ? 'kt-badge-warning' : 'kt-badge-secondary'} cursor-pointer"
       >
         Offline
-      </span>
+      </button>
 
       <span class="mx-1 h-4 w-px bg-border"></span>
 
       <!-- Type filters -->
-      <span
+      <button
+        type="button"
         onclick={() => typeFilter = typeFilter === 'tailscale' ? 'all' : 'tailscale'}
         class="kt-badge kt-badge-outline {typeFilter === 'tailscale' ? 'kt-badge-info' : 'kt-badge-secondary'} cursor-pointer"
       >
         <Icon name="cloud" size={14} />
         Tailscale
         <span class="kt-badge kt-badge-xs kt-badge-info">{vpnClients.filter(c => c.type === 'headscale').length}</span>
-      </span>
-      <span
+      </button>
+      <button
+        type="button"
         onclick={() => typeFilter = typeFilter === 'wireguard' ? 'all' : 'wireguard'}
         class="kt-badge kt-badge-outline {typeFilter === 'wireguard' ? 'kt-badge-success' : 'kt-badge-secondary'} cursor-pointer"
       >
         <Icon name="shield" size={14} />
         WireGuard
         <span class="kt-badge kt-badge-xs kt-badge-success">{vpnClients.filter(c => c.type === 'wireguard').length}</span>
-      </span>
+      </button>
     </div>
   </Toolbar>
 
@@ -566,8 +572,11 @@
   <div class="mt-4 grid-cards">
     {#each filteredNodes as node (node.id)}
       {@const isKeyExpired = node._type === 'tailscale' && node.expiry && !node.expiry.startsWith('0001') && new Date(node.expiry) < new Date()}
-      <article
+      <div
         onclick={() => selectNode(node)}
+        onkeydown={(e) => e.key === 'Enter' && selectNode(node)}
+        role="button"
+        tabindex="0"
         class="group flex cursor-pointer flex-col rounded-lg border shadow-sm transition hover:shadow-md bg-card
           {node._online
             ? 'border-success/30'
@@ -667,13 +676,16 @@
             <span class="text-[10px] text-muted-foreground">No tags</span>
           {/if}
         </div>
-      </article>
+      </div>
     {/each}
 
     <!-- Add node card -->
     {#if filteredNodes.length > 0}
-      <article
+      <div
         onclick={() => { showCreateModal = true; newPeerName = ''; createdPeer = null }}
+        onkeydown={(e) => e.key === 'Enter' && (showCreateModal = true, newPeerName = '', createdPeer = null)}
+        role="button"
+        tabindex="0"
         class="add-item-card"
       >
         <div class="flex h-8 w-8 items-center justify-center rounded-full bg-secondary text-foreground">
@@ -683,7 +695,7 @@
         <p class="max-w-[200px] text-muted-foreground">
           Create new WireGuard peers. For Tailscale, <a href="/authkeys" onclick={(e) => e.stopPropagation()} class="text-primary hover:underline">create auth keys</a>
         </p>
-      </article>
+      </div>
     {/if}
   </div>
 
@@ -936,7 +948,7 @@
                           {/if}
                         </button>
                         <!-- Client info -->
-                        <div class="flex-1 min-w-0" onclick={() => toggleAllowedClient(client.id)}>
+                        <div class="flex-1 min-w-0" onclick={() => toggleAllowedClient(client.id)} onkeydown={(e) => e.key === 'Enter' && toggleAllowedClient(client.id)} role="button" tabindex="0">
                           <div class="text-sm font-medium text-foreground truncate cursor-pointer">{client.name}</div>
                           <div class="text-[10px] text-muted-foreground">{client.ip} • {client.type === 'wireguard' ? 'WG' : 'TS'}</div>
                         </div>

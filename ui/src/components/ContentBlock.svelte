@@ -58,7 +58,7 @@
   }
 
   // Determine icon size based on variant and explicit prop
-  const computedIconSize = iconSize || (variant === 'row' && icon ? 20 : variant === 'box' && icon ? 18 : 16)
+  const computedIconSize = $derived(iconSize || (variant === 'row' && icon ? 20 : variant === 'box' && icon ? 18 : 16))
 </script>
 
 {#if variant === 'header'}

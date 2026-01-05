@@ -740,8 +740,8 @@ if [ "$DOCKER_RUNNING" = true ]; then
 
                 # Clean nftables tables created by the application
                 echo -e "${YELLOW}Cleaning nftables tables...${NC}"
-                sudo nft delete table inet firewall 2>/dev/null && echo -e "  ${GREEN}✓${NC} Removed inet firewall table" || true
-                sudo nft delete table inet vpn_acl 2>/dev/null && echo -e "  ${GREEN}✓${NC} Removed inet vpn_acl table" || true
+                sudo nft delete table inet wgadmin_firewall 2>/dev/null && echo -e "  ${GREEN}✓${NC} Removed inet wgadmin_firewall table" || true
+                sudo nft delete table inet wgadmin_vpn_acl 2>/dev/null && echo -e "  ${GREEN}✓${NC} Removed inet wgadmin_vpn_acl table" || true
 
                 echo -e "${GREEN}✓ Everything cleaned${NC}"
             fi

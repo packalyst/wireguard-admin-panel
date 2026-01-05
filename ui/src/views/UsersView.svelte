@@ -257,8 +257,11 @@
       {/each}
 
       <!-- Add user card -->
-      <article
+      <div
         onclick={() => showCreateModal = true}
+        onkeydown={(e) => e.key === 'Enter' && (showCreateModal = true)}
+        role="button"
+        tabindex="0"
         class="add-item-card"
       >
         <div class="flex h-8 w-8 items-center justify-center rounded-full bg-secondary text-foreground">
@@ -268,7 +271,7 @@
         <p class="max-w-[200px] text-muted-foreground">
           Create users to organize nodes and generate auth keys
         </p>
-      </article>
+      </div>
     </div>
   {:else if users.length > 0}
     <EmptyState
@@ -313,7 +316,7 @@
   {#if editingUser}
     <div class="space-y-6">
       <div>
-        <label class="kt-label">Color</label>
+        <span class="kt-label">Color</span>
         <div class="grid grid-cols-8 gap-2">
           {#each colors as color}
             <button
@@ -321,13 +324,14 @@
               onclick={() => selectedColor = color}
               class="w-8 h-8 rounded-full transition-transform hover:scale-110 {selectedColor === color ? 'ring-2 ring-offset-2 ring-primary ring-offset-card' : ''}"
               style="background-color: {color}"
+              aria-label="Select color {color}"
             ></button>
           {/each}
         </div>
       </div>
 
       <div>
-        <label class="kt-label">Avatar (optional)</label>
+        <span class="kt-label">Avatar (optional)</span>
         <div class="grid grid-cols-8 gap-2">
           <button
             type="button"
@@ -350,7 +354,7 @@
       </div>
 
       <div>
-        <label class="kt-label">Preview</label>
+        <span class="kt-label">Preview</span>
         <div class="flex items-center gap-3 p-3 bg-muted/50 rounded-lg">
           <div
             class="w-12 h-12 rounded-full flex items-center justify-center text-xl font-medium text-white"

@@ -610,7 +610,7 @@
 
     <!-- Access Mode -->
     <div>
-      <label class="text-sm font-medium text-foreground">Access Mode</label>
+      <span class="text-sm font-medium text-foreground">Access Mode</span>
       <div class="mt-2 flex gap-2">
         <Checkbox
           variant="chip"
@@ -632,7 +632,7 @@
 
     {#if availableMiddlewares.length > 0}
       <div>
-        <label class="text-sm font-medium text-foreground">Middlewares</label>
+        <span class="text-sm font-medium text-foreground">Middlewares</span>
         <div class="mt-2 flex flex-wrap gap-2">
           {#each availableMiddlewares as mw}
             <Checkbox

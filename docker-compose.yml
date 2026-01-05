@@ -43,7 +43,7 @@ services:
   # TRAEFIK - Reverse Proxy with API & Dashboard
   # ============================================
   traefik:
-    image: traefik:v3.5
+    image: traefik:v3.6
     container_name: traefik
     restart: unless-stopped
     ports:
@@ -68,7 +68,7 @@ services:
   # HEADSCALE - VPN Control Server (for Tailscale clients)
   # ============================================
   headscale:
-    image: headscale/headscale:0.23
+    image: headscale/headscale:0.27
     container_name: headscale
     restart: unless-stopped
     command: serve

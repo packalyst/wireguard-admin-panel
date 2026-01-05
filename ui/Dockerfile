@@ -1,5 +1,5 @@
 # Production build stage
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 WORKDIR /app
 COPY package.json ./
 RUN npm install
@@ -14,7 +14,7 @@ EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
 
 # Development stage - Vite dev server with hot reload
-FROM node:20-alpine AS development
+FROM node:22-alpine AS development
 WORKDIR /app
 COPY package.json ./
 RUN npm install

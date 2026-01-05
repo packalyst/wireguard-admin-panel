@@ -90,6 +90,7 @@
   data-kt-modal="true"
   data-kt-modal-backdrop="true"
   data-kt-modal-backdrop-static="true"
+  role="presentation"
   onclick={(e) => { if (e.target === modalElement) handleClose() }}
 >
   <div class="kt-modal-content w-full {sizes[size]} top-[5%]">

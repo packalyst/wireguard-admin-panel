@@ -197,14 +197,14 @@ func (s *Service) CountSetElements(family, table, setName string) int {
 // GetFirewallSetCounts returns element counts for all firewall sets
 func (s *Service) GetFirewallSetCounts() map[string]int {
 	return map[string]int{
-		"blocked_ips":           s.CountSetElements("inet", "firewall", "blocked_ips"),
-		"blocked_ranges":        s.CountSetElements("inet", "firewall", "blocked_ranges"),
-		"blocked_countries":     s.CountSetElements("inet", "firewall", "blocked_countries"),
-		"blocked_ips_out":       s.CountSetElements("inet", "firewall", "blocked_ips_out"),
-		"blocked_ranges_out":    s.CountSetElements("inet", "firewall", "blocked_ranges_out"),
-		"blocked_countries_out": s.CountSetElements("inet", "firewall", "blocked_countries_out"),
-		"allowed_tcp_ports":     s.CountSetElements("inet", "firewall", "allowed_tcp_ports"),
-		"allowed_udp_ports":     s.CountSetElements("inet", "firewall", "allowed_udp_ports"),
+		"blocked_ips":           s.CountSetElements("inet", "wgadmin_firewall", "blocked_ips"),
+		"blocked_ranges":        s.CountSetElements("inet", "wgadmin_firewall", "blocked_ranges"),
+		"blocked_countries":     s.CountSetElements("inet", "wgadmin_firewall", "blocked_countries"),
+		"blocked_ips_out":       s.CountSetElements("inet", "wgadmin_firewall", "blocked_ips_out"),
+		"blocked_ranges_out":    s.CountSetElements("inet", "wgadmin_firewall", "blocked_ranges_out"),
+		"blocked_countries_out": s.CountSetElements("inet", "wgadmin_firewall", "blocked_countries_out"),
+		"allowed_tcp_ports":     s.CountSetElements("inet", "wgadmin_firewall", "allowed_tcp_ports"),
+		"allowed_udp_ports":     s.CountSetElements("inet", "wgadmin_firewall", "allowed_udp_ports"),
 	}
 }
 

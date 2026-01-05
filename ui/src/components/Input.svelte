@@ -60,8 +60,8 @@
   let passwordVisible = $state(false);
 
   // Auto-detect password toggle: enabled by default for password fields unless explicitly disabled
-  const isPasswordField = type === 'password';
-  const hasPasswordToggle = showPasswordToggle ?? isPasswordField;
+  const isPasswordField = $derived(type === 'password');
+  const hasPasswordToggle = $derived(showPasswordToggle ?? isPasswordField);
 
   // Compute actual input type (toggle between password and text)
   const actualType = $derived(isPasswordField && passwordVisible ? 'text' : type);
@@ -77,20 +77,20 @@
     lg: { input: 'kt-input-lg', addon: 'kt-input-addon-lg', btn: 'lg' },
     default: { input: '', addon: '', btn: 'sm' }
   };
-  const sizeConfig = sizeClasses[size] || sizeClasses.sm;
-  const sizeClass = sizeConfig.input;
-  const addonSizeClass = sizeConfig.addon;
-  const btnSize = sizeConfig.btn;
+  const sizeConfig = $derived(sizeClasses[size] || sizeClasses.sm);
+  const sizeClass = $derived(sizeConfig.input);
+  const addonSizeClass = $derived(sizeConfig.addon);
+  const btnSize = $derived(sizeConfig.btn);
 
   // Normalize checkbox props
-  const prefixCheckboxProps = prefixCheckbox === true ? {} : prefixCheckbox;
-  const suffixCheckboxProps = suffixCheckbox === true ? {} : suffixCheckbox;
+  const prefixCheckboxProps = $derived(prefixCheckbox === true ? {} : prefixCheckbox);
+  const suffixCheckboxProps = $derived(suffixCheckbox === true ? {} : suffixCheckbox);
 
   // Determine wrapper type - any prefix/suffix uses input-group
-  const hasInputGroup = prefixAddon || suffixAddon || prefixAddonIcon || suffixAddonIcon || prefixAddonBtn || suffixAddonBtn || prefixCheckbox || suffixCheckbox || prefixIconBtn || suffixIconBtn || prefixIcon || suffixIcon || hasPasswordToggle;
+  const hasInputGroup = $derived(prefixAddon || suffixAddon || prefixAddonIcon || suffixAddonIcon || prefixAddonBtn || suffixAddonBtn || prefixCheckbox || suffixCheckbox || prefixIconBtn || suffixIconBtn || prefixIcon || suffixIcon || hasPasswordToggle);
 
   // Whether input needs inner wrapper (has icons or icon buttons inside)
-  const hasInnerWrapper = prefixIcon || suffixIcon || suffixIconBtn || prefixIconBtn || hasPasswordToggle;
+  const hasInnerWrapper = $derived(prefixIcon || suffixIcon || suffixIconBtn || prefixIconBtn || hasPasswordToggle);
 </script>
 
 <!-- Reusable snippet for the input element -->

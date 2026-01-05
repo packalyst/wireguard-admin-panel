@@ -1694,7 +1694,7 @@
     <div class="border-t border-border pt-4 mt-4">
       <div class="flex items-center justify-between mb-3">
         <div>
-          <label class="kt-label mb-0">Auto-Escalation</label>
+          <span class="kt-label mb-0">Auto-Escalation</span>
           <p class="text-xs text-muted-foreground">Automatically block entire /24 range when threshold IPs are blocked</p>
         </div>
         <Checkbox variant="switch" bind:checked={jailForm.escalateEnabled} />

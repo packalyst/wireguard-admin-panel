@@ -396,7 +396,7 @@
       <ContentBlock variant="data" label="Secret key (manual entry)" value={twoFASetup.secret} copyable mono />
 
       <div>
-        <label class="block text-sm font-medium text-foreground mb-2">Verification Code</label>
+        <span class="block text-sm font-medium text-foreground mb-2">Verification Code</span>
         <OtpInput bind:value={twoFAVerifyCode} onComplete={enable2FA} />
       </div>
     </div>
@@ -424,7 +424,7 @@
     />
 
     <div>
-      <label class="block text-sm font-medium text-foreground mb-2">2FA Code</label>
+      <span class="block text-sm font-medium text-foreground mb-2">2FA Code</span>
       <OtpInput bind:value={twoFADisableForm.code} />
     </div>
   </div>

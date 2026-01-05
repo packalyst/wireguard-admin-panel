@@ -18,7 +18,7 @@ func NewVPNACLTable(db *sql.DB) *VPNACLTable {
 	return &VPNACLTable{db: db}
 }
 
-func (t *VPNACLTable) Name() string     { return "vpn_acl" }
+func (t *VPNACLTable) Name() string     { return "wgadmin_vpn_acl" }
 func (t *VPNACLTable) Family() string   { return "inet" }
 func (t *VPNACLTable) Priority() int    { return 20 }
 

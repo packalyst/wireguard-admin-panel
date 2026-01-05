@@ -447,7 +447,8 @@
       <div class:hidden={loading}>
         {#await views[$currentView]?.() then module}
           {#if module}
-            <svelte:component this={module.default} bind:loading {onLogout} />
+            {@const Component = module.default}
+            <Component bind:loading {onLogout} />
           {/if}
         {:catch error}
           <div class="flex h-64 flex-col items-center justify-center gap-3 text-muted-foreground">

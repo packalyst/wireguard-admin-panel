@@ -559,7 +559,7 @@
             />
           </div>
           <div>
-            <label class="block text-xs font-medium text-foreground mb-1">API Key</label>
+            <span class="block text-xs font-medium text-foreground mb-1">API Key</span>
             <div class="kt-input">
                 {#if headscaleHasKey}
                   <Icon name="check" size={14} class="text-success" />

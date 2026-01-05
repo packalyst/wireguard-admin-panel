@@ -166,8 +166,11 @@
       {/each}
 
       <!-- Add key card -->
-      <article
+      <div
         onclick={() => { showCreateModal = true; newKey = null }}
+        onkeydown={(e) => e.key === 'Enter' && (showCreateModal = true, newKey = null)}
+        role="button"
+        tabindex="0"
         class="add-item-card"
       >
         <div class="flex h-8 w-8 items-center justify-center rounded-full bg-secondary text-foreground">
@@ -177,7 +180,7 @@
         <p class="max-w-[200px] text-muted-foreground">
           Generate keys for programmatic access
         </p>
-      </article>
+      </div>
     </div>
   {:else if apiKeys.length > 0}
     <EmptyState
