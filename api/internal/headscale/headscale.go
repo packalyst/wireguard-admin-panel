@@ -105,8 +105,8 @@ type HeadscaleUser struct {
 	Name string `json:"name"`
 }
 
-// getUserIDByName looks up a user's ID by their name
-func getUserIDByName(name string) (string, error) {
+// GetUserIDByName looks up a Headscale user ID by name
+func GetUserIDByName(name string) (string, error) {
 	var result struct {
 		Users []HeadscaleUser `json:"users"`
 	}
@@ -143,7 +143,7 @@ func (s *Service) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Headscale 0.26+: Need to lookup user ID by name
-	userID, err := getUserIDByName(name)
+	userID, err := GetUserIDByName(name)
 	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusNotFound)
 		return
@@ -163,7 +163,7 @@ func (s *Service) handleRenameUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Headscale 0.26+: Need to lookup user ID by name
-	userID, err := getUserIDByName(parts[0])
+	userID, err := GetUserIDByName(parts[0])
 	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusNotFound)
 		return
@@ -474,7 +474,7 @@ func (s *Service) handleGetPreAuthKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Headscale 0.26+: Need to lookup user ID by name
-	userID, err := getUserIDByName(user)
+	userID, err := GetUserIDByName(user)
 	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusNotFound)
 		return
@@ -494,7 +494,7 @@ func (s *Service) handleCreatePreAuthKey(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Headscale 0.26+: Need to lookup user ID by name
-	userID, err := getUserIDByName(req.User)
+	userID, err := GetUserIDByName(req.User)
 	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusNotFound)
 		return
@@ -520,7 +520,7 @@ func (s *Service) handleExpirePreAuthKey(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Headscale 0.26+: Need to lookup user ID by name
-	userID, err := getUserIDByName(req.User)
+	userID, err := GetUserIDByName(req.User)
 	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusNotFound)
 		return

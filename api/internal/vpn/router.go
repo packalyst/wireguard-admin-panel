@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"api/internal/database"
+	"api/internal/headscale"
 	"api/internal/helper"
 	"api/internal/settings"
 )
@@ -331,22 +332,30 @@ func createHeadscaleUser(name string) error {
 
 	if resp.StatusCode != 200 && resp.StatusCode != 201 {
 		respBody, _ := io.ReadAll(resp.Body)
+		respStr := string(respBody)
 		// Check if user already exists (this is okay)
-		if strings.Contains(string(respBody), "already exists") {
+		// Headscale <0.27: "already exists", >=0.27: "UNIQUE constraint failed"
+		if strings.Contains(respStr, "already exists") || strings.Contains(respStr, "UNIQUE constraint failed") {
 			return nil // User exists, that's fine
 		}
-		return fmt.Errorf("failed to create user: %s", string(respBody))
+		return fmt.Errorf("failed to create user: %s", respStr)
 	}
 
 	return nil
 }
 
 func createPreAuthKey(user string) (string, error) {
+	// Headscale 0.27+: Need to lookup user ID by name
+	userID, err := headscale.GetUserIDByName(user)
+	if err != nil {
+		return "", fmt.Errorf("failed to get user ID: %v", err)
+	}
+
 	// Create a pre-auth key that expires in 1 hour (one-time use)
 	expiration := time.Now().Add(helper.PreAuthKeyExpiration).Format(time.RFC3339)
-	body := fmt.Sprintf(`{"user": "%s", "reusable": false, "ephemeral": false, "expiration": "%s"}`, user, expiration)
+	body := fmt.Sprintf(`{"user": %s, "reusable": false, "ephemeral": false, "expiration": "%s"}`, userID, expiration)
 
-	log.Printf("Creating pre-auth key for user %s, expiration: %s", user, expiration)
+	log.Printf("Creating pre-auth key for user %s (ID: %s), expiration: %s", user, userID, expiration)
 
 	resp, err := helper.HeadscalePost("/preauthkey", body)
 	if err != nil {
