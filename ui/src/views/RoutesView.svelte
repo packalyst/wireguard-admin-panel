@@ -91,7 +91,10 @@
   async function toggleRoute(route) {
     try {
       const action = route.enabled ? 'disable' : 'enable'
-      await apiPost(`/api/hs/routes/${route.id}/${action}`)
+      // Headscale 0.27+ requires nodeId and prefix for route operations
+      const nodeId = route.node?.id
+      const prefix = route.isExitNode ? (route.ipv4Route?.prefix || route.ipv6Route?.prefix || '0.0.0.0/0') : route.prefix
+      await apiPost(`/api/hs/routes/${route.id}/${action}`, { nodeId, prefix })
       toast(`Route ${route.enabled ? 'disabled' : 'enabled'}`, 'success')
       loader.reload()
     } catch (e) {
@@ -104,30 +107,31 @@
     const nodeName = route.node?.givenName || route.node?.name
 
     const confirmed = await confirm({
-      title: 'Delete Route',
+      title: 'Disable Route',
       message: isExit
-        ? `Remove Exit Node from ${nodeName}?`
-        : `Delete route ${route.prefix}?`,
+        ? `Disable Exit Node for ${nodeName}?`
+        : `Disable route ${route.prefix}?`,
       description: isExit
-        ? 'This will remove both IPv4 and IPv6 exit routes.'
-        : 'This action cannot be undone.'
+        ? 'This will disable both IPv4 and IPv6 exit routes. The node can re-advertise them.'
+        : 'This will unapprove the route. The node can re-advertise it.'
     })
     if (!confirmed) return
 
     setConfirmLoading(true)
     try {
-      // For combined exit nodes, delete both routes
+      const nodeId = route.node?.id
+      // For combined exit nodes, disable both routes (delete = unapprove in Headscale 0.27+)
       if (route.combined) {
         if (route.ipv4Route) {
-          await apiDelete(`/api/hs/routes/${route.ipv4Route.id}`)
+          await apiPost(`/api/hs/routes/${route.ipv4Route.id}/disable`, { nodeId, prefix: route.ipv4Route.prefix })
         }
         if (route.ipv6Route) {
-          await apiDelete(`/api/hs/routes/${route.ipv6Route.id}`)
+          await apiPost(`/api/hs/routes/${route.ipv6Route.id}/disable`, { nodeId, prefix: route.ipv6Route.prefix })
         }
       } else {
-        await apiDelete(`/api/hs/routes/${route.id}`)
+        await apiPost(`/api/hs/routes/${route.id}/disable`, { nodeId, prefix: route.prefix })
       }
-      toast('Route deleted', 'success')
+      toast('Route disabled', 'success')
       loader.reload()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')

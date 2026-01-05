@@ -121,53 +121,49 @@ func checkRouteEnabledWithInfo() (enabled bool, routerIP string, advertisedRoute
 	routerName := helper.GetRouterName()
 	wgIPRange := helper.GetEnv("WG_IP_RANGE")
 
-	// Get router node info for IP
+	// Headscale 0.27+: Routes are now part of node data
+	// Get all nodes with their route information
+	// Note: Headscale API uses snake_case for JSON fields
 	var nodeResult struct {
 		Nodes []struct {
-			Name        string   `json:"name"`
-			GivenName   string   `json:"givenName"`
-			IPAddresses []string `json:"ipAddresses"`
+			ID              string   `json:"id"`
+			Name            string   `json:"name"`
+			GivenName       string   `json:"givenName"`
+			IPAddresses     []string `json:"ipAddresses"`
+			ApprovedRoutes  []string `json:"approved_routes"`
+			AvailableRoutes []string `json:"available_routes"`
 		} `json:"nodes"`
 	}
-	if err := helper.HeadscaleGetJSON("/node", &nodeResult); err == nil {
-		for _, node := range nodeResult.Nodes {
-			name := node.GivenName
-			if name == "" {
-				name = node.Name
-			}
-			if name == routerName && len(node.IPAddresses) > 0 {
+	if err := helper.HeadscaleGetJSON("/node", &nodeResult); err != nil {
+		return false, "", ""
+	}
+
+	for _, node := range nodeResult.Nodes {
+		name := node.GivenName
+		if name == "" {
+			name = node.Name
+		}
+		if name == routerName {
+			// Found the router node
+			if len(node.IPAddresses) > 0 {
 				routerIP = node.IPAddresses[0]
-				break
 			}
-		}
-	}
 
-	// Get routes info
-	var routeResult struct {
-		Routes []struct {
-			ID      string `json:"id"`
-			Prefix  string `json:"prefix"`
-			Enabled bool   `json:"enabled"`
-			Node    struct {
-				Name      string `json:"name"`
-				GivenName string `json:"givenName"`
-			} `json:"node"`
-		} `json:"routes"`
-	}
-	if err := helper.HeadscaleGetJSON("/routes", &routeResult); err != nil {
-		return false, routerIP, ""
-	}
-
-	for _, route := range routeResult.Routes {
-		nodeName := route.Node.GivenName
-		if nodeName == "" {
-			nodeName = route.Node.Name
-		}
-		if nodeName == routerName && route.Prefix == wgIPRange {
-			advertisedRoute = route.Prefix
-			if route.Enabled {
-				return true, routerIP, advertisedRoute
+			// Check if WG IP range is in available routes (advertised)
+			for _, route := range node.AvailableRoutes {
+				if route == wgIPRange {
+					advertisedRoute = route
+					// Check if it's approved (enabled)
+					for _, approved := range node.ApprovedRoutes {
+						if approved == wgIPRange {
+							return true, routerIP, advertisedRoute
+						}
+					}
+					// Route is advertised but not approved
+					return false, routerIP, advertisedRoute
+				}
 			}
+			break
 		}
 	}
 
@@ -406,36 +402,57 @@ func findRouterNode() string {
 }
 
 func enableRouterRoute(nodeID string) error {
-	// Get routes for this node
-	var result struct {
-		Routes []struct {
-			ID      string `json:"id"`
-			Prefix  string `json:"prefix"`
-			Enabled bool   `json:"enabled"`
-		} `json:"routes"`
+	// Headscale 0.27+: Use approve_routes endpoint instead of /routes/{id}/enable
+	wgIPRange := helper.GetEnv("WG_IP_RANGE")
+
+	// Get current node info to see existing approved routes
+	// Note: Headscale API uses snake_case for JSON fields
+	var nodeResult struct {
+		Node struct {
+			ApprovedRoutes  []string `json:"approved_routes"`
+			AvailableRoutes []string `json:"available_routes"`
+		} `json:"node"`
 	}
-	if err := helper.HeadscaleGetJSON("/node/"+nodeID+"/routes", &result); err != nil {
+	if err := helper.HeadscaleGetJSON("/node/"+nodeID, &nodeResult); err != nil {
 		return err
 	}
 
-	wgIPRange := helper.GetEnv("WG_IP_RANGE")
+	// Check if the WG IP range is available (advertised by the node)
+	routeAvailable := false
+	for _, route := range nodeResult.Node.AvailableRoutes {
+		if route == wgIPRange {
+			routeAvailable = true
+			break
+		}
+	}
+	if !routeAvailable {
+		return fmt.Errorf("route %s not advertised by node", wgIPRange)
+	}
 
-	// Enable the WireGuard network route
-	for _, route := range result.Routes {
-		if route.Prefix == wgIPRange && !route.Enabled {
-			enableResp, err := helper.HeadscalePost("/routes/"+route.ID+"/enable", "")
-			if err != nil {
-				return err
-			}
-			enableResp.Body.Close()
-
-			if enableResp.StatusCode != 200 {
-				return fmt.Errorf("failed to enable route: status %d", enableResp.StatusCode)
-			}
-			log.Printf("Enabled route %s for %s", route.Prefix, helper.GetRouterName())
+	// Check if already approved
+	for _, route := range nodeResult.Node.ApprovedRoutes {
+		if route == wgIPRange {
+			log.Printf("Route %s already enabled for %s", wgIPRange, helper.GetRouterName())
+			return nil
 		}
 	}
 
+	// Add route to approved list
+	approvedRoutes := append(nodeResult.Node.ApprovedRoutes, wgIPRange)
+
+	// Call approve_routes endpoint
+	body, _ := json.Marshal(map[string][]string{"routes": approvedRoutes})
+	resp, err := helper.HeadscalePost("/node/"+nodeID+"/approve_routes", string(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("failed to approve route: status %d", resp.StatusCode)
+	}
+
+	log.Printf("Enabled route %s for %s", wgIPRange, helper.GetRouterName())
 	return nil
 }
 

@@ -2,6 +2,7 @@ package headscale
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -96,6 +97,29 @@ func (s *Service) proxyDelete(w http.ResponseWriter, path string) {
 }
 
 // --- Users ---
+// Headscale 0.26+ requires user ID instead of name for delete/rename operations
+
+// HeadscaleUser represents a user from the Headscale API
+type HeadscaleUser struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// getUserIDByName looks up a user's ID by their name
+func getUserIDByName(name string) (string, error) {
+	var result struct {
+		Users []HeadscaleUser `json:"users"`
+	}
+	if err := helper.HeadscaleGetJSON("/user", &result); err != nil {
+		return "", err
+	}
+	for _, user := range result.Users {
+		if user.Name == name {
+			return user.ID, nil
+		}
+	}
+	return "", fmt.Errorf("user '%s' not found", name)
+}
 
 func (s *Service) handleGetUsers(w http.ResponseWriter, r *http.Request) {
 	s.proxyGet(w, "/user")
@@ -118,7 +142,13 @@ func (s *Service) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "invalid user name", http.StatusBadRequest)
 		return
 	}
-	s.proxyDelete(w, "/user/"+name)
+	// Headscale 0.26+: Need to lookup user ID by name
+	userID, err := getUserIDByName(name)
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	s.proxyDelete(w, "/user/"+userID)
 }
 
 func (s *Service) handleRenameUser(w http.ResponseWriter, r *http.Request) {
@@ -132,7 +162,13 @@ func (s *Service) handleRenameUser(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "invalid user name", http.StatusBadRequest)
 		return
 	}
-	s.proxyPost(w, "/user/"+parts[0]+"/rename/"+parts[1], "")
+	// Headscale 0.26+: Need to lookup user ID by name
+	userID, err := getUserIDByName(parts[0])
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	s.proxyPost(w, "/user/"+userID+"/rename/"+parts[1], "")
 }
 
 // --- Nodes ---
@@ -221,39 +257,215 @@ func (s *Service) handleUpdateNodeTags(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- Routes ---
+// Headscale 0.27+ removed the dedicated /routes API.
+// Routes are now managed via the Node API using approve_routes endpoint.
+
+// RouteInfo represents a route in the format expected by the frontend
+type RouteInfo struct {
+	ID         string   `json:"id"`
+	Prefix     string   `json:"prefix"`
+	Enabled    bool     `json:"enabled"`
+	Advertised bool     `json:"advertised"`
+	IsPrimary  bool     `json:"isPrimary"`
+	Node       NodeInfo `json:"node"`
+}
+
+// NodeInfo represents minimal node info for routes
+type NodeInfo struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	GivenName string `json:"givenName"`
+}
+
+// HeadscaleNode represents a node from the Headscale API
+// Note: Headscale API uses snake_case for JSON fields
+type HeadscaleNode struct {
+	ID              string   `json:"id"`
+	Name            string   `json:"name"`
+	GivenName       string   `json:"givenName"`
+	ApprovedRoutes  []string `json:"approved_routes"`
+	AvailableRoutes []string `json:"available_routes"`
+	SubnetRoutes    []string `json:"subnet_routes"`
+}
 
 func (s *Service) handleGetRoutes(w http.ResponseWriter, r *http.Request) {
-	s.proxyGet(w, "/routes")
+	// Get all nodes to extract route information
+	var nodeResult struct {
+		Nodes []HeadscaleNode `json:"nodes"`
+	}
+	if err := helper.HeadscaleGetJSON("/node", &nodeResult); err != nil {
+		router.JSONError(w, "failed to get nodes: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	// Build routes list from all nodes
+	var routes []RouteInfo
+	routeID := 1
+
+	for _, node := range nodeResult.Nodes {
+		nodeInfo := NodeInfo{
+			ID:        node.ID,
+			Name:      node.Name,
+			GivenName: node.GivenName,
+		}
+
+		// Create a set of approved routes for quick lookup
+		approvedSet := make(map[string]bool)
+		for _, route := range node.ApprovedRoutes {
+			approvedSet[route] = true
+		}
+
+		// Add all available routes (advertised by the node)
+		for _, prefix := range node.AvailableRoutes {
+			routes = append(routes, RouteInfo{
+				ID:         fmt.Sprintf("%s-%d", node.ID, routeID),
+				Prefix:     prefix,
+				Enabled:    approvedSet[prefix],
+				Advertised: true,
+				IsPrimary:  false, // Headscale 0.27 doesn't expose primary info directly
+				Node:       nodeInfo,
+			})
+			routeID++
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"routes": routes,
+	})
 }
 
 func (s *Service) handleEnableRoute(w http.ResponseWriter, r *http.Request) {
-	id := router.ExtractPathParam(r, "/api/hs/routes/")
-	if !validNodeID.MatchString(id) {
-		router.JSONError(w, "invalid route id", http.StatusBadRequest)
+	// Route ID format: nodeID-routeIndex (e.g., "5-1")
+	// We need to parse nodeID and get the route prefix, then add it to approved routes
+	routeIDParam := router.ExtractPathParam(r, "/api/hs/routes/")
+
+	// Parse the request body for the route info
+	var req struct {
+		NodeID string `json:"nodeId"`
+		Prefix string `json:"prefix"`
+	}
+
+	// First try to get info from query params (for simple enable toggle)
+	req.NodeID = r.URL.Query().Get("nodeId")
+	req.Prefix = r.URL.Query().Get("prefix")
+
+	// If not in query, try request body
+	if req.NodeID == "" || req.Prefix == "" {
+		router.DecodeJSONOrError(w, r, &req)
+	}
+
+	// If still no info, try to parse from route ID format (nodeID-index)
+	if req.NodeID == "" && strings.Contains(routeIDParam, "-") {
+		parts := strings.SplitN(routeIDParam, "-", 2)
+		req.NodeID = parts[0]
+	}
+
+	if req.NodeID == "" {
+		router.JSONError(w, "nodeId required", http.StatusBadRequest)
 		return
 	}
-	s.proxyPost(w, "/routes/"+id+"/enable", "")
+	if !validNodeID.MatchString(req.NodeID) {
+		router.JSONError(w, "invalid node id", http.StatusBadRequest)
+		return
+	}
+
+	// Get current approved routes for this node
+	var nodeResult struct {
+		Node HeadscaleNode `json:"node"`
+	}
+	if err := helper.HeadscaleGetJSON("/node/"+req.NodeID, &nodeResult); err != nil {
+		router.JSONError(w, "failed to get node: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	// If prefix not provided, we need to find it from available routes
+	if req.Prefix == "" {
+		router.JSONError(w, "prefix required - specify the route to enable", http.StatusBadRequest)
+		return
+	}
+
+	// Add the route to approved list if not already there
+	approvedRoutes := nodeResult.Node.ApprovedRoutes
+	alreadyApproved := false
+	for _, route := range approvedRoutes {
+		if route == req.Prefix {
+			alreadyApproved = true
+			break
+		}
+	}
+	if !alreadyApproved {
+		approvedRoutes = append(approvedRoutes, req.Prefix)
+	}
+
+	// Call approve_routes endpoint
+	body, _ := json.Marshal(map[string][]string{"routes": approvedRoutes})
+	s.proxyPost(w, "/node/"+req.NodeID+"/approve_routes", string(body))
 }
 
 func (s *Service) handleDisableRoute(w http.ResponseWriter, r *http.Request) {
-	id := router.ExtractPathParam(r, "/api/hs/routes/")
-	if !validNodeID.MatchString(id) {
-		router.JSONError(w, "invalid route id", http.StatusBadRequest)
+	routeIDParam := router.ExtractPathParam(r, "/api/hs/routes/")
+
+	var req struct {
+		NodeID string `json:"nodeId"`
+		Prefix string `json:"prefix"`
+	}
+
+	req.NodeID = r.URL.Query().Get("nodeId")
+	req.Prefix = r.URL.Query().Get("prefix")
+
+	if req.NodeID == "" || req.Prefix == "" {
+		router.DecodeJSONOrError(w, r, &req)
+	}
+
+	if req.NodeID == "" && strings.Contains(routeIDParam, "-") {
+		parts := strings.SplitN(routeIDParam, "-", 2)
+		req.NodeID = parts[0]
+	}
+
+	if req.NodeID == "" {
+		router.JSONError(w, "nodeId required", http.StatusBadRequest)
 		return
 	}
-	s.proxyPost(w, "/routes/"+id+"/disable", "")
+	if !validNodeID.MatchString(req.NodeID) {
+		router.JSONError(w, "invalid node id", http.StatusBadRequest)
+		return
+	}
+
+	// Get current approved routes
+	var nodeResult struct {
+		Node HeadscaleNode `json:"node"`
+	}
+	if err := helper.HeadscaleGetJSON("/node/"+req.NodeID, &nodeResult); err != nil {
+		router.JSONError(w, "failed to get node: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	if req.Prefix == "" {
+		router.JSONError(w, "prefix required - specify the route to disable", http.StatusBadRequest)
+		return
+	}
+
+	// Remove the route from approved list
+	var newApproved []string
+	for _, route := range nodeResult.Node.ApprovedRoutes {
+		if route != req.Prefix {
+			newApproved = append(newApproved, route)
+		}
+	}
+
+	body, _ := json.Marshal(map[string][]string{"routes": newApproved})
+	s.proxyPost(w, "/node/"+req.NodeID+"/approve_routes", string(body))
 }
 
 func (s *Service) handleDeleteRoute(w http.ResponseWriter, r *http.Request) {
-	id := router.ExtractPathParam(r, "/api/hs/routes/")
-	if !validNodeID.MatchString(id) {
-		router.JSONError(w, "invalid route id", http.StatusBadRequest)
-		return
-	}
-	s.proxyDelete(w, "/routes/"+id)
+	// In Headscale 0.27+, routes can't be "deleted" - they're advertised by nodes.
+	// We can only unapprove them (same as disable).
+	s.handleDisableRoute(w, r)
 }
 
 // --- PreAuth Keys ---
+// Headscale 0.26+ requires user ID instead of name for preauth key operations
 
 func (s *Service) handleGetPreAuthKeys(w http.ResponseWriter, r *http.Request) {
 	user := r.URL.Query().Get("user")
@@ -261,11 +473,13 @@ func (s *Service) handleGetPreAuthKeys(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "user parameter required", http.StatusBadRequest)
 		return
 	}
-	if !validName.MatchString(user) {
-		router.JSONError(w, "invalid user name", http.StatusBadRequest)
+	// Headscale 0.26+: Need to lookup user ID by name
+	userID, err := getUserIDByName(user)
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	s.proxyGet(w, "/preauthkey?user="+user)
+	s.proxyGet(w, "/preauthkey?user="+userID)
 }
 
 func (s *Service) handleCreatePreAuthKey(w http.ResponseWriter, r *http.Request) {
@@ -279,7 +493,20 @@ func (s *Service) handleCreatePreAuthKey(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	body, _ := json.Marshal(req)
+	// Headscale 0.26+: Need to lookup user ID by name
+	userID, err := getUserIDByName(req.User)
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	// Send request with user ID instead of name
+	body, _ := json.Marshal(map[string]interface{}{
+		"user":       userID,
+		"reusable":   req.Reusable,
+		"ephemeral":  req.Ephemeral,
+		"expiration": req.Expiration,
+	})
 	s.proxyPost(w, "/preauthkey", string(body))
 }
 
@@ -291,7 +518,18 @@ func (s *Service) handleExpirePreAuthKey(w http.ResponseWriter, r *http.Request)
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
-	body, _ := json.Marshal(req)
+
+	// Headscale 0.26+: Need to lookup user ID by name
+	userID, err := getUserIDByName(req.User)
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"user": userID,
+		"key":  req.Key,
+	})
 	s.proxyPost(w, "/preauthkey/expire", string(body))
 }
 
