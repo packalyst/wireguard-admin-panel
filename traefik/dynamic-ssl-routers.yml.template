@@ -1,0 +1,70 @@
+
+    # ========================================
+    # SSL/HTTPS Routers (auto-generated)
+    # ========================================
+
+    # HTTP to HTTPS redirect for public domain
+    redirect-to-https:
+      rule: "Host(`${SSL_DOMAIN}`)"
+      service: ui
+      priority: 5
+      middlewares:
+        - redirect-to-https
+      entryPoints:
+        - web
+
+    # UI - HTTPS
+    ui-secure:
+      rule: "PathPrefix(`/`)"
+      service: ui
+      priority: 1
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: letsencrypt
+        domains:
+          - main: "${SSL_DOMAIN}"
+
+    # Unified API - HTTPS
+    unified-api-secure:
+      rule: "PathPrefix(`/api/`) && !PathPrefix(`/api/v1`)"
+      service: unified-api
+      priority: 100
+      middlewares:
+        - rate-limit
+        - security-headers
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: letsencrypt
+        domains:
+          - main: "${SSL_DOMAIN}"
+
+    # Headscale control plane - HTTPS
+    headscale-control-secure:
+      rule: "PathPrefix(`/ts2021`) || PathPrefix(`/machine`) || PathPrefix(`/key`) || PathPrefix(`/noise`) || PathPrefix(`/derp`)"
+      service: headscale
+      priority: 100
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: letsencrypt
+        domains:
+          - main: "${SSL_DOMAIN}"
+
+    # Headscale API - BLOCKED for HTTPS
+    headscale-api-blocked-secure:
+      rule: "PathPrefix(`/api/v1`)"
+      service: headscale
+      priority: 100
+      middlewares:
+        - vpn-only
+        - rate-limit-strict
+        - security-headers
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: letsencrypt
+        domains:
+          - main: "${SSL_DOMAIN}"
+
