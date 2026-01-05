@@ -151,6 +151,7 @@ func (s *Service) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 		"applyPending":     nftStatus.ApplyPending,
 		"lastApplyAt":      nftStatus.LastApplyAt,
 		"lastApplyError":   nftStatus.LastApplyError,
+		"tables":           nftStatus.Tables,
 		"dbBlockedIPs":     dbBlockedIPsIn,
 		"dbBlockedRanges":  dbBlockedRangesIn,
 		"dbAllowedPorts":   dbAllowedTCPPorts + dbAllowedUDPPorts,

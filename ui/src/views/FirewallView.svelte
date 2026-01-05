@@ -195,8 +195,9 @@
       if (!syncStatus.inSync) {
         if (syncStatus.lastApplyError) {
           toast('Firewall sync error: ' + syncStatus.lastApplyError, 'error')
-        } else if (!syncStatus.nftTableExists) {
-          toast('Firewall table not found in nftables', 'warning')
+        } else if (syncStatus.tables?.some(t => !t.exists)) {
+          const missing = syncStatus.tables.filter(t => !t.exists).map(t => t.name).join(', ')
+          toast(`Firewall table(s) not found in nftables: ${missing}`, 'warning')
         } else {
           // Show detailed mismatch info
           const mismatches = []

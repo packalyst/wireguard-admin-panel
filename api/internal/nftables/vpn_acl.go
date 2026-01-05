@@ -113,9 +113,9 @@ func (t *VPNACLTable) buildScript(clients map[int64]vpnClient, rules []aclRule, 
 	}
 
 	// Delete existing table
-	sb.WriteString("table inet vpn_acl\ndelete table inet vpn_acl\n\n")
+	sb.WriteString("table inet wgadmin_vpn_acl\ndelete table inet wgadmin_vpn_acl\n\n")
 
-	sb.WriteString("table inet vpn_acl {\n")
+	sb.WriteString("table inet wgadmin_vpn_acl {\n")
 	sb.WriteString("    chain forward {\n")
 	sb.WriteString("        type filter hook forward priority 0; policy accept;\n\n")
 	sb.WriteString("        # Allow established/related\n")
