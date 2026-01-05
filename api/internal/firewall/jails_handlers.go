@@ -15,7 +15,7 @@ const jailQueryBase = `
 		COUNT(f.id) as total_banned,
 		COALESCE(j.escalate_enabled, 0), COALESCE(j.escalate_threshold, 3), COALESCE(j.escalate_window, 3600)
 	FROM jails j
-	LEFT JOIN firewall_entries f ON j.name = f.source AND f.entry_type IN ('ip', 'range') AND f.action = 'block'`
+	LEFT JOIN firewall_entries f ON j.name = f.name AND f.entry_type IN ('ip', 'range') AND f.action = 'block'`
 
 const jailGroupBy = `
 	GROUP BY j.id, j.name, j.enabled, j.log_file, j.filter_regex, j.max_retry, j.find_time, j.ban_time, j.port, j.action,
