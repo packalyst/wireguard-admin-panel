@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"api/internal/database"
+	"api/internal/headscale"
 	"api/internal/helper"
 	"api/internal/settings"
 )
@@ -122,15 +123,9 @@ func checkRouteEnabledWithInfo() (enabled bool, routerIP string, advertisedRoute
 	wgIPRange := helper.GetEnv("WG_IP_RANGE")
 
 	// Get router node info for IP
-	var nodeResult struct {
-		Nodes []struct {
-			Name        string   `json:"name"`
-			GivenName   string   `json:"givenName"`
-			IPAddresses []string `json:"ipAddresses"`
-		} `json:"nodes"`
-	}
-	if err := helper.HeadscaleGetJSON("/node", &nodeResult); err == nil {
-		for _, node := range nodeResult.Nodes {
+	nodes, err := headscale.GetNodes()
+	if err == nil {
+		for _, node := range nodes {
 			name := node.GivenName
 			if name == "" {
 				name = node.Name
@@ -143,22 +138,12 @@ func checkRouteEnabledWithInfo() (enabled bool, routerIP string, advertisedRoute
 	}
 
 	// Get routes info
-	var routeResult struct {
-		Routes []struct {
-			ID      string `json:"id"`
-			Prefix  string `json:"prefix"`
-			Enabled bool   `json:"enabled"`
-			Node    struct {
-				Name      string `json:"name"`
-				GivenName string `json:"givenName"`
-			} `json:"node"`
-		} `json:"routes"`
-	}
-	if err := helper.HeadscaleGetJSON("/routes", &routeResult); err != nil {
+	routes, err := headscale.GetRoutes()
+	if err != nil {
 		return false, routerIP, ""
 	}
 
-	for _, route := range routeResult.Routes {
+	for _, route := range routes {
 		nodeName := route.Node.GivenName
 		if nodeName == "" {
 			nodeName = route.Node.Name
@@ -188,12 +173,13 @@ func SetupRouter() error {
 	routerDataPath := helper.GetRouterDataPath()
 
 	// 1. Create/ensure router user in Headscale
-	if err := createHeadscaleUser(routerName); err != nil {
+	if err := headscale.CreateUser(routerName); err != nil {
 		return fmt.Errorf("failed to create headscale user: %v", err)
 	}
 
 	// 2. Generate pre-auth key for the router
-	authKey, err := createPreAuthKey(routerName)
+	expiration := time.Now().Add(helper.PreAuthKeyExpiration)
+	authKey, err := headscale.CreatePreAuthKey(routerName, false, false, expiration)
 	if err != nil {
 		return fmt.Errorf("failed to create pre-auth key: %v", err)
 	}
@@ -325,74 +311,15 @@ func SetupRouter() error {
 	return nil
 }
 
-func createHeadscaleUser(name string) error {
-	body := fmt.Sprintf(`{"name": "%s"}`, name)
-	resp, err := helper.HeadscalePost("/user", body)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 && resp.StatusCode != 201 {
-		respBody, _ := io.ReadAll(resp.Body)
-		// Check if user already exists (this is okay)
-		if strings.Contains(string(respBody), "already exists") {
-			return nil // User exists, that's fine
-		}
-		return fmt.Errorf("failed to create user: %s", string(respBody))
-	}
-
-	return nil
-}
-
-func createPreAuthKey(user string) (string, error) {
-	// Create a pre-auth key that expires in 1 hour (one-time use)
-	expiration := time.Now().Add(helper.PreAuthKeyExpiration).Format(time.RFC3339)
-	body := fmt.Sprintf(`{"user": "%s", "reusable": false, "ephemeral": false, "expiration": "%s"}`, user, expiration)
-
-	log.Printf("Creating pre-auth key for user %s, expiration: %s", user, expiration)
-
-	resp, err := helper.HeadscalePost("/preauthkey", body)
-	if err != nil {
-		return "", fmt.Errorf("request failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 && resp.StatusCode != 201 {
-		return "", fmt.Errorf("failed to create pre-auth key (status %d): %s", resp.StatusCode, string(respBody))
-	}
-
-	var result struct {
-		PreAuthKey struct {
-			Key string `json:"key"`
-		} `json:"preAuthKey"`
-	}
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return "", fmt.Errorf("parse response: %v, body: %s", err, string(respBody))
-	}
-
-	if result.PreAuthKey.Key == "" {
-		return "", fmt.Errorf("empty key in response: %s", string(respBody))
-	}
-
-	return result.PreAuthKey.Key, nil
-}
 
 func findRouterNode() string {
-	var result struct {
-		Nodes []struct {
-			ID        string `json:"id"`
-			Name      string `json:"name"`
-			GivenName string `json:"givenName"`
-		} `json:"nodes"`
-	}
-	if err := helper.HeadscaleGetJSON("/node", &result); err != nil {
+	nodes, err := headscale.GetNodes()
+	if err != nil {
 		return ""
 	}
 
 	routerName := helper.GetRouterName()
-	for _, node := range result.Nodes {
+	for _, node := range nodes {
 		name := node.GivenName
 		if name == "" {
 			name = node.Name
@@ -406,31 +333,18 @@ func findRouterNode() string {
 }
 
 func enableRouterRoute(nodeID string) error {
-	// Get routes for this node
-	var result struct {
-		Routes []struct {
-			ID      string `json:"id"`
-			Prefix  string `json:"prefix"`
-			Enabled bool   `json:"enabled"`
-		} `json:"routes"`
-	}
-	if err := helper.HeadscaleGetJSON("/node/"+nodeID+"/routes", &result); err != nil {
+	routes, err := headscale.GetNodeRoutes(nodeID)
+	if err != nil {
 		return err
 	}
 
 	wgIPRange := helper.GetEnv("WG_IP_RANGE")
 
 	// Enable the WireGuard network route
-	for _, route := range result.Routes {
+	for _, route := range routes {
 		if route.Prefix == wgIPRange && !route.Enabled {
-			enableResp, err := helper.HeadscalePost("/routes/"+route.ID+"/enable", "")
-			if err != nil {
+			if err := headscale.EnableRoute(route.ID); err != nil {
 				return err
-			}
-			enableResp.Body.Close()
-
-			if enableResp.StatusCode != 200 {
-				return fmt.Errorf("failed to enable route: status %d", enableResp.StatusCode)
 			}
 			log.Printf("Enabled route %s for %s", route.Prefix, helper.GetRouterName())
 		}
@@ -475,11 +389,11 @@ func RemoveRouter() error {
 	// Delete node from Headscale
 	nodeID := findRouterNode()
 	if nodeID != "" {
-		deleteHeadscaleNode(nodeID)
+		headscale.DeleteNode(nodeID)
 	}
 
 	// Delete user from Headscale
-	deleteHeadscaleUser(routerName)
+	headscale.DeleteUser(routerName)
 
 	// Clear all ACL rules and VPN clients in a transaction
 	tx, err := db.Begin()
@@ -506,18 +420,3 @@ func RemoveRouter() error {
 	return nil
 }
 
-func deleteHeadscaleNode(nodeID string) {
-	resp, err := helper.HeadscaleDelete("/node/" + nodeID)
-	if err == nil {
-		resp.Body.Close()
-		log.Printf("Deleted Headscale node %s", nodeID)
-	}
-}
-
-func deleteHeadscaleUser(name string) {
-	resp, err := helper.HeadscaleDelete("/user/" + name)
-	if err == nil {
-		resp.Body.Close()
-		log.Printf("Deleted Headscale user %s", name)
-	}
-}

@@ -2,17 +2,194 @@ package headscale
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"api/internal/database"
 	"api/internal/domains"
 	"api/internal/helper"
 	"api/internal/router"
 )
+
+// ===========================================
+// Exported API functions (for use by vpn/router.go)
+// ===========================================
+
+// User represents a Headscale user
+type User struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// Node represents a Headscale node
+type Node struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	GivenName   string   `json:"givenName"`
+	IPAddresses []string `json:"ipAddresses"`
+}
+
+// Route represents a Headscale route
+type Route struct {
+	ID      string `json:"id"`
+	Prefix  string `json:"prefix"`
+	Enabled bool   `json:"enabled"`
+	Node    Node   `json:"node"`
+}
+
+// getUserIDByName looks up a Headscale user ID by name (internal)
+func getUserIDByName(name string) (string, error) {
+	var result struct {
+		Users []User `json:"users"`
+	}
+	if err := helper.HeadscaleGetJSON("/user", &result); err != nil {
+		return "", err
+	}
+	for _, user := range result.Users {
+		if user.Name == name {
+			return user.ID, nil
+		}
+	}
+	return "", fmt.Errorf("user '%s' not found", name)
+}
+
+// CreateUser creates a new Headscale user
+func CreateUser(name string) error {
+	body := fmt.Sprintf(`{"name": "%s"}`, name)
+	resp, err := helper.HeadscalePost("/user", body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 && resp.StatusCode != 201 {
+		respBody, _ := io.ReadAll(resp.Body)
+		if strings.Contains(string(respBody), "already exists") {
+			return nil // User exists, that's fine
+		}
+		return fmt.Errorf("failed to create user: %s", string(respBody))
+	}
+	return nil
+}
+
+// DeleteUser deletes a Headscale user by name
+func DeleteUser(name string) error {
+	userID, err := getUserIDByName(name)
+	if err != nil {
+		// User not found is not an error for deletion
+		if strings.Contains(err.Error(), "not found") {
+			return nil
+		}
+		return err
+	}
+
+	resp, err := helper.HeadscaleDelete("/user/" + userID)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	log.Printf("Deleted Headscale user %s (ID: %s)", name, userID)
+	return nil
+}
+
+// DeleteNode deletes a Headscale node by ID
+func DeleteNode(nodeID string) error {
+	resp, err := helper.HeadscaleDelete("/node/" + nodeID)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	log.Printf("Deleted Headscale node %s", nodeID)
+	return nil
+}
+
+// CreatePreAuthKey creates a pre-auth key for a user
+func CreatePreAuthKey(user string, reusable, ephemeral bool, expiration time.Time) (string, error) {
+	body := fmt.Sprintf(`{"user": "%s", "reusable": %t, "ephemeral": %t, "expiration": "%s"}`,
+		user, reusable, ephemeral, expiration.Format(time.RFC3339))
+
+	log.Printf("Creating pre-auth key for user %s, expiration: %s", user, expiration.Format(time.RFC3339))
+
+	resp, err := helper.HeadscalePost("/preauthkey", body)
+	if err != nil {
+		return "", fmt.Errorf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 && resp.StatusCode != 201 {
+		return "", fmt.Errorf("failed to create pre-auth key (status %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		PreAuthKey struct {
+			Key string `json:"key"`
+		} `json:"preAuthKey"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", fmt.Errorf("parse response: %v, body: %s", err, string(respBody))
+	}
+
+	if result.PreAuthKey.Key == "" {
+		return "", fmt.Errorf("empty key in response: %s", string(respBody))
+	}
+
+	return result.PreAuthKey.Key, nil
+}
+
+// GetNodes returns all Headscale nodes
+func GetNodes() ([]Node, error) {
+	var result struct {
+		Nodes []Node `json:"nodes"`
+	}
+	if err := helper.HeadscaleGetJSON("/node", &result); err != nil {
+		return nil, err
+	}
+	return result.Nodes, nil
+}
+
+// GetRoutes returns all Headscale routes
+func GetRoutes() ([]Route, error) {
+	var result struct {
+		Routes []Route `json:"routes"`
+	}
+	if err := helper.HeadscaleGetJSON("/routes", &result); err != nil {
+		return nil, err
+	}
+	return result.Routes, nil
+}
+
+// GetNodeRoutes returns routes for a specific node
+func GetNodeRoutes(nodeID string) ([]Route, error) {
+	var result struct {
+		Routes []Route `json:"routes"`
+	}
+	if err := helper.HeadscaleGetJSON("/node/"+nodeID+"/routes", &result); err != nil {
+		return nil, err
+	}
+	return result.Routes, nil
+}
+
+// EnableRoute enables a route by ID
+func EnableRoute(routeID string) error {
+	resp, err := helper.HeadscalePost("/routes/"+routeID+"/enable", "")
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("failed to enable route: status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// ===========================================
 
 // validName matches valid Headscale user/node names (alphanumeric, underscore, dash)
 var validName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
@@ -118,7 +295,14 @@ func (s *Service) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "invalid user name", http.StatusBadRequest)
 		return
 	}
-	s.proxyDelete(w, "/user/"+name)
+
+	userID, err := getUserIDByName(name)
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	s.proxyDelete(w, "/user/"+userID)
 }
 
 func (s *Service) handleRenameUser(w http.ResponseWriter, r *http.Request) {
@@ -132,7 +316,15 @@ func (s *Service) handleRenameUser(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "invalid user name", http.StatusBadRequest)
 		return
 	}
-	s.proxyPost(w, "/user/"+parts[0]+"/rename/"+parts[1], "")
+
+	// Lookup user ID by name
+	userID, err := getUserIDByName(parts[0])
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	s.proxyPost(w, "/user/"+userID+"/rename/"+parts[1], "")
 }
 
 // --- Nodes ---
