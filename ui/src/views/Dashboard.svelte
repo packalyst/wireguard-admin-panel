@@ -151,13 +151,10 @@
   >
     <!-- Sidebar header (logo) -->
     <div class="flex h-14 items-center gap-3 border-b border-border px-4">
-      <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
-        <Icon name="network" size={16} />
+      <div class="w-8 h-8 bg-primary rounded-xl flex items-center justify-center shadow-lg shadow-primary/20">
+        <Icon name="shield" size={16} class="text-white" />
       </div>
-      <div>
-        <div class="text-sm font-semibold tracking-tight">VPN</div>
-        <div class="text-[10px] text-muted-foreground">Admin Panel</div>
-      </div>
+      <span class="text-base font-semibold tracking-tight">WirePanel</span>
     </div>
 
     <!-- Sidebar nav -->
