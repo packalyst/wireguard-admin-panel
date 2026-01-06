@@ -83,7 +83,6 @@
   })
   let geoStatus = $state(null)
   let geoProviders = $state(null)  // Provider configs from API
-  let loadingGeo = $state(false)
   let savingGeo = $state(false)
   let originalGeoSettings = $state(null)
   let triggeringGeoUpdate = $state(false)
@@ -95,14 +94,11 @@
   async function loadSettings() {
     loading = true
     try {
-      const [settings, traefikConfig, vpnOnlyStatus] = await Promise.all([
-        apiGet('/api/settings'),
-        apiGet('/api/traefik/config').catch(() => null),
-        apiGet('/api/traefik/vpn-only').catch(() => ({ enabled: false }))
-      ])
+      // Single API call returns all settings data
+      const settings = await apiGet('/api/settings')
 
-      // VPN-only mode
-      vpnOnlyMode = vpnOnlyStatus?.mode || 'off'
+      // VPN-only mode (from aggregated response)
+      vpnOnlyMode = settings.vpn_only_mode || 'off'
 
       // Headscale
       headscaleApiUrl = settings.headscale_api_url || ''
@@ -117,7 +113,8 @@
       adguardDashboardURL = settings.adguard_dashboard_url || ''
       originalAdguard = { username: adguardUsername, password: adguardPassword, dashboardEnabled: adguardDashboardEnabled }
 
-      // Traefik
+      // Traefik (from aggregated response)
+      const traefikConfig = settings.traefik
       if (traefikConfig) {
         traefikForm = {
           rateLimitAverage: traefikConfig.rateLimitAverage || 100,
@@ -151,6 +148,28 @@
         timeoutMs: settings.scanner_timeout_ms || 500
       }
       originalScanner = { ...scannerSettings }
+
+      // Router (from aggregated response)
+      routerStatus = settings.router || null
+
+      // Geo (from aggregated response)
+      if (settings.geo) {
+        geoSettings = {
+          lookup_provider: settings.geo.lookup_provider || 'none',
+          blocking_enabled: settings.geo.blocking_enabled || false,
+          auto_update: settings.geo.auto_update || false,
+          update_hour: settings.geo.update_hour ?? 3,
+          update_services: settings.geo.update_services || 'all',
+          maxmind_license_key: settings.geo.maxmind_configured ? '••••••••' : '',
+          ip2location_token: settings.geo.ip2location_configured ? '••••••••' : '',
+          ip2location_variant: settings.geo.ip2location_variant || 'DB1'
+        }
+        originalGeoSettings = { ...geoSettings }
+        geoProviders = settings.geo.providers || null
+      }
+      if (settings.geo_status) {
+        geoStatus = settings.geo_status
+      }
 
       // UI (from localStorage)
       itemsPerPage = localStorage.getItem('settings_items_per_page') || '25'
@@ -360,34 +379,6 @@
     theme.update(t => t === 'dark' ? 'light' : 'dark')
   }
 
-  // Geolocation settings functions
-  async function loadGeoSettings() {
-    loadingGeo = true
-    try {
-      const [settings, status] = await Promise.all([
-        apiGet('/api/geo/settings'),
-        apiGet('/api/geo/status')
-      ])
-      geoSettings = {
-        lookup_provider: settings.lookup_provider || 'none',
-        blocking_enabled: settings.blocking_enabled || false,
-        auto_update: settings.auto_update || false,
-        update_hour: settings.update_hour ?? 3,
-        update_services: settings.update_services || 'all',
-        maxmind_license_key: settings.maxmind_configured ? '••••••••' : '',
-        ip2location_token: settings.ip2location_configured ? '••••••••' : '',
-        ip2location_variant: settings.ip2location_variant || 'DB1'
-      }
-      originalGeoSettings = { ...geoSettings }
-      geoStatus = status
-      geoProviders = settings.providers || null
-    } catch {
-      // Ignore errors
-    } finally {
-      loadingGeo = false
-    }
-  }
-
   async function saveGeoSettings() {
     savingGeo = true
     try {
@@ -510,8 +501,6 @@
 
   onMount(() => {
     loadSettings()
-    loadRouterStatus()
-    loadGeoSettings()
   })
 </script>
 
@@ -1001,12 +990,7 @@
           Geolocation
         </h3>
       </div>
-      {#if loadingGeo}
-        <div class="kt-panel-body flex items-center justify-center py-8">
-          <div class="w-5 h-5 border-2 border-muted border-t-primary rounded-full animate-spin"></div>
-        </div>
-      {:else}
-        <div class="kt-panel-body">
+      <div class="kt-panel-body">
           <!-- Two columns: IP Lookup + Toggles -->
           <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <!-- IP Lookup Provider -->
@@ -1119,29 +1103,28 @@
             </div>
           {/if}
         </div>
-        <div class="kt-panel-footer justify-between">
-          <Button
-            onclick={triggerGeoUpdate}
-            loading={triggeringGeoUpdate}
-            disabled={geoSettings.lookup_provider === 'none' && !geoSettings.blocking_enabled}
-            variant="secondary"
-            size="sm"
-            icon="refresh"
-            title={geoSettings.lookup_provider === 'none' && !geoSettings.blocking_enabled ? 'Select a provider or enable blocking first' : 'Update geolocation databases now'}
-          >
-            Update Now
-          </Button>
-          <Button
-            onclick={saveGeoSettings}
-            loading={savingGeo}
-            disabled={!geoHasChanges}
-            size="sm"
-            icon="device-floppy"
-          >
-            Save
-          </Button>
-        </div>
-      {/if}
+      <div class="kt-panel-footer justify-between">
+        <Button
+          onclick={triggerGeoUpdate}
+          loading={triggeringGeoUpdate}
+          disabled={geoSettings.lookup_provider === 'none' && !geoSettings.blocking_enabled}
+          variant="secondary"
+          size="sm"
+          icon="refresh"
+          title={geoSettings.lookup_provider === 'none' && !geoSettings.blocking_enabled ? 'Select a provider or enable blocking first' : 'Update geolocation databases now'}
+        >
+          Update Now
+        </Button>
+        <Button
+          onclick={saveGeoSettings}
+          loading={savingGeo}
+          disabled={!geoHasChanges}
+          size="sm"
+          icon="device-floppy"
+        >
+          Save
+        </Button>
+      </div>
     </div>
 
     <!-- About - Full width -->

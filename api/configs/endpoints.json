@@ -59,8 +59,8 @@
       "enabled": true,
       "endpoints": [
         {"path": "", "methods": ["GET"], "handler": "GetSettings", "description": "Get all settings"},
-        {"path": "", "methods": ["PUT"], "handler": "UpdateSettings", "description": "Update settings"},
-        {"path": "/test-adguard", "methods": ["POST"], "handler": "TestAdGuard", "description": "Test AdGuard connection"}
+        {"path": "", "methods": ["POST"], "handler": "SelectSettings", "description": "Get specific settings by keys"},
+        {"path": "", "methods": ["PUT"], "handler": "UpdateSettings", "description": "Update settings"}
       ]
     },
     "firewall": {

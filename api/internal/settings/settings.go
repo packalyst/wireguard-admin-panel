@@ -1,7 +1,6 @@
 package settings
 
 import (
-	"encoding/base64"
 	"fmt"
 	"log"
 	"net/http"
@@ -18,6 +17,15 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Service provider callbacks (set by main.go to avoid import cycles)
+var (
+	GetTraefikConfig   func() interface{}
+	GetTraefikVPNOnly  func() string
+	GetGeoSettings     func() interface{}
+	GetGeoStatus       func() interface{}
+	GetVPNRouterStatus func() interface{}
+)
+
 // Service handles settings management
 type Service struct{}
 
@@ -30,8 +38,8 @@ func New() *Service {
 func (s *Service) Handlers() router.ServiceHandlers {
 	return router.ServiceHandlers{
 		"GetSettings":    s.handleGetSettings,
+		"SelectSettings": s.handleSelectSettings,
 		"UpdateSettings": s.handleUpdateSettings,
-		"TestAdGuard":    s.handleTestAdGuard,
 	}
 }
 
@@ -52,11 +60,22 @@ type SettingsResponse struct {
 	SessionTimeout string `json:"session_timeout"`
 
 	// Port Scanner
-	ScannerPortStart  int `json:"scanner_port_start"`  // Range start (default: 1)
-	ScannerPortEnd    int `json:"scanner_port_end"`    // Range end (default: 5000)
-	ScannerConcurrent int `json:"scanner_concurrent"`  // Concurrent connections (default: 100)
-	ScannerPauseMs    int `json:"scanner_pause_ms"`    // Pause between batches in ms (default: 0)
-	ScannerTimeoutMs  int `json:"scanner_timeout_ms"`  // Connection timeout in ms (default: 500)
+	ScannerPortStart  int `json:"scanner_port_start"`
+	ScannerPortEnd    int `json:"scanner_port_end"`
+	ScannerConcurrent int `json:"scanner_concurrent"`
+	ScannerPauseMs    int `json:"scanner_pause_ms"`
+	ScannerTimeoutMs  int `json:"scanner_timeout_ms"`
+
+	// Traefik (aggregated)
+	Traefik     interface{} `json:"traefik,omitempty"`
+	VPNOnlyMode string      `json:"vpn_only_mode,omitempty"`
+
+	// Geolocation (aggregated)
+	Geo       interface{} `json:"geo,omitempty"`
+	GeoStatus interface{} `json:"geo_status,omitempty"`
+
+	// VPN Router (aggregated)
+	Router interface{} `json:"router,omitempty"`
 }
 
 // UpdateSettingsRequest for PUT /api/settings
@@ -75,64 +94,116 @@ type UpdateSettingsRequest struct {
 	ScannerTimeoutMs  *int `json:"scanner_timeout_ms,omitempty"`
 }
 
-// TestAdGuardRequest for POST /api/settings/test-adguard
-type TestAdGuardRequest struct {
-	URL      string  `json:"url"`
-	Username string  `json:"username"`
-	Password *string `json:"password"`
+// handleGetSettings returns all settings (GET /api/settings)
+func (s *Service) handleGetSettings(w http.ResponseWriter, r *http.Request) {
+	router.JSON(w, s.buildSettingsMap())
 }
 
-func (s *Service) handleGetSettings(w http.ResponseWriter, r *http.Request) {
-	resp := SettingsResponse{}
+// SelectSettingsRequest for POST /api/settings (selective fetch)
+type SelectSettingsRequest struct {
+	Keys []string `json:"keys"`
+}
 
-	// Get Headscale settings
+// handleSelectSettings returns only requested keys (POST /api/settings)
+func (s *Service) handleSelectSettings(w http.ResponseWriter, r *http.Request) {
+	var req SelectSettingsRequest
+	if !router.DecodeJSONOrError(w, r, &req) {
+		return
+	}
+
+	if len(req.Keys) == 0 {
+		router.JSONError(w, "keys required", http.StatusBadRequest)
+		return
+	}
+
+	all := s.buildSettingsMap()
+	result := make(map[string]interface{})
+	for _, key := range req.Keys {
+		if val, ok := all[key]; ok {
+			result[key] = val
+		}
+	}
+	router.JSON(w, result)
+}
+
+// buildSettingsMap returns all settings as a map
+func (s *Service) buildSettingsMap() map[string]interface{} {
+	result := make(map[string]interface{})
+
+	// Headscale
 	if url, err := getSetting("headscale_api_url"); err == nil {
-		resp.HeadscaleAPIURL = url
+		result["headscale_api_url"] = url
 	}
 	if url, err := getSetting("headscale_url"); err == nil {
-		resp.HeadscaleURL = url
+		result["headscale_url"] = url
 	}
 	if _, err := getSettingEncrypted("headscale_api_key"); err == nil {
-		resp.HeadscaleAPIKey = true
+		result["headscale_api_key"] = true
+	} else {
+		result["headscale_api_key"] = false
 	}
 
-	// Get AdGuard settings
+	// AdGuard
 	if username, err := getSetting("adguard_username"); err == nil {
-		resp.AdGuardUsername = username
+		result["adguard_username"] = username
 	}
 	if _, err := getSettingEncrypted("adguard_password"); err == nil {
-		resp.AdGuardPassword = true
+		result["adguard_password"] = true
+	} else {
+		result["adguard_password"] = false
 	}
-	// Read dashboard enabled from AdGuard config
+
 	configPath := os.Getenv("ADGUARD_CONFIG")
 	if configPath != "" {
 		if data, err := os.ReadFile(configPath); err == nil {
-			resp.AdGuardDashboardEnabled = strings.Contains(string(data), "address: 0.0.0.0:")
-			if resp.AdGuardDashboardEnabled {
+			dashEnabled := strings.Contains(string(data), "address: 0.0.0.0:")
+			result["adguard_dashboard_enabled"] = dashEnabled
+			if dashEnabled {
 				serverIP := os.Getenv("SERVER_IP")
 				adguardPort := os.Getenv("ADGUARD_PORT")
 				if serverIP != "" && adguardPort != "" {
-					resp.AdGuardDashboardURL = "http://" + serverIP + ":" + adguardPort
+					result["adguard_dashboard_url"] = "http://" + serverIP + ":" + adguardPort
 				}
 			}
 		}
 	}
 
-	// Get Session settings
+	// Session
 	if timeout, err := getSetting("session_timeout"); err == nil {
-		resp.SessionTimeout = timeout
+		result["session_timeout"] = timeout
 	} else {
-		resp.SessionTimeout = strconv.Itoa(config.GetSessionConfig().TimeoutHours)
+		result["session_timeout"] = strconv.Itoa(config.GetSessionConfig().TimeoutHours)
 	}
 
-	// Get Scanner settings with defaults
-	resp.ScannerPortStart = getSettingInt("scanner_port_start", 1)
-	resp.ScannerPortEnd = getSettingInt("scanner_port_end", 5000)
-	resp.ScannerConcurrent = getSettingInt("scanner_concurrent", 100)
-	resp.ScannerPauseMs = getSettingInt("scanner_pause_ms", 0)
-	resp.ScannerTimeoutMs = getSettingInt("scanner_timeout_ms", 500)
+	// Scanner
+	result["scanner_port_start"] = getSettingInt("scanner_port_start", 1)
+	result["scanner_port_end"] = getSettingInt("scanner_port_end", 5000)
+	result["scanner_concurrent"] = getSettingInt("scanner_concurrent", 100)
+	result["scanner_pause_ms"] = getSettingInt("scanner_pause_ms", 0)
+	result["scanner_timeout_ms"] = getSettingInt("scanner_timeout_ms", 500)
 
-	router.JSON(w, resp)
+	// Traefik (aggregated)
+	if GetTraefikConfig != nil {
+		result["traefik"] = GetTraefikConfig()
+	}
+	if GetTraefikVPNOnly != nil {
+		result["vpn_only_mode"] = GetTraefikVPNOnly()
+	}
+
+	// Geolocation (aggregated)
+	if GetGeoSettings != nil {
+		result["geo"] = GetGeoSettings()
+	}
+	if GetGeoStatus != nil {
+		result["geo_status"] = GetGeoStatus()
+	}
+
+	// VPN Router (aggregated)
+	if GetVPNRouterStatus != nil {
+		result["router"] = GetVPNRouterStatus()
+	}
+
+	return result
 }
 
 func (s *Service) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
@@ -218,66 +289,6 @@ func (s *Service) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		"status":                 "ok",
 		"adguardRestartRequired": adguardRestartRequired,
 	})
-}
-
-func (s *Service) handleTestAdGuard(w http.ResponseWriter, r *http.Request) {
-	var req TestAdGuardRequest
-	if !router.DecodeJSONOrError(w, r, &req) {
-		return
-	}
-
-	if req.URL == "" {
-		router.JSONError(w, "URL is required", http.StatusBadRequest)
-		return
-	}
-
-	// Validate and sanitize URL to prevent SSRF
-	sanitizedURL, err := helper.SanitizeInternalServiceURL(req.URL)
-	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	// Get password - either from request or from DB
-	password := ""
-	if req.Password != nil {
-		password = *req.Password
-	} else if stored, err := getSettingEncrypted("adguard_password"); err == nil {
-		password = stored
-	}
-
-	// Test connection to AdGuard
-	client := &http.Client{Timeout: helper.HTTPClientTimeout}
-	testReq, err := http.NewRequest("GET", sanitizedURL+"/control/status", nil)
-	if err != nil {
-		router.JSONError(w, "Invalid URL: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	// Add basic auth if credentials provided
-	if req.Username != "" && password != "" {
-		auth := base64.StdEncoding.EncodeToString([]byte(req.Username + ":" + password))
-		testReq.Header.Set("Authorization", "Basic "+auth)
-	}
-
-	resp, err := client.Do(testReq)
-	if err != nil {
-		router.JSONError(w, "Connection failed: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == 401 || resp.StatusCode == 403 {
-		router.JSONError(w, "Invalid credentials", http.StatusUnauthorized)
-		return
-	}
-
-	if resp.StatusCode >= 400 {
-		router.JSONError(w, fmt.Sprintf("AdGuard returned error: %d", resp.StatusCode), http.StatusBadGateway)
-		return
-	}
-
-	router.JSON(w, map[string]string{"status": "ok"})
 }
 
 // Helper functions for settings

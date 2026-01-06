@@ -29,7 +29,7 @@
     try {
       const [usersRes, settings] = await Promise.all([
         apiGet('/api/hs/users'),
-        apiGet('/api/settings')
+        apiPost('/api/settings', { keys: ['headscale_url'] })
       ])
       users = usersRes.users || []
       serverUrl = settings.headscale_url || ''

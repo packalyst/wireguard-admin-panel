@@ -110,6 +110,11 @@ func main() {
 		} else {
 			geolocation.SetService(geoSvc)
 			r.RegisterService("geolocation", geoSvc.Handlers())
+
+			// Wire up settings callbacks for geolocation
+			settings.GetGeoSettings = func() interface{} { return geoSvc.GetSettings() }
+			settings.GetGeoStatus = func() interface{} { return geoSvc.GetStatus() }
+
 			log.Println("Geolocation service registered")
 		}
 	}
@@ -153,6 +158,11 @@ func main() {
 	if config.IsServiceEnabled("traefik") {
 		traefikSvc := traefik.New()
 		r.RegisterService("traefik", traefikSvc.Handlers())
+
+		// Wire up settings callbacks for traefik
+		settings.GetTraefikConfig = func() interface{} { return traefikSvc.GetConfig() }
+		settings.GetTraefikVPNOnly = traefikSvc.GetVPNOnlyMode
+
 		log.Println("Traefik service registered")
 	}
 
@@ -179,6 +189,13 @@ func main() {
 	if config.IsServiceEnabled("vpn") {
 		vpnSvc = vpn.New()
 		r.RegisterService("vpn", vpnSvc.Handlers())
+
+		// Wire up settings callback for VPN router status
+		settings.GetVPNRouterStatus = func() interface{} {
+			status := vpn.GetRouterStatus()
+			return &status
+		}
+
 		log.Println("VPN ACL service registered")
 	}
 

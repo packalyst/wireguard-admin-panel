@@ -26,18 +26,25 @@ type Service struct {
 	accessLogPath string
 }
 
+var instance *Service
+
 // New creates a new Traefik service
 func New() *Service {
 	configDir := helper.GetEnv("TRAEFIK_CONFIG")
-	// Use core.yml for middleware config (the directory contains multiple files)
 	configPath := configDir + "/core.yml"
 
-	return &Service{
+	instance = &Service{
 		traefikAPI:    helper.GetEnv("TRAEFIK_API"),
 		configPath:    configPath,
 		staticPath:    helper.GetEnv("TRAEFIK_STATIC"),
 		accessLogPath: helper.GetEnv("TRAEFIK_LOGS"),
 	}
+	return instance
+}
+
+// GetService returns the singleton instance
+func GetService() *Service {
+	return instance
 }
 
 // Handlers returns the handler map for the router
@@ -148,32 +155,53 @@ func (s *Service) handleOverview(w http.ResponseWriter, r *http.Request) {
 	router.JSON(w, response)
 }
 
-func (s *Service) handleGetConfig(w http.ResponseWriter, r *http.Request) {
+// TraefikConfig holds traefik configuration
+type TraefikConfig struct {
+	RateLimitAverage  int      `json:"rateLimitAverage"`
+	RateLimitBurst    int      `json:"rateLimitBurst"`
+	StrictRateAverage int      `json:"strictRateAverage"`
+	StrictRateBurst   int      `json:"strictRateBurst"`
+	SecurityHeaders   bool     `json:"securityHeaders"`
+	IPAllowlist       []string `json:"ipAllowlist"`
+	IPAllowEnabled    bool     `json:"ipAllowEnabled"`
+	DashboardEnabled  bool     `json:"dashboardEnabled"`
+}
+
+// GetConfig returns current traefik configuration
+func (s *Service) GetConfig() *TraefikConfig {
 	data, err := os.ReadFile(s.configPath)
 	if err != nil {
-		router.JSONError(w, "Failed to read config: "+err.Error(), http.StatusInternalServerError)
-		return
+		return nil
 	}
 
 	content := string(data)
-	config := map[string]interface{}{
-		"rateLimitAverage":  extractInt(content, "rate-limit:", "average:", 100),
-		"rateLimitBurst":    extractInt(content, "rate-limit:", "burst:", 200),
-		"strictRateAverage": extractInt(content, "rate-limit-strict:", "average:", 10),
-		"strictRateBurst":   extractInt(content, "rate-limit-strict:", "burst:", 20),
-		"securityHeaders":   strings.Contains(content, "security-headers:"),
-		"ipAllowlist":       extractIPList(content),
-		"ipAllowEnabled":    strings.Contains(content, "vpn-only:"),
+	config := &TraefikConfig{
+		RateLimitAverage:  extractInt(content, "rate-limit:", "average:", 100),
+		RateLimitBurst:    extractInt(content, "rate-limit:", "burst:", 200),
+		StrictRateAverage: extractInt(content, "rate-limit-strict:", "average:", 10),
+		StrictRateBurst:   extractInt(content, "rate-limit-strict:", "burst:", 20),
+		SecurityHeaders:   strings.Contains(content, "security-headers:"),
+		IPAllowlist:       extractIPList(content),
+		IPAllowEnabled:    strings.Contains(content, "vpn-only:"),
+		DashboardEnabled:  true,
 	}
 
-	// Read static config for dashboard setting
 	if s.staticPath != "" {
 		if staticData, err := os.ReadFile(s.staticPath); err == nil {
 			staticContent := string(staticData)
-			config["dashboardEnabled"] = helper.ExtractYAMLBool(staticContent, "dashboard:", true)
+			config.DashboardEnabled = helper.ExtractYAMLBool(staticContent, "dashboard:", true)
 		}
 	}
 
+	return config
+}
+
+func (s *Service) handleGetConfig(w http.ResponseWriter, r *http.Request) {
+	config := s.GetConfig()
+	if config == nil {
+		router.JSONError(w, "Failed to read config", http.StatusInternalServerError)
+		return
+	}
 	router.JSON(w, config)
 }
 
@@ -673,24 +701,25 @@ func (s *Service) removeMiddlewareFromRouter(routerName, middlewareName string) 
 	return nil
 }
 
-// handleGetVPNOnly returns VPN-only mode status for the UI
-// mode: "off", "403", or "silent"
-func (s *Service) handleGetVPNOnly(w http.ResponseWriter, r *http.Request) {
+// GetVPNOnlyMode returns the current VPN-only mode ("off", "403", or "silent")
+func (s *Service) GetVPNOnlyMode() string {
 	data, err := os.ReadFile(s.configPath)
 	if err != nil {
-		router.JSONError(w, "failed to read config", http.StatusInternalServerError)
-		return
+		return "off"
 	}
 
 	content := string(data)
-	mode := "off"
 	if routerHasMiddleware(content, "ui", "vpn-only-silent") {
-		mode = "silent"
+		return "silent"
 	} else if routerHasMiddleware(content, "ui", "vpn-only") {
-		mode = "403"
+		return "403"
 	}
+	return "off"
+}
 
-	router.JSON(w, map[string]string{"mode": mode})
+// handleGetVPNOnly returns VPN-only mode status for the UI
+func (s *Service) handleGetVPNOnly(w http.ResponseWriter, r *http.Request) {
+	router.JSON(w, map[string]string{"mode": s.GetVPNOnlyMode()})
 }
 
 // handleSetVPNOnly sets VPN-only mode for the UI

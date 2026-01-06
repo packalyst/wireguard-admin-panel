@@ -9,29 +9,42 @@ import (
 	"api/internal/settings"
 )
 
-// handleGetSettings returns current geolocation settings
-func (s *Service) handleGetSettings(w http.ResponseWriter, r *http.Request) {
+// GeoSettingsResponse holds geolocation settings for API response
+type GeoSettingsResponse struct {
+	LookupProvider        string                      `json:"lookup_provider"`
+	BlockingEnabled       bool                        `json:"blocking_enabled"`
+	BlockingProvider      string                      `json:"blocking_provider"`
+	AutoUpdate            bool                        `json:"auto_update"`
+	UpdateHour            int                         `json:"update_hour"`
+	UpdateServices        string                      `json:"update_services"`
+	IP2LocationVariant    string                      `json:"ip2location_variant"`
+	MaxmindConfigured     bool                        `json:"maxmind_configured"`
+	IP2LocationConfigured bool                        `json:"ip2location_configured"`
+	Providers             map[string]ProviderConfig   `json:"providers"`
+}
+
+// GetSettings returns current geolocation settings
+func (s *Service) GetSettings() *GeoSettingsResponse {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// Check if keys are configured (don't return actual values)
-	maxmindConfigured := s.config.MaxMindLicenseKey != ""
-	ip2locationConfigured := s.config.IP2LocationToken != ""
-
-	response := map[string]interface{}{
-		"lookup_provider":        s.config.LookupProvider,
-		"blocking_enabled":       s.config.BlockingEnabled,
-		"blocking_provider":      s.config.BlockingProvider,
-		"auto_update":            s.config.AutoUpdate,
-		"update_hour":            s.config.UpdateHour,
-		"update_services":        s.config.UpdateServices,
-		"ip2location_variant":    s.config.IP2LocationVariant,
-		"maxmind_configured":     maxmindConfigured,
-		"ip2location_configured": ip2locationConfigured,
-		"providers":              s.providersConfig.Providers,
+	return &GeoSettingsResponse{
+		LookupProvider:        s.config.LookupProvider,
+		BlockingEnabled:       s.config.BlockingEnabled,
+		BlockingProvider:      s.config.BlockingProvider,
+		AutoUpdate:            s.config.AutoUpdate,
+		UpdateHour:            s.config.UpdateHour,
+		UpdateServices:        s.config.UpdateServices,
+		IP2LocationVariant:    s.config.IP2LocationVariant,
+		MaxmindConfigured:     s.config.MaxMindLicenseKey != "",
+		IP2LocationConfigured: s.config.IP2LocationToken != "",
+		Providers:             s.providersConfig.Providers,
 	}
+}
 
-	router.JSON(w, response)
+// handleGetSettings returns current geolocation settings
+func (s *Service) handleGetSettings(w http.ResponseWriter, r *http.Request) {
+	router.JSON(w, s.GetSettings())
 }
 
 // handleUpdateSettings updates geolocation settings
@@ -151,8 +164,8 @@ func (s *Service) handleLookupBulk(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleGetStatus returns geolocation service status
-func (s *Service) handleGetStatus(w http.ResponseWriter, r *http.Request) {
+// GetStatus returns geolocation service status
+func (s *Service) GetStatus() *Status {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -192,18 +205,17 @@ func (s *Service) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 	ipdenyStatus := ProviderStatus{
 		Name:       "ipdeny",
 		Available:  s.blockingProvider != nil,
-		Configured: true, // Always available, no key needed
+		Configured: true,
 	}
 	if s.blockingProvider != nil {
 		ipdenyStatus.LastUpdate = s.blockingProvider.LastUpdated().Format("2006-01-02 15:04:05")
 	}
 	providers["ipdeny"] = ipdenyStatus
 
-	// Get last update times
 	lastUpdateLookup, _ := settings.GetSetting("geo_last_update_lookup")
 	lastUpdateBlocking, _ := settings.GetSetting("geo_last_update_blocking")
 
-	status := Status{
+	return &Status{
 		LookupProvider:     s.config.LookupProvider,
 		BlockingEnabled:    s.config.BlockingEnabled,
 		BlockingProvider:   s.config.BlockingProvider,
@@ -214,8 +226,11 @@ func (s *Service) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 		LastUpdateBlocking: lastUpdateBlocking,
 		Providers:          providers,
 	}
+}
 
-	router.JSON(w, status)
+// handleGetStatus returns geolocation service status
+func (s *Service) handleGetStatus(w http.ResponseWriter, r *http.Request) {
+	router.JSON(w, s.GetStatus())
 }
 
 // handleTriggerUpdate manually triggers a database update
