@@ -1,5 +1,6 @@
 <script>
   import { toast, apiGet, apiPost, apiPut, apiDelete, confirm, setConfirmLoading } from '../stores/app.js'
+  import { generalInfoStore } from '../stores/websocket.js'
   import { useDataLoader } from '$lib/composables/index.js'
   import { filterByFields } from '$lib/utils/data.js'
   import Icon from '../components/Icon.svelte'
@@ -53,7 +54,40 @@
   let scanClientId = $state(null)
   let scanClientIp = $state('')
   let scanClientName = $state('')
-  let scanAbortController = null
+
+  // Watch WebSocket for scan progress
+  $effect(() => {
+    const info = $generalInfoStore
+    if (!info || !scanning) return
+
+    const event = info.event
+    if ((event === 'scan:progress' || event === 'scan:complete') && info.clientId == scanClientId) {
+      scanProgress = {
+        total: info.total || 0,
+        scanned: info.scanned || 0,
+        found: info.found || 0,
+        completed: info.completed || false
+      }
+
+      // Update discovered ports live
+      if (info.ports && info.ports.length > 0) {
+        discoveredPorts = info.ports
+      }
+
+      if (event === 'scan:complete') {
+        scanning = false
+        if (info.error) {
+          toast('Scan failed: ' + info.error, 'error')
+        } else if (info.stopped) {
+          toast(`Scan stopped. Found ${info.found || 0} ports`, 'info')
+        } else if (info.found === 0) {
+          toast('No open ports found', 'info')
+        } else {
+          toast(`Scan complete. Found ${info.found} open ports`, 'success')
+        }
+      }
+    }
+  })
 
   // Form state
   let formData = $state({
@@ -272,26 +306,21 @@
     selectedPorts = []
 
     try {
-      const res = await apiPost(`/api/vpn/clients/${scanClientId}/scan`, { mode: scanMode })
-      discoveredPorts = res.ports || []
-      scanProgress = { total: res.count, scanned: res.count, found: res.count, completed: true }
-      if (res.count === 0) {
-        toast('No open ports found', 'info')
-      } else {
-        toast(`Found ${res.count} open ports`, 'success')
-      }
+      // Start scan - returns immediately, progress comes via WebSocket
+      await apiPost(`/api/vpn/clients/${scanClientId}/scan`, { mode: scanMode })
     } catch (e) {
-      toast('Scan failed: ' + e.message, 'error')
-    } finally {
+      toast('Failed to start scan: ' + e.message, 'error')
       scanning = false
     }
   }
 
-  function cancelScan() {
-    if (scanAbortController) {
-      scanAbortController.abort()
+  async function stopScan() {
+    if (!scanClientId) return
+    try {
+      await apiDelete(`/api/vpn/clients/${scanClientId}/scan`)
+    } catch (e) {
+      // Scan may have already finished
     }
-    scanning = false
   }
 
   function togglePortSelection(port) {
@@ -703,23 +732,28 @@
         {scanning ? 'Scanning...' : 'Start Scan'}
       </Button>
       {#if scanning}
-        <Button variant="outline" size="sm" icon="x" onclick={cancelScan}>
-          Cancel
+        <Button variant="outline" size="sm" icon="hand-stop" onclick={stopScan}>
+          Stop
         </Button>
       {/if}
     </div>
 
     <!-- Progress Bar -->
     {#if scanning}
+      {@const percent = scanProgress.total > 0 ? Math.round((scanProgress.scanned / scanProgress.total) * 100) : 0}
       <div class="space-y-1">
         <div class="w-full h-2 bg-muted rounded-full overflow-hidden">
           <div
-            class="h-full bg-primary transition-all duration-300"
-            style="width: 100%"
+            class="h-full bg-primary transition-all duration-150"
+            style="width: {percent}%"
           ></div>
         </div>
         <p class="text-xs text-muted-foreground">
-          Scanning ports... This may take a moment.
+          {#if scanProgress.total > 0}
+            Scanning: {scanProgress.scanned.toLocaleString()} / {scanProgress.total.toLocaleString()} ports ({percent}%) — Found: {scanProgress.found}
+          {:else}
+            Starting scan...
+          {/if}
         </p>
       </div>
     {/if}

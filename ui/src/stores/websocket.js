@@ -130,12 +130,14 @@ function handleMessage(msg) {
       // Append log entry to array
       store.update(logs => [...logs, payload])
     } else if (type === 'general_info') {
-      // For general_info, process firewall zone events immediately
-      // to avoid missing rapid messages
+      // For general_info, process events immediately to avoid missing rapid messages
       const event = payload?.event
       if (event === 'firewall:zones:progress' || event === 'firewall:zones:complete' || event === 'firewall:zones:start') {
-        // Dispatch custom event for zone updates so they're not missed
+        // Dispatch custom event for zone updates
         window.dispatchEvent(new CustomEvent('firewall-zone-update', { detail: payload }))
+      } else if (event === 'scan:progress' || event === 'scan:complete') {
+        // Dispatch custom event for port scan updates
+        window.dispatchEvent(new CustomEvent('port-scan-update', { detail: payload }))
       }
       store.set(payload)
     } else {
