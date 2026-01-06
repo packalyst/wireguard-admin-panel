@@ -15,6 +15,7 @@
   import ContentBlock from '../components/ContentBlock.svelte'
   import EmptyState from '../components/EmptyState.svelte'
   import Tabs from '../components/Tabs.svelte'
+  import OptionCard from '../components/OptionCard.svelte'
 
   let { loading = $bindable(true) } = $props()
 
@@ -712,31 +713,28 @@
   {#snippet header()}
     {#if selectedNode}
       <div class="flex items-center gap-3">
-        <div class="w-10 h-10 rounded-xl flex items-center justify-center {selectedNode._online ? 'bg-success/15 text-success' : 'bg-muted text-muted-foreground'}">
-          <Icon name={getDeviceIcon(selectedNode)} size={20} />
+        <div class="w-6 h-6 rounded flex items-center justify-center {selectedNode._online ? 'bg-success/15 text-success' : 'bg-muted text-muted-foreground'}">
+          <Icon name={getDeviceIcon(selectedNode)} size={12} />
         </div>
         <div class="flex-1 min-w-0">
           {#if editingName}
             <div class="flex items-center gap-2">
-              <Input bind:value={newName} class="py-1 text-base font-semibold" onkeydown={(e) => e.key === 'Enter' && saveName()} />
-              <button onclick={saveName} class="p-1 text-success hover:bg-success/10 rounded"><Icon name="check" size={16} /></button>
-              <button onclick={() => editingName = false} class="p-1 text-muted-foreground hover:bg-accent rounded"><Icon name="x" size={16} /></button>
+              <Input
+                bind:value={newName}
+                onkeydown={(e) => e.key === 'Enter' && saveName()} 
+                suffixAddonBtn={{ icon: "check", onclick: saveName ,color:'warning'}}
+              />
             </div>
           {:else}
-            <div class="flex items-center gap-2">
-              <h2 class="text-base font-semibold text-foreground truncate">{selectedNode._displayName}</h2>
-              <button onclick={() => editingName = true} class="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded shrink-0">
-                <Icon name="edit" size={12} />
-              </button>
+            <div class="flex items-center gap-2 mt-0.5">
+              <button onclick={() => editingName = true} class="kt-badge kt-badge-sm kt-badge-outline kt-badge-secondary} cursor-pointer">{selectedNode._displayName} <Icon name="edit" size={12} /></button>
+              <Badge variant={selectedNode._online ? 'success' : 'muted'} size="sm">{selectedNode._online ? 'Online' : 'Offline'}</Badge>
+              <Badge variant={selectedNode._type === 'wireguard' ? 'info' : 'primary'} size="sm">{selectedNode._type === 'wireguard' ? 'WG' : 'TS'}</Badge>
+              {#if selectedNode._type === 'wireguard' && !selectedNode.enabled}<Badge variant="warning" size="sm">Disabled</Badge>{/if}
+              {#if isExitNode}<Badge variant="success" size="sm">Exit</Badge>{/if}
+              <button onclick={toggleDNS} class="kt-badge kt-badge-sm {hasDNS ? 'kt-badge-info' : 'kt-badge-outline kt-badge-secondary'} cursor-pointer" title="Toggle DNS rewrite">DNS</button>
             </div>
           {/if}
-          <div class="flex items-center gap-2 mt-0.5">
-            <Badge variant={selectedNode._online ? 'success' : 'muted'} size="sm">{selectedNode._online ? 'Online' : 'Offline'}</Badge>
-            <Badge variant={selectedNode._type === 'wireguard' ? 'info' : 'primary'} size="sm">{selectedNode._type === 'wireguard' ? 'WG' : 'TS'}</Badge>
-            {#if selectedNode._type === 'wireguard' && !selectedNode.enabled}<Badge variant="warning" size="sm">Disabled</Badge>{/if}
-            {#if isExitNode}<Badge variant="success" size="sm">Exit</Badge>{/if}
-            <button onclick={toggleDNS} class="kt-badge kt-badge-sm {hasDNS ? 'kt-badge-info' : 'kt-badge-outline kt-badge-secondary'} cursor-pointer" title="Toggle DNS rewrite">DNS</button>
-          </div>
         </div>
       </div>
     {/if}
@@ -826,20 +824,8 @@
               <div>
                 <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Tunnel Mode</div>
                 <div class="grid grid-cols-2 gap-2">
-                  <button
-                    onclick={() => tunnelMode = 'full'}
-                    class="p-3 border rounded-lg text-left transition-all {tunnelMode === 'full' ? 'border-primary bg-primary/10' : 'border-border hover:border-primary/50'}"
-                  >
-                    <div class="text-sm font-medium text-foreground">Full</div>
-                    <div class="text-[10px] text-muted-foreground">All traffic</div>
-                  </button>
-                  <button
-                    onclick={() => tunnelMode = 'split'}
-                    class="p-3 border rounded-lg text-left transition-all {tunnelMode === 'split' ? 'border-primary bg-primary/10' : 'border-border hover:border-primary/50'}"
-                  >
-                    <div class="text-sm font-medium text-foreground">Split</div>
-                    <div class="text-[10px] text-muted-foreground">VPN only</div>
-                  </button>
+                  <OptionCard title="Full" description="All traffic" active={tunnelMode === 'full'} onclick={() => tunnelMode = 'full'} />
+                  <OptionCard title="Split" description="VPN only" active={tunnelMode === 'split'} onclick={() => tunnelMode = 'split'} />
                 </div>
               </div>
 
@@ -895,36 +881,9 @@
               <div>
                 <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Access Policy</div>
                 <div class="grid grid-cols-3 gap-2">
-                  <button
-                    onclick={() => aclPolicy = 'block_all'}
-                    class="flex items-center gap-2 p-2.5 border rounded-lg transition-all cursor-pointer {aclPolicy === 'block_all' ? 'border-destructive bg-destructive/10' : 'border-border hover:border-destructive/50'}"
-                  >
-                    <Icon name="ban" size={20} class="shrink-0 {aclPolicy === 'block_all' ? 'text-destructive' : 'text-muted-foreground'}" />
-                    <div class="text-left">
-                      <div class="text-xs font-medium text-foreground">Block All</div>
-                      <div class="text-[9px] text-muted-foreground">Isolated</div>
-                    </div>
-                  </button>
-                  <button
-                    onclick={() => aclPolicy = 'selected'}
-                    class="flex items-center gap-2 p-2.5 border rounded-lg transition-all cursor-pointer {aclPolicy === 'selected' ? 'border-primary bg-primary/10' : 'border-border hover:border-primary/50'}"
-                  >
-                    <Icon name="list-check" size={20} class="shrink-0 {aclPolicy === 'selected' ? 'text-primary' : 'text-muted-foreground'}" />
-                    <div class="text-left">
-                      <div class="text-xs font-medium text-foreground">Selected</div>
-                      <div class="text-[9px] text-muted-foreground">Choose below</div>
-                    </div>
-                  </button>
-                  <button
-                    onclick={() => aclPolicy = 'allow_all'}
-                    class="flex items-center gap-2 p-2.5 border rounded-lg transition-all cursor-pointer {aclPolicy === 'allow_all' ? 'border-success bg-success/10' : 'border-border hover:border-success/50'}"
-                  >
-                    <Icon name="checks" size={20} class="shrink-0 {aclPolicy === 'allow_all' ? 'text-success' : 'text-muted-foreground'}" />
-                    <div class="text-left">
-                      <div class="text-xs font-medium text-foreground">Allow All</div>
-                      <div class="text-[9px] text-muted-foreground">Full access</div>
-                    </div>
-                  </button>
+                  <OptionCard icon="ban" title="Block All" description="Isolated" size="sm" color="destructive" active={aclPolicy === 'block_all'} onclick={() => aclPolicy = 'block_all'} />
+                  <OptionCard icon="list-check" title="Selected" description="Choose below" size="sm" active={aclPolicy === 'selected'} onclick={() => aclPolicy = 'selected'} />
+                  <OptionCard icon="checks" title="Allow All" description="Full access" size="sm" color="success" active={aclPolicy === 'allow_all'} onclick={() => aclPolicy = 'allow_all'} />
                 </div>
               </div>
 
@@ -1028,11 +987,11 @@
                   </div>
                 </div>
               </div>
-              <div class="flex gap-2">
-                <Button onclick={() => confirmAction = null} variant="secondary" class="flex-1 justify-center" disabled={actionLoading}>
+              <div class="flex justify-between">
+                <Button onclick={() => confirmAction = null} variant="secondary" disabled={actionLoading}>
                   Cancel
                 </Button>
-                <Button onclick={deleteNode} variant="destructive" class="flex-1 justify-center" disabled={actionLoading} icon={actionLoading ? undefined : "trash"}>
+                <Button onclick={deleteNode} variant="destructive" disabled={actionLoading} icon={actionLoading ? undefined : "trash"}>
                   {#if actionLoading}
                     <span class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
                   {:else}
@@ -1055,11 +1014,11 @@
                   </div>
                 </div>
               </div>
-              <div class="flex gap-2">
-                <Button onclick={() => confirmAction = null} variant="secondary" class="flex-1 justify-center" disabled={actionLoading}>
+              <div class="flex justify-between">
+                <Button onclick={() => confirmAction = null} variant="secondary" disabled={actionLoading}>
                   Cancel
                 </Button>
-                <Button onclick={expireNode} class="flex-1 justify-center kt-btn-warning" disabled={actionLoading} icon={actionLoading ? undefined : "clock"}>
+                <Button onclick={expireNode} class="kt-btn-warning" disabled={actionLoading} icon={actionLoading ? undefined : "clock"}>
                   {#if actionLoading}
                     <span class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
                   {:else}
@@ -1072,47 +1031,19 @@
             <!-- Normal Actions View -->
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {#if selectedNode._type === 'wireguard'}
-                <button
+                <OptionCard
+                  icon={selectedNode.enabled ? 'hand-off' : 'hand-stop'}
+                  title={selectedNode.enabled ? 'Disable' : 'Enable'}
+                  description={selectedNode.enabled ? 'Block connections' : 'Allow connections'}
+                  color={selectedNode.enabled ? 'warning' : 'success'}
+                  size="lg"
+                  iconBox
                   onclick={toggleWgPeer}
-                  class="flex items-center gap-3 p-4 border rounded-xl text-left hover:bg-accent/50 transition-colors
-                    {selectedNode.enabled ? 'border-warning/30 hover:border-warning/50' : 'border-success/30 hover:border-success/50'}"
-                >
-                  <div class="w-10 h-10 rounded-lg flex items-center justify-center shrink-0
-                    {selectedNode.enabled ? 'bg-warning/15 text-warning' : 'bg-success/15 text-success'}">
-                    <Icon name={selectedNode.enabled ? 'hand-off' : 'hand-stop'} size={20} />
-                  </div>
-                  <div>
-                    <div class="font-medium text-foreground">{selectedNode.enabled ? 'Disable' : 'Enable'}</div>
-                    <div class="text-xs text-muted-foreground">{selectedNode.enabled ? 'Block connections' : 'Allow connections'}</div>
-                  </div>
-                </button>
+                />
               {:else}
-                <button
-                  onclick={() => confirmAction = 'expire'}
-                  class="flex items-center gap-3 p-4 border border-warning/30 rounded-xl text-left hover:bg-warning/5 hover:border-warning/50 transition-colors"
-                >
-                  <div class="w-10 h-10 rounded-lg flex items-center justify-center bg-warning/15 text-warning shrink-0">
-                    <Icon name="clock" size={20} />
-                  </div>
-                  <div>
-                    <div class="font-medium text-foreground">Expire Key</div>
-                    <div class="text-xs text-muted-foreground">Force re-authentication</div>
-                  </div>
-                </button>
+                <OptionCard icon="clock" title="Expire Key" description="Force re-authentication" color="warning" size="lg" iconBox onclick={() => confirmAction = 'expire'} />
               {/if}
-
-              <button
-                onclick={() => confirmAction = 'delete'}
-                class="flex items-center gap-3 p-4 border border-destructive/30 rounded-xl text-left hover:bg-destructive/5 hover:border-destructive/50 transition-colors"
-              >
-                <div class="w-10 h-10 rounded-lg flex items-center justify-center bg-destructive/15 text-destructive shrink-0">
-                  <Icon name="trash" size={20} />
-                </div>
-                <div>
-                  <div class="font-medium text-foreground">Delete</div>
-                  <div class="text-xs text-muted-foreground">Remove permanently</div>
-                </div>
-              </button>
+              <OptionCard icon="trash" title="Delete" description="Remove permanently" color="destructive" size="lg" iconBox onclick={() => confirmAction = 'delete'} />
             </div>
           {/if}
         {/if}
