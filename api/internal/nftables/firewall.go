@@ -248,40 +248,49 @@ func (t *FirewallTable) buildScript(blockedIPsIn, blockedIPsOut, blockedRangesIn
 	sb.WriteString(BuildSet("allowed_udp_ports", "inet_service", nil, udpPorts))
 	sb.WriteString("\n")
 
-	// Input chain
+	// Input chain - traffic destined TO the server (check source address)
 	sb.WriteString(BuildChain("input", "filter", "input", 0, "drop", []string{
-		"# Allow established",
+		"# Allow established connections",
 		"ct state established,related accept",
 		"",
-		"# Allow loopback",
+		"# Allow loopback interface",
 		"iif lo accept",
 		"",
-		"# Allow ICMP",
+		"# Allow ICMP/ping",
 		"ip protocol icmp accept",
 		"ip6 nexthdr icmpv6 accept",
 		"",
-		"# Drop blocked",
+		"# Drop traffic FROM blocked sources (saddr)",
 		"ip saddr @blocked_ips drop",
 		"ip saddr @blocked_ranges drop",
 		"ip saddr @blocked_countries drop",
 		"",
-		"# Allow ports",
+		"# Allow specific ports",
 		"tcp dport @allowed_tcp_ports accept",
 		"udp dport @allowed_udp_ports accept",
 		"",
-		"# Log and drop",
+		"# Log and drop everything else",
 		`limit rate 5/minute log prefix "FIREWALL_DROP: " drop`,
 	}))
 	sb.WriteString("\n")
 
-	// Forward chain
+	// Forward chain - traffic routed THROUGH the server (VPN clients)
+	// Needs both saddr (block bad sources) and daddr (block bad destinations)
 	sb.WriteString(BuildChain("forward", "filter", "forward", -1, "accept", []string{
+		"# Allow established connections",
 		"ct state established,related accept",
 		"",
+		"# Drop traffic FROM blocked sources (saddr)",
 		"ip saddr @blocked_ips drop",
 		"ip saddr @blocked_ranges drop",
 		"ip saddr @blocked_countries drop",
 		"",
+		"# Drop traffic TO blocked destinations (daddr)",
+		"ip daddr @blocked_ips_out drop",
+		"ip daddr @blocked_ranges_out drop",
+		"ip daddr @blocked_countries_out drop",
+		"",
+		"# Log and allow VPN traffic",
 		`iifname "wg0" ct state new log prefix "VPN_TRAFFIC: " accept`,
 		`oifname "wg0" accept`,
 		`iifname "tailscale0" ct state new log prefix "VPN_TRAFFIC: " accept`,
@@ -289,10 +298,12 @@ func (t *FirewallTable) buildScript(blockedIPsIn, blockedIPsOut, blockedRangesIn
 	}))
 	sb.WriteString("\n")
 
-	// Output chain
+	// Output chain - traffic originating FROM the server (check destination address)
 	sb.WriteString(BuildChain("output", "filter", "output", 0, "accept", []string{
+		"# Allow established connections",
 		"ct state established,related accept",
 		"",
+		"# Drop traffic TO blocked destinations (daddr)",
 		"ip daddr @blocked_ips_out drop",
 		"ip daddr @blocked_ranges_out drop",
 		"ip daddr @blocked_countries_out drop",
