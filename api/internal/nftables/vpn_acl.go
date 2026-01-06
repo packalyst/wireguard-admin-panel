@@ -52,8 +52,9 @@ type vpnClient struct {
 }
 
 type aclRule struct {
-	SourceID int64
-	TargetID int64
+	SourceID      int64
+	TargetID      int64
+	Bidirectional bool
 }
 
 func (t *VPNACLTable) loadClients() (map[int64]vpnClient, error) {
@@ -75,7 +76,7 @@ func (t *VPNACLTable) loadClients() (map[int64]vpnClient, error) {
 }
 
 func (t *VPNACLTable) loadRules() ([]aclRule, error) {
-	rows, err := t.db.Query(`SELECT source_client_id, target_client_id FROM vpn_acl_rules`)
+	rows, err := t.db.Query(`SELECT source_client_id, target_client_id, bidirectional FROM vpn_acl_rules`)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +85,7 @@ func (t *VPNACLTable) loadRules() ([]aclRule, error) {
 	var rules []aclRule
 	for rows.Next() {
 		var r aclRule
-		if err := rows.Scan(&r.SourceID, &r.TargetID); err != nil {
+		if err := rows.Scan(&r.SourceID, &r.TargetID, &r.Bidirectional); err != nil {
 			continue
 		}
 		rules = append(rules, r)
@@ -124,22 +125,42 @@ func (t *VPNACLTable) buildScript(clients map[int64]vpnClient, rules []aclRule, 
 	sb.WriteString("        ip protocol icmp accept\n\n")
 	sb.WriteString("        # === VPN ACL Rules ===\n\n")
 
+	// Handle block_all clients first - explicit drop before any accept
+	for _, c := range clients {
+		if !ValidateIPOrCIDR(c.IP) {
+			continue
+		}
+		if c.Policy == helper.ACLPolicyBlockAll {
+			safeName := SanitizeComment(c.Name)
+			sb.WriteString(fmt.Sprintf("        # %s [block_all]\n", safeName))
+			sb.WriteString(fmt.Sprintf("        ip saddr %s drop\n", c.IP))
+			sb.WriteString(fmt.Sprintf("        ip daddr %s drop\n\n", c.IP))
+		}
+	}
+
 	allowedPairs := make(map[string]bool)
 
-	// Handle allow_all policy clients first
+	// Handle allow_all policy clients
+	// allow_all = can reach everyone AND everyone can reach them
 	for _, c := range clients {
-		// Skip clients with invalid IPs
 		if !ValidateIPOrCIDR(c.IP) {
 			continue
 		}
 		if c.Policy == helper.ACLPolicyAllowAll {
 			safeName := SanitizeComment(c.Name)
-			sb.WriteString(fmt.Sprintf("        # %s [allow_all]\n", safeName))
+			sb.WriteString(fmt.Sprintf("        # %s [allow_all] - outbound\n", safeName))
 			if wgIPRange != "" {
 				sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s accept\n", c.IP, wgIPRange))
 			}
 			if hsIPRange != "" {
 				sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s accept\n", c.IP, hsIPRange))
+			}
+			sb.WriteString(fmt.Sprintf("        # %s [allow_all] - inbound\n", safeName))
+			if wgIPRange != "" {
+				sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s accept\n", wgIPRange, c.IP))
+			}
+			if hsIPRange != "" {
+				sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s accept\n", hsIPRange, c.IP))
 			}
 			sb.WriteString("\n")
 		}
@@ -153,26 +174,37 @@ func (t *VPNACLTable) buildScript(clients map[int64]vpnClient, rules []aclRule, 
 			continue
 		}
 
-		// Skip clients with invalid IPs
 		if !ValidateIPOrCIDR(src.IP) || !ValidateIPOrCIDR(dst.IP) {
 			continue
 		}
 
-		// Skip if either has block_all
+		// Skip if either has block_all (isolated)
 		if src.Policy == helper.ACLPolicyBlockAll || dst.Policy == helper.ACLPolicyBlockAll {
 			continue
 		}
 
-		// Skip if source has allow_all (already covered)
-		if src.Policy == helper.ACLPolicyAllowAll {
-			continue
+		// Generate source→target rule
+		// Skip if src has allow_all (covered by blanket outbound)
+		// Skip if dst has allow_all (covered by blanket inbound)
+		if src.Policy != helper.ACLPolicyAllowAll && dst.Policy != helper.ACLPolicyAllowAll {
+			key := fmt.Sprintf("%s->%s", src.IP, dst.IP)
+			if !allowedPairs[key] {
+				sb.WriteString(fmt.Sprintf("        # %s -> %s\n", SanitizeComment(src.Name), SanitizeComment(dst.Name)))
+				sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s accept\n\n", src.IP, dst.IP))
+				allowedPairs[key] = true
+			}
 		}
 
-		key := fmt.Sprintf("%s->%s", src.IP, dst.IP)
-		if !allowedPairs[key] {
-			sb.WriteString(fmt.Sprintf("        # %s -> %s\n", SanitizeComment(src.Name), SanitizeComment(dst.Name)))
-			sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s accept\n\n", src.IP, dst.IP))
-			allowedPairs[key] = true
+		// Generate target→source rule if bidirectional
+		// Skip if dst has allow_all (covered by blanket outbound)
+		// Skip if src has allow_all (covered by blanket inbound)
+		if rule.Bidirectional && dst.Policy != helper.ACLPolicyAllowAll && src.Policy != helper.ACLPolicyAllowAll {
+			reverseKey := fmt.Sprintf("%s->%s", dst.IP, src.IP)
+			if !allowedPairs[reverseKey] {
+				sb.WriteString(fmt.Sprintf("        # %s -> %s [bi]\n", SanitizeComment(dst.Name), SanitizeComment(src.Name)))
+				sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s accept\n\n", dst.IP, src.IP))
+				allowedPairs[reverseKey] = true
+			}
 		}
 	}
 

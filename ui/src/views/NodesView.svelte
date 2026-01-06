@@ -36,8 +36,7 @@
   // ACL state
   let selectedVpnClient = $state(null)
   let aclPolicy = $state('selected')
-  let allowedClientIds = $state([])
-  let bidirectionalMap = $state({}) // targetId -> boolean
+  let aclView = $state([]) // All clients with isEnabled/isBi state from API
   let aclLoading = $state(false)
   let aclSyncing = $state(false)
   let hasDNS = $state(false)
@@ -85,14 +84,8 @@
       const data = await apiGet(`/api/vpn/clients/${client.id}`)
       selectedVpnClient = data.client
       aclPolicy = data.client.aclPolicy || 'selected'
-      allowedClientIds = (data.rules || []).map(r => r.targetClientId)
+      aclView = data.aclView || []
       hasDNS = data.hasDNS || false
-      // Build bidirectional map from API response
-      const biMap = {}
-      for (const rule of (data.rules || [])) {
-        biMap[rule.targetClientId] = rule.isBidirectional || false
-      }
-      bidirectionalMap = biMap
       return data.client
     } catch (e) {
       return null
@@ -103,10 +96,14 @@
     if (!selectedVpnClient) return
     aclLoading = true
     try {
+      // Build rules array from aclView state
+      const rules = aclView
+        .filter(c => c.isEnabled)
+        .map(c => ({ targetId: c.id, bidirectional: c.isBi || false }))
+
       await apiPut(`/api/vpn/clients/${selectedVpnClient.id}/acl`, {
         policy: aclPolicy,
-        allowedClientIds: allowedClientIds,
-        bidirectional: bidirectionalMap
+        rules: rules
       })
       // Auto-apply rules after saving
       await apiPost('/api/vpn/apply')
@@ -135,20 +132,16 @@
     }
   }
 
-  function toggleAllowedClient(clientId) {
-    if (allowedClientIds.includes(clientId)) {
-      allowedClientIds = allowedClientIds.filter(id => id !== clientId)
-      // Also remove from bidirectional map
-      const newMap = { ...bidirectionalMap }
-      delete newMap[clientId]
-      bidirectionalMap = newMap
-    } else {
-      allowedClientIds = [...allowedClientIds, clientId]
-    }
+  function toggleClient(clientId) {
+    aclView = aclView.map(c =>
+      c.id === clientId ? { ...c, isEnabled: !c.isEnabled, isBi: !c.isEnabled ? c.isBi : false } : c
+    )
   }
 
   function toggleBidirectional(clientId) {
-    bidirectionalMap = { ...bidirectionalMap, [clientId]: !bidirectionalMap[clientId] }
+    aclView = aclView.map(c =>
+      c.id === clientId ? { ...c, isBi: !c.isBi } : c
+    )
   }
 
   onMount(() => {
@@ -177,11 +170,11 @@
   })
   let activeTab = $state('overview')
 
-  // Dynamic tabs based on node type and router status
+  // Dynamic tabs based on node type
   const detailTabs = $derived(
     selectedNode?._type === 'wireguard'
-      ? [{id:'overview',label:'Overview'},{id:'qr',label:'QR & Config'},...(routerRunning ? [{id:'access',label:'Access'}] : []),{id:'actions',label:'Actions'}]
-      : [{id:'overview',label:'Overview'},{id:'network',label:'Network'},...(routerRunning ? [{id:'access',label:'Access'}] : []),{id:'security',label:'Actions'}]
+      ? [{id:'overview',label:'Overview'},{id:'qr',label:'QR & Config'},{id:'access',label:'Access'},{id:'actions',label:'Actions'}]
+      : [{id:'overview',label:'Overview'},{id:'network',label:'Network'},{id:'access',label:'Access'},{id:'security',label:'Actions'}]
   )
 
   let showCreateModal = $state(false)
@@ -339,8 +332,7 @@
     // Reset ACL state
     selectedVpnClient = null
     aclPolicy = 'selected'
-    allowedClientIds = []
-    bidirectionalMap = {}
+    aclView = []
     hasDNS = false
     showNodeModal = true
     // Load VPN client for DNS toggle
@@ -902,62 +894,96 @@
               <!-- Access Policy -->
               <div>
                 <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Access Policy</div>
-                <div class="grid grid-cols-2 gap-2">
+                <div class="grid grid-cols-3 gap-2">
                   <button
                     onclick={() => aclPolicy = 'block_all'}
-                    class="p-3 border rounded-lg text-left transition-all {aclPolicy === 'block_all' ? 'border-destructive bg-destructive/10' : 'border-border hover:border-destructive/50'}"
+                    class="flex items-center gap-2 p-2.5 border rounded-lg transition-all cursor-pointer {aclPolicy === 'block_all' ? 'border-destructive bg-destructive/10' : 'border-border hover:border-destructive/50'}"
                   >
-                    <div class="text-sm font-medium text-foreground">Block All</div>
-                    <div class="text-[10px] text-muted-foreground">Isolated - no access</div>
+                    <Icon name="ban" size={20} class="shrink-0 {aclPolicy === 'block_all' ? 'text-destructive' : 'text-muted-foreground'}" />
+                    <div class="text-left">
+                      <div class="text-xs font-medium text-foreground">Block All</div>
+                      <div class="text-[9px] text-muted-foreground">Isolated</div>
+                    </div>
                   </button>
                   <button
                     onclick={() => aclPolicy = 'selected'}
-                    class="p-3 border rounded-lg text-left transition-all {aclPolicy === 'selected' ? 'border-primary bg-primary/10' : 'border-border hover:border-primary/50'}"
+                    class="flex items-center gap-2 p-2.5 border rounded-lg transition-all cursor-pointer {aclPolicy === 'selected' ? 'border-primary bg-primary/10' : 'border-border hover:border-primary/50'}"
                   >
-                    <div class="text-sm font-medium text-foreground">Selected</div>
-                    <div class="text-[10px] text-muted-foreground">Choose targets below</div>
+                    <Icon name="list-check" size={20} class="shrink-0 {aclPolicy === 'selected' ? 'text-primary' : 'text-muted-foreground'}" />
+                    <div class="text-left">
+                      <div class="text-xs font-medium text-foreground">Selected</div>
+                      <div class="text-[9px] text-muted-foreground">Choose below</div>
+                    </div>
                   </button>
                   <button
                     onclick={() => aclPolicy = 'allow_all'}
-                    class="p-3 border rounded-lg text-left transition-all col-span-2 {aclPolicy === 'allow_all' ? 'border-warning bg-warning/10' : 'border-border hover:border-warning/50'}"
+                    class="flex items-center gap-2 p-2.5 border rounded-lg transition-all cursor-pointer {aclPolicy === 'allow_all' ? 'border-success bg-success/10' : 'border-border hover:border-success/50'}"
                   >
-                    <div class="text-sm font-medium text-foreground">Allow All</div>
-                    <div class="text-[10px] text-muted-foreground">Can reach all clients</div>
+                    <Icon name="checks" size={20} class="shrink-0 {aclPolicy === 'allow_all' ? 'text-success' : 'text-muted-foreground'}" />
+                    <div class="text-left">
+                      <div class="text-xs font-medium text-foreground">Allow All</div>
+                      <div class="text-[9px] text-muted-foreground">Full access</div>
+                    </div>
                   </button>
                 </div>
               </div>
 
               {#if aclPolicy === 'selected'}
+                <!-- Router info when not running -->
+                {#if !routerRunning}
+                  <div class="p-3 bg-info/10 border border-info/20 rounded-lg flex items-start gap-2 text-xs">
+                    <Icon name="info-circle" size={14} class="text-info shrink-0 mt-0.5" />
+                    <div>
+                      {#if selectedNode?._type === 'wireguard'}
+                        <span class="text-foreground">Only WireGuard clients are shown.</span>
+                        <span class="text-muted-foreground">Enable VPN Router to allow communication with Tailscale nodes.</span>
+                      {:else}
+                        <span class="text-foreground">Only Tailscale clients are shown.</span>
+                        <span class="text-muted-foreground">Enable VPN Router to allow communication with WireGuard nodes.</span>
+                      {/if}
+                    </div>
+                  </div>
+                {/if}
+
                 <!-- Client Selection -->
                 <div>
                   <div class="flex items-center justify-between mb-2">
                     <div class="text-[10px] uppercase tracking-wide text-muted-foreground">This client can reach:</div>
-                    <span class="text-[10px] text-muted-foreground">{allowedClientIds.length} selected</span>
+                    <span class="text-[10px] text-muted-foreground">{aclView.filter(c => c.isEnabled).length} selected</span>
                   </div>
                   <div class="border border-border rounded-lg max-h-48 overflow-y-auto">
-                    {#each vpnClients.filter(c => c.id !== selectedVpnClient?.id && c.aclPolicy !== 'block_all' && c.aclPolicy !== 'allow_all') as client}
-                      <div class="flex items-center gap-2 p-2.5 border-b border-border last:border-b-0 hover:bg-accent/30 transition-colors">
+                    {#each aclView.filter(c => routerRunning || (selectedNode?._type === 'wireguard' ? c.type === 'wireguard' : c.type === 'headscale')) as client}
+                      {@const isBlockedPolicy = client.aclPolicy === 'block_all' || client.aclPolicy === 'allow_all'}
+                      <div class="flex items-center gap-2 p-2.5 border-b border-border last:border-b-0 {isBlockedPolicy ? 'opacity-60' : 'hover:bg-accent/30'} transition-colors">
                         <!-- Allow checkbox -->
                         <button
-                          onclick={() => toggleAllowedClient(client.id)}
+                          onclick={() => !isBlockedPolicy && toggleClient(client.id)}
+                          disabled={isBlockedPolicy}
                           class="w-5 h-5 rounded border flex items-center justify-center shrink-0
-                            {allowedClientIds.includes(client.id) ? 'bg-primary border-primary text-white' : 'border-border'}"
+                            {isBlockedPolicy ? 'border-border bg-muted cursor-not-allowed' : client.isEnabled ? 'bg-primary border-primary text-white cursor-pointer' : 'border-border cursor-pointer'}"
                         >
-                          {#if allowedClientIds.includes(client.id)}
+                          {#if client.isEnabled && !isBlockedPolicy}
                             <Icon name="check" size={12} />
                           {/if}
                         </button>
                         <!-- Client info -->
-                        <div class="flex-1 min-w-0" onclick={() => toggleAllowedClient(client.id)} onkeydown={(e) => e.key === 'Enter' && toggleAllowedClient(client.id)} role="button" tabindex="0">
-                          <div class="text-sm font-medium text-foreground truncate cursor-pointer">{client.name}</div>
-                          <div class="text-[10px] text-muted-foreground">{client.ip} • {client.type === 'wireguard' ? 'WG' : 'TS'}</div>
+                        <div class="flex-1 min-w-0" onclick={() => !isBlockedPolicy && toggleClient(client.id)} role="button" tabindex="0" class:cursor-pointer={!isBlockedPolicy}>
+                          <div class="text-sm font-medium text-foreground truncate">{client.name}</div>
+                          <div class="text-[10px] text-muted-foreground">
+                            {client.ip} • {client.type === 'wireguard' ? 'WG' : 'TS'}
+                            {#if client.aclPolicy === 'block_all'}
+                              <span class="text-destructive ml-1">• Can't be reached</span>
+                            {:else if client.aclPolicy === 'allow_all'}
+                              <span class="text-success ml-1">• You can connect</span>
+                            {/if}
+                          </div>
                         </div>
-                        <!-- Bidirectional checkbox (only if allowed and target has 'selected' policy) -->
-                        {#if allowedClientIds.includes(client.id) && client.aclPolicy === 'selected'}
+                        <!-- Bidirectional toggle (only if enabled and target has 'selected' policy) -->
+                        {#if client.isEnabled && client.aclPolicy === 'selected'}
                           <button
                             onclick={() => toggleBidirectional(client.id)}
                             class="flex items-center gap-1.5 px-2 py-1 rounded text-[10px] transition-colors shrink-0
-                              {bidirectionalMap[client.id] ? 'bg-info/15 text-info border border-info/30' : 'bg-muted/50 text-muted-foreground border border-border hover:border-info/30'}"
+                              {client.isBi ? 'bg-info/15 text-info border border-info/30' : 'bg-muted/50 text-muted-foreground border border-border hover:border-info/30'}"
                             title="Allow {client.name} to also reach this client"
                           >
                             <Icon name="arrows-right-left" size={12} />
@@ -967,20 +993,20 @@
                       </div>
                     {:else}
                       <div class="p-4 text-center text-sm text-muted-foreground">
-                        No eligible clients found
+                        No clients found
                       </div>
                     {/each}
                   </div>
                   <p class="text-[10px] text-muted-foreground mt-2">
-                    <Icon name="info-circle" size={10} class="inline" /> Clients with "Block All" or "Allow All" policies are hidden. Use "Bi" to also allow them to reach you.
+                    <Icon name="info-circle" size={10} class="inline" /> Use "Bi" to allow bidirectional communication. Clients with special policies (Block All/Allow All) cannot be selected.
                   </p>
                 </div>
               {/if}
 
               <!-- Save Button -->
-              <div class="pt-2">
-                <Button onclick={saveAcl} class="w-full justify-center" disabled={aclLoading}>
-                  {aclLoading ? 'Saving...' : 'Save & Apply Rules'}
+              <div class="pt-3 mt-3 border-t border-dashed border-border flex justify-end">
+                <Button onclick={saveAcl} disabled={aclLoading} icon={aclLoading ? undefined : 'device-floppy'}>
+                  {aclLoading ? 'Saving...' : 'Save & Apply'}
                 </Button>
               </div>
             {/if}

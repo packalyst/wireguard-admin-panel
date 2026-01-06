@@ -120,25 +120,36 @@ type VPNClient struct {
 	AllowedCount int `json:"allowedCount,omitempty"`
 }
 
-// ACLRule represents an ACL rule between two clients (source can reach target)
+// ACLRule represents an ACL rule between two clients
 type ACLRule struct {
 	ID             int       `json:"id"`
 	SourceClientID int       `json:"sourceClientId"`
 	TargetClientID int       `json:"targetClientId"`
+	Bidirectional  bool      `json:"bidirectional"`
 	CreatedAt      time.Time `json:"createdAt"`
-	// Enriched fields
-	TargetName      string `json:"targetName,omitempty"`
-	TargetIP        string `json:"targetIp,omitempty"`
-	TargetType      string `json:"targetType,omitempty"`
-	TargetPolicy    string `json:"targetPolicy,omitempty"`    // For UI to know if bidirectional is possible
-	IsBidirectional bool   `json:"isBidirectional,omitempty"` // True if reverse rule exists
+}
+
+// ACLClientView represents how a client appears in the ACL list
+type ACLClientView struct {
+	ID        int    `json:"id"`
+	Name      string `json:"name"`
+	IP        string `json:"ip"`
+	Type      string `json:"type"`
+	Policy    string `json:"aclPolicy"`
+	IsEnabled bool   `json:"isEnabled"` // Can current client reach this one
+	IsBi      bool   `json:"isBi"`      // Is relationship bidirectional
 }
 
 // ClientACLUpdate is the request body for updating a client's ACL
 type ClientACLUpdate struct {
-	Policy           string          `json:"policy"`
-	AllowedClientIDs []int           `json:"allowedClientIds"`
-	Bidirectional    map[int]bool    `json:"bidirectional"` // targetId -> add reverse rule
+	Policy        string       `json:"policy"`
+	AllowedRules  []ACLRuleReq `json:"rules"` // New format: list of rules with bi flag
+}
+
+// ACLRuleReq is a single rule in the update request
+type ACLRuleReq struct {
+	TargetID      int  `json:"targetId"`
+	Bidirectional bool `json:"bidirectional"`
 }
 
 // New creates a new VPN service
@@ -247,13 +258,13 @@ func (s *Service) handleGetClient(w http.ResponseWriter, r *http.Request) {
 	}
 	c.ExternalID = database.StringFromNull(externalID, "")
 
-	// Get ACL rules for this client
-	rules := s.getClientACLRules(c.ID)
+	// Get ACL view for this client (all other clients with enabled/bi state)
+	aclView := s.getClientACLView(c.ID)
 
 	router.JSON(w, map[string]interface{}{
-		"client": c,
-		"rules":  rules,
-		"hasDNS": HasClientDNS(c.Name),
+		"client":  c,
+		"aclView": aclView,
+		"hasDNS":  HasClientDNS(c.Name),
 	})
 }
 
@@ -311,7 +322,7 @@ func (s *Service) handleUpdateACL(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "invalid path", http.StatusBadRequest)
 		return
 	}
-	id, err := strconv.Atoi(parts[0])
+	viewerID, err := strconv.Atoi(parts[0])
 	if err != nil {
 		router.JSONError(w, "invalid client ID", http.StatusBadRequest)
 		return
@@ -322,7 +333,6 @@ func (s *Service) handleUpdateACL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate policy
 	if !helper.IsValidACLPolicy(req.Policy) {
 		router.JSONError(w, "invalid policy", http.StatusBadRequest)
 		return
@@ -333,6 +343,7 @@ func (s *Service) handleUpdateACL(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
 	tx, err := db.Begin()
 	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusInternalServerError)
@@ -341,97 +352,33 @@ func (s *Service) handleUpdateACL(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 
 	// Update client policy
-	_, err = tx.Exec(`
-		UPDATE vpn_clients
-		SET acl_policy = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?
-	`, req.Policy, id)
-	if err != nil {
+	if _, err = tx.Exec(`UPDATE vpn_clients SET acl_policy = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, req.Policy, viewerID); err != nil {
 		router.JSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Handle different policies
+	// Handle policy-specific logic
 	switch req.Policy {
 	case helper.ACLPolicyBlockAll:
-		// Client is isolated - delete all rules where they are source OR target
-		_, err = tx.Exec(`DELETE FROM vpn_acl_rules WHERE source_client_id = ? OR target_client_id = ?`, id, id)
-		if err != nil {
+		// Isolated: delete all rules involving this client
+		if _, err = tx.Exec(`DELETE FROM vpn_acl_rules WHERE source_client_id = ? OR target_client_id = ?`, viewerID, viewerID); err != nil {
 			router.JSONError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
 	case helper.ACLPolicyAllowAll:
-		// Client can reach everyone - no need for individual rules, delete where source=this
-		_, err = tx.Exec(`DELETE FROM vpn_acl_rules WHERE source_client_id = ?`, id)
-		if err != nil {
+		// Can reach everyone: delete rules where viewer is source (blanket rule covers it)
+		// Keep rules where viewer is target (others explicitly allowed viewer)
+		if _, err = tx.Exec(`DELETE FROM vpn_acl_rules WHERE source_client_id = ?`, viewerID); err != nil {
 			router.JSONError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
 	case helper.ACLPolicySelected:
-		// Delete existing rules where this client is source
-		_, err = tx.Exec(`DELETE FROM vpn_acl_rules WHERE source_client_id = ?`, id)
-		if err != nil {
+		// Apply state machine for each rule
+		if err := s.applyACLRules(tx, viewerID, req.AllowedRules); err != nil {
 			router.JSONError(w, err.Error(), http.StatusInternalServerError)
 			return
-		}
-
-		// Pre-fetch policies for all target clients to avoid N+1 queries
-		targetPolicies := make(map[int]string)
-		if len(req.AllowedClientIDs) > 0 {
-			// Build query with placeholders
-			placeholders := make([]string, len(req.AllowedClientIDs))
-			args := make([]interface{}, len(req.AllowedClientIDs))
-			for i, tid := range req.AllowedClientIDs {
-				placeholders[i] = "?"
-				args[i] = tid
-			}
-			policyRows, err := tx.Query(
-				`SELECT id, acl_policy FROM vpn_clients WHERE id IN (`+strings.Join(placeholders, ",")+`)`,
-				args...,
-			)
-			if err == nil {
-				for policyRows.Next() {
-					var tid int
-					var policy string
-					if err := policyRows.Scan(&tid, &policy); err == nil {
-						targetPolicies[tid] = policy
-					}
-				}
-				policyRows.Close()
-			}
-		}
-
-		// Add rules for selected clients
-		for _, targetID := range req.AllowedClientIDs {
-			if targetID == id {
-				continue // Can't allow self
-			}
-			// Insert rule: this client can reach target
-			_, err = tx.Exec(`
-				INSERT OR IGNORE INTO vpn_acl_rules (source_client_id, target_client_id)
-				VALUES (?, ?)
-			`, id, targetID)
-			if err != nil {
-				router.JSONError(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-
-			// Handle bidirectional: if checked, add reverse rule (only if target has "selected" policy)
-			if req.Bidirectional != nil && req.Bidirectional[targetID] {
-				// Only add reverse rule if target has "selected" policy
-				if targetPolicies[targetID] == helper.ACLPolicySelected {
-					_, err = tx.Exec(`
-						INSERT OR IGNORE INTO vpn_acl_rules (source_client_id, target_client_id)
-						VALUES (?, ?)
-					`, targetID, id)
-					if err != nil {
-						router.JSONError(w, err.Error(), http.StatusInternalServerError)
-						return
-					}
-				}
-			}
 		}
 	}
 
@@ -441,6 +388,131 @@ func (s *Service) handleUpdateACL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	router.JSON(w, map[string]string{"status": "ok"})
+}
+
+// applyACLRules implements the ACL state machine
+// One entry per client pair - handles enable/disable/bidirectional transitions
+func (s *Service) applyACLRules(tx *sql.Tx, viewerID int, desiredRules []ACLRuleReq) error {
+	// Build desired state map: targetID -> (enabled, bi)
+	desired := make(map[int]ACLRuleReq)
+	for _, r := range desiredRules {
+		if r.TargetID != viewerID {
+			desired[r.TargetID] = r
+		}
+	}
+
+	// Get current rules involving viewer
+	rows, err := tx.Query(`
+		SELECT id, source_client_id, target_client_id, bidirectional
+		FROM vpn_acl_rules
+		WHERE source_client_id = ? OR target_client_id = ?
+	`, viewerID, viewerID)
+	if err != nil {
+		return err
+	}
+
+	type currentRule struct {
+		id       int
+		srcID    int
+		tgtID    int
+		bi       bool
+		otherID  int
+		isSrc    bool // viewer is source
+	}
+	var current []currentRule
+	for rows.Next() {
+		var r currentRule
+		if err := rows.Scan(&r.id, &r.srcID, &r.tgtID, &r.bi); err != nil {
+			rows.Close()
+			return err
+		}
+		if r.srcID == viewerID {
+			r.otherID = r.tgtID
+			r.isSrc = true
+		} else {
+			r.otherID = r.srcID
+			r.isSrc = false
+		}
+		current = append(current, r)
+	}
+	rows.Close()
+
+	// Build current state map
+	currentMap := make(map[int]currentRule)
+	for _, r := range current {
+		currentMap[r.otherID] = r
+	}
+
+	// Process each desired rule
+	for targetID, want := range desired {
+		cur, exists := currentMap[targetID]
+
+		if !exists {
+			// No entry exists - INSERT new rule
+			if _, err := tx.Exec(`INSERT INTO vpn_acl_rules (source_client_id, target_client_id, bidirectional) VALUES (?, ?, ?)`,
+				viewerID, targetID, want.Bidirectional); err != nil {
+				return err
+			}
+		} else if cur.isSrc {
+			// Viewer is source: (viewer, target, bi)
+			if cur.bi != want.Bidirectional {
+				// Update bi flag
+				if _, err := tx.Exec(`UPDATE vpn_acl_rules SET bidirectional = ? WHERE id = ?`, want.Bidirectional, cur.id); err != nil {
+					return err
+				}
+			}
+		} else {
+			// Viewer is target: (target, viewer, bi)
+			if want.Bidirectional && !cur.bi {
+				// Want bi, currently not bi: set bi=true
+				if _, err := tx.Exec(`UPDATE vpn_acl_rules SET bidirectional = 1 WHERE id = ?`, cur.id); err != nil {
+					return err
+				}
+			} else if !want.Bidirectional && cur.bi {
+				// Want no bi, currently bi: swap direction to (viewer, target, bi=false)
+				if _, err := tx.Exec(`UPDATE vpn_acl_rules SET source_client_id = ?, target_client_id = ?, bidirectional = 0 WHERE id = ?`,
+					viewerID, targetID, cur.id); err != nil {
+					return err
+				}
+			} else if !want.Bidirectional && !cur.bi {
+				// Other has one-way to viewer, viewer wants one-way to other: set bi=true
+				if _, err := tx.Exec(`UPDATE vpn_acl_rules SET bidirectional = 1 WHERE id = ?`, cur.id); err != nil {
+					return err
+				}
+			}
+		}
+		delete(currentMap, targetID)
+	}
+
+	// Remove rules for clients no longer in desired list
+	for _, cur := range currentMap {
+		if cur.isSrc {
+			// Viewer was source, now disabled
+			if cur.bi {
+				// bi=true: reverse to keep other→viewer direction
+				if _, err := tx.Exec(`UPDATE vpn_acl_rules SET source_client_id = ?, target_client_id = ?, bidirectional = 0 WHERE id = ?`,
+					cur.tgtID, viewerID, cur.id); err != nil {
+					return err
+				}
+			} else {
+				// bi=false: just delete
+				if _, err := tx.Exec(`DELETE FROM vpn_acl_rules WHERE id = ?`, cur.id); err != nil {
+					return err
+				}
+			}
+		} else {
+			// Viewer was target - other client had enabled viewer
+			if cur.bi {
+				// bi=true: viewer was allowing reverse, now removing - set bi=false
+				if _, err := tx.Exec(`UPDATE vpn_acl_rules SET bidirectional = 0 WHERE id = ?`, cur.id); err != nil {
+					return err
+				}
+			}
+			// bi=false: viewer can't unilaterally delete other's rule, just remove bi access
+		}
+	}
+
+	return nil
 }
 
 func (s *Service) handleApplyRules(w http.ResponseWriter, r *http.Request) {
@@ -486,40 +558,85 @@ func (s *Service) handleRemoveRouter(w http.ResponseWriter, r *http.Request) {
 
 // --- Helper Methods ---
 
-func (s *Service) getClientACLRules(clientID int) []ACLRule {
+// getClientACLView returns how each client appears in the ACL list for the given viewer
+func (s *Service) getClientACLView(viewerID int) []ACLClientView {
 	db, err := database.GetDB()
 	if err != nil {
 		return nil
 	}
 
-	// Get rules where this client is source, include target's policy and check if reverse rule exists
-	// Uses subquery to check for bidirectional in single query (avoids N+1)
+	// Get all clients except the viewer
 	rows, err := db.Query(`
-		SELECT r.id, r.source_client_id, r.target_client_id, r.created_at,
-		       c.name, c.ip, c.type, c.acl_policy,
-		       EXISTS(SELECT 1 FROM vpn_acl_rules rev
-		              WHERE rev.source_client_id = r.target_client_id
-		              AND rev.target_client_id = r.source_client_id) as is_bidirectional
-		FROM vpn_acl_rules r
-		JOIN vpn_clients c ON r.target_client_id = c.id
-		WHERE r.source_client_id = ?
-		ORDER BY c.name
-	`, clientID)
+		SELECT c.id, c.name, c.ip, c.type, c.acl_policy
+		FROM vpn_clients c
+		WHERE c.id != ?
+		ORDER BY c.type, c.name
+	`, viewerID)
 	if err != nil {
 		return nil
 	}
 	defer rows.Close()
 
-	rules := []ACLRule{}
+	var clients []ACLClientView
 	for rows.Next() {
-		var r ACLRule
-		if err := rows.Scan(&r.ID, &r.SourceClientID, &r.TargetClientID, &r.CreatedAt,
-			&r.TargetName, &r.TargetIP, &r.TargetType, &r.TargetPolicy, &r.IsBidirectional); err != nil {
+		var c ACLClientView
+		if err := rows.Scan(&c.ID, &c.Name, &c.IP, &c.Type, &c.Policy); err != nil {
 			continue
 		}
-		rules = append(rules, r)
+		clients = append(clients, c)
 	}
-	return rules
+
+	// Get all rules involving the viewer (as source or target)
+	ruleRows, err := db.Query(`
+		SELECT source_client_id, target_client_id, bidirectional
+		FROM vpn_acl_rules
+		WHERE source_client_id = ? OR target_client_id = ?
+	`, viewerID, viewerID)
+	if err != nil {
+		return clients
+	}
+	defer ruleRows.Close()
+
+	// Build lookup: for each other client, determine enabled/bi state
+	type ruleInfo struct {
+		isSource bool // viewer is source
+		bi       bool
+	}
+	ruleLookup := make(map[int]ruleInfo) // otherClientID -> info
+
+	for ruleRows.Next() {
+		var srcID, tgtID int
+		var bi bool
+		if err := ruleRows.Scan(&srcID, &tgtID, &bi); err != nil {
+			continue
+		}
+		if srcID == viewerID {
+			// Viewer is source: can reach target
+			ruleLookup[tgtID] = ruleInfo{isSource: true, bi: bi}
+		} else {
+			// Viewer is target: other client can reach viewer
+			// Viewer can reach other only if bi=true
+			ruleLookup[srcID] = ruleInfo{isSource: false, bi: bi}
+		}
+	}
+
+	// Apply rule info to clients
+	for i := range clients {
+		if info, exists := ruleLookup[clients[i].ID]; exists {
+			if info.isSource {
+				// Viewer→Client: enabled
+				clients[i].IsEnabled = true
+				clients[i].IsBi = info.bi
+			} else if info.bi {
+				// Client→Viewer with bi: enabled (bi allows reverse)
+				clients[i].IsEnabled = true
+				clients[i].IsBi = true
+			}
+			// Client→Viewer without bi: not enabled for viewer
+		}
+	}
+
+	return clients
 }
 
 // SyncClients synchronizes VPN clients from WireGuard and Headscale

@@ -241,10 +241,12 @@ func createSchema(db *sql.DB) error {
 	);
 
 	-- ACL rules between clients (source can reach target)
+	-- Only ONE entry per client pair (check both directions before insert)
 	CREATE TABLE IF NOT EXISTS vpn_acl_rules (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		source_client_id INTEGER NOT NULL,
 		target_client_id INTEGER NOT NULL,
+		bidirectional INTEGER DEFAULT 0,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (source_client_id) REFERENCES vpn_clients(id) ON DELETE CASCADE,
 		FOREIGN KEY (target_client_id) REFERENCES vpn_clients(id) ON DELETE CASCADE,
@@ -288,8 +290,23 @@ func createSchema(db *sql.DB) error {
 		return fmt.Errorf("failed to create VPN schema: %v", err)
 	}
 
+	// Run migrations for existing databases
+	runMigrations(db)
+
 	log.Printf("Database schema initialized")
 	return nil
+}
+
+// runMigrations applies schema changes to existing databases
+func runMigrations(db *sql.DB) {
+	// Add bidirectional column to vpn_acl_rules if missing
+	var count int
+	err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('vpn_acl_rules') WHERE name = 'bidirectional'`).Scan(&count)
+	if err == nil && count == 0 {
+		if _, err := db.Exec(`ALTER TABLE vpn_acl_rules ADD COLUMN bidirectional INTEGER DEFAULT 0`); err == nil {
+			log.Printf("Migration: added bidirectional column to vpn_acl_rules")
+		}
+	}
 }
 
 // Close closes the database connection
