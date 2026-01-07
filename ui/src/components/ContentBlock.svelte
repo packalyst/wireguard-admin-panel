@@ -110,7 +110,7 @@
         {/if}
       {/if}
       {#if copyable && value}
-        <button onclick={() => copyWithToast(value, toast)} class="p-0.5 text-muted-foreground hover:text-foreground shrink-0">
+        <button onclick={() => copyWithToast(value, toast)} class="p-0.5 text-muted-foreground hover:text-foreground shrink-0 cursor-pointer">
           <Icon name="copy" size={12} />
         </button>
       {/if}

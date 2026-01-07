@@ -816,23 +816,29 @@ type ScanProgress struct {
 
 // activeScan tracks a running scan
 type activeScan struct {
-	cancel  context.CancelFunc
-	results *[]helper.PortResult
+	cancel context.CancelFunc
 }
 
 // activeScans tracks running scans by clientID
 var activeScans = make(map[string]*activeScan)
 var activeScansMu = &sync.Mutex{}
 
-func (s *Service) handleScanPorts(w http.ResponseWriter, r *http.Request) {
-	// Extract client ID from path
+// extractScanClientID extracts client ID from scan endpoint paths
+func extractScanClientID(r *http.Request) (string, bool) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/vpn/clients/")
 	parts := strings.Split(path, "/")
 	if len(parts) < 2 || parts[1] != "scan" {
+		return "", false
+	}
+	return parts[0], true
+}
+
+func (s *Service) handleScanPorts(w http.ResponseWriter, r *http.Request) {
+	clientID, ok := extractScanClientID(r)
+	if !ok {
 		router.JSONError(w, "invalid path", http.StatusBadRequest)
 		return
 	}
-	clientID := parts[0]
 
 	// Check if scan already running for this client
 	activeScansMu.Lock()
@@ -898,17 +904,18 @@ func (s *Service) handleScanPorts(w http.ResponseWriter, r *http.Request) {
 
 // handleStopScan stops a running scan for a client
 func (s *Service) handleStopScan(w http.ResponseWriter, r *http.Request) {
-	// Extract client ID from path
-	path := strings.TrimPrefix(r.URL.Path, "/api/vpn/clients/")
-	parts := strings.Split(path, "/")
-	if len(parts) < 2 || parts[1] != "scan" {
+	clientID, ok := extractScanClientID(r)
+	if !ok {
 		router.JSONError(w, "invalid path", http.StatusBadRequest)
 		return
 	}
-	clientID := parts[0]
 
 	activeScansMu.Lock()
 	scan, exists := activeScans[clientID]
+	if exists {
+		// Remove immediately so new scan can start
+		delete(activeScans, clientID)
+	}
 	activeScansMu.Unlock()
 
 	if !exists {
@@ -916,33 +923,30 @@ func (s *Service) handleStopScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cancel the scan - this will trigger the goroutine to send final results
+	// Cancel the scan - goroutine will clean up and send final results
 	scan.cancel()
 
 	router.JSON(w, map[string]interface{}{
-		"status":   "stopping",
+		"status":   "stopped",
 		"clientId": clientID,
 	})
 }
 
 // runScanWithProgress runs a port scan and broadcasts progress via WebSocket
 func runScanWithProgress(clientID, clientIP, mode string, config helper.ScanConfig) {
-	// Create context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), helper.PortScanTimeout)
 
 	// Track results for live updates
 	var results []helper.PortResult
 	var resultsMu sync.Mutex
+	var lastTotal, lastScanned int
 
 	// Register active scan
 	activeScansMu.Lock()
-	activeScans[clientID] = &activeScan{
-		cancel:  cancel,
-		results: &results,
-	}
+	activeScans[clientID] = &activeScan{cancel: cancel}
 	activeScansMu.Unlock()
 
-	// Cleanup on exit
+	// Cleanup - safe to call multiple times
 	defer func() {
 		cancel()
 		activeScansMu.Lock()
@@ -950,43 +954,34 @@ func runScanWithProgress(clientID, clientIP, mode string, config helper.ScanConf
 		activeScansMu.Unlock()
 	}()
 
-	// Progress channel for updates
-	progressChan := make(chan helper.ScanProgress, 100)
+	// Helper to broadcast scan progress
+	broadcast := func(event string, total, scanned int, completed, stopped bool, err string) {
+		resultsMu.Lock()
+		ports := make([]helper.PortResult, len(results))
+		copy(ports, results)
+		resultsMu.Unlock()
 
-	// Broadcast progress updates with live ports
-	go func() {
-		lastBroadcast := time.Now()
-		lastPortCount := 0
-		for progress := range progressChan {
-			resultsMu.Lock()
-			currentPorts := make([]helper.PortResult, len(results))
-			copy(currentPorts, results)
-			resultsMu.Unlock()
-
-			// Broadcast if throttle passed OR new ports found OR completed
-			newPortsFound := len(currentPorts) > lastPortCount
-			shouldBroadcast := time.Since(lastBroadcast) >= 100*time.Millisecond || newPortsFound || progress.Completed
-
-			if shouldBroadcast {
-				ws.Broadcast("general_info", ScanProgress{
-					Event:     "scan:progress",
-					ClientID:  clientID,
-					IP:        clientIP,
-					Mode:      mode,
-					Total:     progress.Total,
-					Scanned:   progress.Scanned,
-					Found:     len(currentPorts),
-					Completed: progress.Completed,
-					Ports:     currentPorts,
-				})
-				lastBroadcast = time.Now()
-				lastPortCount = len(currentPorts)
-			}
+		msg := ScanProgress{
+			Event:     event,
+			ClientID:  clientID,
+			IP:        clientIP,
+			Mode:      mode,
+			Total:     total,
+			Scanned:   scanned,
+			Found:     len(ports),
+			Completed: completed,
+			Stopped:   stopped,
+			Ports:     ports,
+			Error:     err,
 		}
-	}()
+		ws.Broadcast("general_info", msg)
+	}
 
-	// Custom progress handler that tracks found ports
+	// Channels for scan updates
+	progressChan := make(chan helper.ScanProgress, 100)
 	portFoundChan := make(chan helper.PortResult, 100)
+
+	// Collect found ports
 	go func() {
 		for port := range portFoundChan {
 			resultsMu.Lock()
@@ -995,54 +990,52 @@ func runScanWithProgress(clientID, clientIP, mode string, config helper.ScanConf
 		}
 	}()
 
-	var scanErr error
+	// Broadcast progress with throttling
+	go func() {
+		lastBroadcast := time.Now()
+		lastPortCount := 0
+		for progress := range progressChan {
+			if progress.Completed {
+				continue // Final message sent separately
+			}
 
+			// Track total/scanned for final broadcast
+			lastTotal = progress.Total
+			lastScanned = progress.Scanned
+
+			resultsMu.Lock()
+			portCount := len(results)
+			resultsMu.Unlock()
+
+			// Broadcast if throttle passed OR new ports found
+			if time.Since(lastBroadcast) >= 100*time.Millisecond || portCount > lastPortCount {
+				broadcast("scan:progress", progress.Total, progress.Scanned, false, false, "")
+				lastBroadcast = time.Now()
+				lastPortCount = portCount
+			}
+		}
+	}()
+
+	// Run scan
+	var scanErr error
 	switch mode {
 	case "common":
-		results, scanErr = helper.ScanCommonPorts(ctx, clientIP, config, progressChan)
+		_, scanErr = helper.ScanCommonPorts(ctx, clientIP, config, progressChan, portFoundChan)
 	case "range":
-		results, scanErr = helper.ScanRange(ctx, clientIP, config.PortStart, config.PortEnd, config, progressChan)
+		_, scanErr = helper.ScanRange(ctx, clientIP, config.PortStart, config.PortEnd, config, progressChan, portFoundChan)
 	case "full":
-		results, scanErr = helper.ScanFull(ctx, clientIP, config, progressChan)
+		_, scanErr = helper.ScanFull(ctx, clientIP, config, progressChan, portFoundChan)
 	}
 
-	close(progressChan)
 	close(portFoundChan)
+	close(progressChan)
 
-	// Get final results
-	resultsMu.Lock()
-	finalResults := make([]helper.PortResult, len(results))
-	copy(finalResults, results)
-	resultsMu.Unlock()
-
-	// Check if stopped (context cancelled but not due to timeout)
+	// Determine final state
 	stopped := ctx.Err() == context.Canceled
-
-	// Send final result
+	errMsg := ""
 	if scanErr != nil && !stopped {
-		ws.Broadcast("general_info", ScanProgress{
-			Event:     "scan:complete",
-			ClientID:  clientID,
-			IP:        clientIP,
-			Mode:      mode,
-			Completed: true,
-			Found:     len(finalResults),
-			Ports:     finalResults,
-			Error:     scanErr.Error(),
-		})
-		return
+		errMsg = scanErr.Error()
 	}
 
-	ws.Broadcast("general_info", ScanProgress{
-		Event:     "scan:complete",
-		ClientID:  clientID,
-		IP:        clientIP,
-		Mode:      mode,
-		Total:     len(finalResults),
-		Scanned:   len(finalResults),
-		Found:     len(finalResults),
-		Completed: true,
-		Stopped:   stopped,
-		Ports:     finalResults,
-	})
+	broadcast("scan:complete", lastTotal, lastScanned, true, stopped, errMsg)
 }

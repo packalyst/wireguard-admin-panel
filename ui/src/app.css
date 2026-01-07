@@ -608,3 +608,12 @@ input:-webkit-autofill:active {
   border-bottom-right-radius: calc(var(--radius) - 2px);
   border-right-width: 1px;
 }
+
+/* Shimmer animation for progress bars */
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+.animate-shimmer {
+  animation: shimmer 1.5s infinite;
+}

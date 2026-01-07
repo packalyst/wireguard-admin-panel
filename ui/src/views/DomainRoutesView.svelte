@@ -55,35 +55,43 @@
   let scanClientIp = $state('')
   let scanClientName = $state('')
 
-  // Watch WebSocket for scan progress
+  // Watch WebSocket for scan progress (always listen, not just when scanning)
   $effect(() => {
     const info = $generalInfoStore
-    if (!info || !scanning) return
+    if (!info) return
 
     const event = info.event
     if ((event === 'scan:progress' || event === 'scan:complete') && info.clientId == scanClientId) {
-      scanProgress = {
-        total: info.total || 0,
-        scanned: info.scanned || 0,
-        found: info.found || 0,
-        completed: info.completed || false
+      // If we receive scan:progress and we're not in scanning state, restore it
+      if (event === 'scan:progress' && !info.completed && !scanning) {
+        scanning = true
+        scanClientIp = info.ip || scanClientIp
       }
 
-      // Update discovered ports live
-      if (info.ports && info.ports.length > 0) {
-        discoveredPorts = info.ports
-      }
+      if (scanning) {
+        scanProgress = {
+          total: info.total || 0,
+          scanned: info.scanned || 0,
+          found: info.found || 0,
+          completed: info.completed || false
+        }
 
-      if (event === 'scan:complete') {
-        scanning = false
-        if (info.error) {
-          toast('Scan failed: ' + info.error, 'error')
-        } else if (info.stopped) {
-          toast(`Scan stopped. Found ${info.found || 0} ports`, 'info')
-        } else if (info.found === 0) {
-          toast('No open ports found', 'info')
-        } else {
-          toast(`Scan complete. Found ${info.found} open ports`, 'success')
+        // Update discovered ports live
+        if (info.ports && info.ports.length > 0) {
+          discoveredPorts = info.ports
+        }
+
+        if (event === 'scan:complete') {
+          scanning = false
+          if (info.error) {
+            toast('Scan failed: ' + info.error, 'error')
+          } else if (info.stopped) {
+            toast(`Scan stopped. Found ${info.found || 0} ports`, 'info')
+          } else if (info.found === 0) {
+            toast('No open ports found', 'info')
+          } else {
+            toast(`Scan complete. Found ${info.found} open ports`, 'success')
+          }
         }
       }
     }
@@ -266,13 +274,38 @@
 
   // Port scanning functions
   function openScanModal() {
-    scanMode = 'common'
-    scanning = false
-    scanProgress = { total: 0, scanned: 0, found: 0, completed: false }
-    discoveredPorts = []
-    selectedPorts = []
-    scanClientId = null
-    scanClientIp = ''
+    // Check if there's an active scan in the WS store
+    const info = $generalInfoStore
+    const isActiveScan = info?.event === 'scan:progress' && !info?.completed
+
+    if (isActiveScan && info.clientId) {
+      // Restore active scan state
+      scanClientId = info.clientId
+      scanClientIp = info.ip || ''
+      scanMode = info.mode || 'common'
+      scanning = true
+      scanProgress = {
+        total: info.total || 0,
+        scanned: info.scanned || 0,
+        found: info.found || 0,
+        completed: false
+      }
+      discoveredPorts = info.ports || []
+      selectedPorts = []
+      // Find client name
+      const client = vpnClients.find(c => c.id == info.clientId)
+      scanClientName = client?.name || ''
+    } else {
+      // Fresh state
+      scanMode = 'common'
+      scanning = false
+      scanProgress = { total: 0, scanned: 0, found: 0, completed: false }
+      discoveredPorts = []
+      selectedPorts = []
+      scanClientId = null
+      scanClientIp = ''
+      scanClientName = ''
+    }
     showScanModal = true
   }
 
@@ -299,6 +332,9 @@
       toast('Please select a VPN client to scan', 'error')
       return
     }
+
+    // Clear old WS message to prevent re-processing stale scan:complete
+    generalInfoStore.set(null)
 
     scanning = true
     scanProgress = { total: 0, scanned: 0, found: 0, completed: false }
@@ -742,11 +778,13 @@
     {#if scanning}
       {@const percent = scanProgress.total > 0 ? Math.round((scanProgress.scanned / scanProgress.total) * 100) : 0}
       <div class="space-y-1">
-        <div class="w-full h-2 bg-muted rounded-full overflow-hidden">
+        <div class="w-full h-1 bg-muted rounded-full overflow-hidden">
           <div
-            class="h-full bg-primary transition-all duration-150"
+            class="h-full bg-gradient-to-r from-primary via-primary/80 to-success transition-all duration-150 relative overflow-hidden"
             style="width: {percent}%"
-          ></div>
+          >
+            <div class="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-shimmer"></div>
+          </div>
         </div>
         <p class="text-xs text-muted-foreground">
           {#if scanProgress.total > 0}
