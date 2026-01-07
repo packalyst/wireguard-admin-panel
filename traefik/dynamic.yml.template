@@ -1,17 +1,17 @@
 # Traefik Dynamic Configuration
 http:
   routers:
-    # UI - catch all (lowest priority) - HTTP
+    # UI - catch all for main host only - HTTP
     ui:
-      rule: "PathPrefix(`/`)"
+      rule: "(Host(`${SERVER_IP}`) || Host(`${ADMIN_DOMAIN}`)) && PathPrefix(`/`)"
       service: ui
-      priority: 1
+      priority: 10
       entryPoints:
         - web
 
     # Unified API - all /api/* routes (except /api/v1 for headscale direct) - HTTP
     unified-api:
-      rule: "PathPrefix(`/api/`) && !PathPrefix(`/api/v1`)"
+      rule: "(Host(`${SERVER_IP}`) || Host(`${ADMIN_DOMAIN}`)) && PathPrefix(`/api/`) && !PathPrefix(`/api/v1`)"
       service: unified-api
       priority: 100
       middlewares:
@@ -23,7 +23,7 @@ http:
     # Headscale control plane - HTTP (for Tailscale clients)
     # Includes /derp for DERP relay connections
     headscale-control:
-      rule: "PathPrefix(`/ts2021`) || PathPrefix(`/machine`) || PathPrefix(`/key`) || PathPrefix(`/noise`) || PathPrefix(`/derp`)"
+      rule: "(Host(`${SERVER_IP}`) || Host(`${ADMIN_DOMAIN}`)) && (PathPrefix(`/ts2021`) || PathPrefix(`/machine`) || PathPrefix(`/key`) || PathPrefix(`/noise`) || PathPrefix(`/derp`))"
       service: headscale
       priority: 100
       entryPoints:
@@ -31,7 +31,7 @@ http:
 
     # Headscale control plane - HTTPS (Tailscale clients try HTTPS first)
     headscale-control-secure:
-      rule: "PathPrefix(`/ts2021`) || PathPrefix(`/machine`) || PathPrefix(`/key`) || PathPrefix(`/noise`) || PathPrefix(`/derp`)"
+      rule: "(Host(`${SERVER_IP}`) || Host(`${ADMIN_DOMAIN}`)) && (PathPrefix(`/ts2021`) || PathPrefix(`/machine`) || PathPrefix(`/key`) || PathPrefix(`/noise`) || PathPrefix(`/derp`))"
       service: headscale
       priority: 100
       entryPoints:
@@ -41,7 +41,7 @@ http:
     # Headscale API - BLOCKED for external access (UI uses /api/hs via unified API)
     # This prevents direct API access - all admin goes through unified API with server-side auth
     headscale-api-blocked:
-      rule: "PathPrefix(`/api/v1`)"
+      rule: "(Host(`${SERVER_IP}`) || Host(`${ADMIN_DOMAIN}`)) && PathPrefix(`/api/v1`)"
       service: headscale
       priority: 100
       middlewares:
@@ -50,6 +50,27 @@ http:
         - security-headers
       entryPoints:
         - web
+
+    # Catchall for unmatched domains - lowest priority
+    # Any domain not configured will get dropped silently
+    catchall-drop:
+      rule: "PathPrefix(`/`)"
+      service: ui
+      priority: 1
+      middlewares:
+        - drop-unknown
+      entryPoints:
+        - web
+
+    catchall-drop-secure:
+      rule: "PathPrefix(`/`)"
+      service: ui
+      priority: 1
+      middlewares:
+        - drop-unknown
+      entryPoints:
+        - websecure
+      tls: {}
 
   services:
     ui:
@@ -109,3 +130,11 @@ ${VPN_SOURCE_RANGE}
       redirectScheme:
         scheme: https
         permanent: true
+
+    # Drop unknown domains (returns 404 for unconfigured hosts)
+    drop-unknown:
+      plugin:
+        silentdrop:
+          sourceRange:
+            - "0.0.0.0/32"
+          mode: "error"

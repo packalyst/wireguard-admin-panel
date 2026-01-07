@@ -7,7 +7,7 @@
     redirect-to-https:
       rule: "Host(`${SSL_DOMAIN}`)"
       service: ui
-      priority: 5
+      priority: 150
       middlewares:
         - redirect-to-https
       entryPoints:
@@ -15,9 +15,9 @@
 
     # UI - HTTPS
     ui-secure:
-      rule: "PathPrefix(`/`)"
+      rule: "Host(`${SSL_DOMAIN}`) && PathPrefix(`/`)"
       service: ui
-      priority: 1
+      priority: 10
       entryPoints:
         - websecure
       tls:
@@ -27,7 +27,7 @@
 
     # Unified API - HTTPS
     unified-api-secure:
-      rule: "PathPrefix(`/api/`) && !PathPrefix(`/api/v1`)"
+      rule: "Host(`${SSL_DOMAIN}`) && PathPrefix(`/api/`) && !PathPrefix(`/api/v1`)"
       service: unified-api
       priority: 100
       middlewares:
@@ -42,7 +42,7 @@
 
     # Headscale control plane - HTTPS
     headscale-control-secure:
-      rule: "PathPrefix(`/ts2021`) || PathPrefix(`/machine`) || PathPrefix(`/key`) || PathPrefix(`/noise`) || PathPrefix(`/derp`)"
+      rule: "Host(`${SSL_DOMAIN}`) && (PathPrefix(`/ts2021`) || PathPrefix(`/machine`) || PathPrefix(`/key`) || PathPrefix(`/noise`) || PathPrefix(`/derp`))"
       service: headscale
       priority: 100
       entryPoints:
@@ -54,7 +54,7 @@
 
     # Headscale API - BLOCKED for HTTPS
     headscale-api-blocked-secure:
-      rule: "PathPrefix(`/api/v1`)"
+      rule: "Host(`${SSL_DOMAIN}`) && PathPrefix(`/api/v1`)"
       service: headscale
       priority: 100
       middlewares:

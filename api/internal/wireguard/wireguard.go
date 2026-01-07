@@ -84,7 +84,8 @@ type Config struct {
 	ServerPriKey     string
 	Endpoint         string
 	IPRange          string
-	ServerIP         string
+	ServerIP         string // WireGuard server IP (internal, e.g., 10.8.0.1)
+	PublicIP         string // Public server IP (e.g., 188.241.210.100)
 	DNS              string
 	DataDir          string
 	HeadscaleIPRange string
@@ -142,6 +143,7 @@ func New(dataDir string) (*Service, error) {
 			Endpoint:         endpoint,
 			IPRange:          ipRange,
 			ServerIP:         wgServerIP,
+			PublicIP:         serverIP,
 			DNS:              dns,
 			DataDir:          dataDir,
 			HeadscaleIPRange: headscaleIPRange,
@@ -198,11 +200,16 @@ func (s *Service) generateClientConfig(peer *Peer, mode string) string {
 	dns := s.config.DNS
 
 	if mode == "split" {
+		// Split tunnel: only route VPN, headscale, and server traffic through VPN
 		allowedIPs = s.config.IPRange
 		if s.config.HeadscaleIPRange != "" {
 			allowedIPs += ", " + s.config.HeadscaleIPRange
 		}
-		dns = ""
+		// Add public server IP so clients can reach server services
+		if s.config.PublicIP != "" {
+			allowedIPs += ", " + s.config.PublicIP + "/32"
+		}
+		// Keep DNS so AdGuard rewrites work for internal domains
 	}
 
 	conf := fmt.Sprintf(`[Interface]
