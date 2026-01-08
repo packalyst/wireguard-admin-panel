@@ -199,6 +199,10 @@ func createSchema(db *sql.DB) error {
 		preshared_key_enc TEXT,
 		enabled INTEGER DEFAULT 1,
 		acl_policy TEXT NOT NULL DEFAULT 'selected' CHECK(acl_policy IN ('block_all', 'selected', 'allow_all')),
+		total_tx INTEGER DEFAULT 0,
+		total_rx INTEGER DEFAULT 0,
+		last_tx INTEGER DEFAULT 0,
+		last_rx INTEGER DEFAULT 0,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
@@ -315,6 +319,17 @@ func runMigrations(db *sql.DB) {
 	if err == nil && count == 0 {
 		if _, err := db.Exec(`ALTER TABLE vpn_acl_rules ADD COLUMN bidirectional INTEGER DEFAULT 0`); err == nil {
 			log.Printf("Migration: added bidirectional column to vpn_acl_rules")
+		}
+	}
+
+	// Add traffic columns to vpn_clients if missing
+	trafficCols := []string{"total_tx", "total_rx", "last_tx", "last_rx"}
+	for _, col := range trafficCols {
+		err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('vpn_clients') WHERE name = ?`, col).Scan(&count)
+		if err == nil && count == 0 {
+			if _, err := db.Exec(fmt.Sprintf(`ALTER TABLE vpn_clients ADD COLUMN %s INTEGER DEFAULT 0`, col)); err == nil {
+				log.Printf("Migration: added %s column to vpn_clients", col)
+			}
 		}
 	}
 }

@@ -25,6 +25,7 @@ import (
 	"api/internal/router"
 	"api/internal/settings"
 	"api/internal/setup"
+	"api/internal/stats"
 	"api/internal/traefik"
 	"api/internal/vpn"
 	"api/internal/wireguard"
@@ -32,6 +33,9 @@ import (
 )
 
 func main() {
+	// Initialize stats (records start time for uptime)
+	stats.Init()
+
 	// Load endpoint configuration
 	configPath := helper.GetEnv("CONFIG_PATH")
 	cfg, err := config.Load(configPath)
@@ -198,6 +202,9 @@ func main() {
 			return &status
 		}
 
+		// Start traffic sync goroutine
+		vpn.StartTrafficSync()
+
 		log.Println("VPN ACL service registered")
 	}
 
@@ -224,6 +231,7 @@ func main() {
 
 	// Initialize WebSocket service
 	wsSvc := ws.New()
+	stats.SetWsClientsProvider(ws.ClientCount)
 	log.Println("WebSocket service initialized")
 
 	// Set up node status checker for real-time updates
@@ -233,6 +241,55 @@ func main() {
 			vpn.GetNodeStats,
 		)
 	}
+
+	// Set up overview stats provider for dashboard
+	ws.SetOverviewStatsProvider(func() ws.OverviewStats {
+		// Get system stats
+		sysStats := stats.GetSystemStats()
+
+		// Get traffic stats
+		totalTx, totalRx, _ := vpn.GetTrafficTotals()
+		rateTx, rateRx := vpn.GetTrafficRates()
+		peerStats, _ := vpn.GetPeerTrafficStats()
+
+		// Convert peer stats
+		peers := make([]ws.PeerTrafficInfo, len(peerStats))
+		for i, p := range peerStats {
+			peers[i] = ws.PeerTrafficInfo{
+				Name: p.Name,
+				IP:   p.IP,
+				Tx:   p.Tx,
+				Rx:   p.Rx,
+			}
+		}
+
+		// Get node stats
+		nodeStats := vpn.GetNodeStats()
+
+		return ws.OverviewStats{
+			System: ws.SystemStats{
+				Uptime:       sysStats.Uptime,
+				MemAlloc:     sysStats.MemAlloc,
+				MemSys:       sysStats.MemSys,
+				NumGoroutine: sysStats.NumGoroutine,
+				NumGC:        sysStats.NumGC,
+				WsClients:    sysStats.WsClients,
+			},
+			Traffic: ws.TrafficStats{
+				TotalTx: totalTx,
+				TotalRx: totalRx,
+				RateTx:  rateTx,
+				RateRx:  rateRx,
+				ByPeer:  peers,
+			},
+			Nodes: ws.NodeStats{
+				Online:  nodeStats.Online,
+				Offline: nodeStats.Offline,
+				HsNodes: nodeStats.HsNodes,
+				WgPeers: nodeStats.WgPeers,
+			},
+		}
+	})
 
 	// Set up docker provider for real-time container updates
 	if dockerSvc != nil {
@@ -302,6 +359,9 @@ func main() {
 
 		// Stop WebSocket status checker
 		ws.StopStatusChecker()
+
+		// Stop VPN traffic sync
+		vpn.StopTrafficSync()
 
 		// Close database
 		if err := database.Close(); err != nil {

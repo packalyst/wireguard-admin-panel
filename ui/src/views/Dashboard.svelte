@@ -7,6 +7,7 @@
 
   // Lazy load views - each becomes a separate chunk
   const views = {
+    overview: () => import('./OverviewView.svelte'),
     nodes: () => import('./NodesView.svelte'),
     users: () => import('./UsersView.svelte'),
     firewall: () => import('./FirewallView.svelte'),
@@ -67,6 +68,7 @@
   })
 
   const navItems = [
+    { id: 'overview', label: 'Overview', icon: 'dashboard' },
     { id: 'nodes', label: 'Nodes', icon: 'server' },
     {
       id: 'headscale',

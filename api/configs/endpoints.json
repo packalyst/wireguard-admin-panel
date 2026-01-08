@@ -19,7 +19,7 @@
       "writeBufferSize": 1024,
       "broadcastBufferSize": 256,
       "statusCheckIntervalSec": 10,
-      "channels": ["general_info", "nodes_updated", "docker", "docker_logs"]
+      "channels": ["general_info", "nodes_updated", "docker", "docker_logs", "stats"]
     }
   },
   "services": {

@@ -15,7 +15,7 @@ theme.subscribe(value => {
 })
 
 // Valid view IDs for URL routing
-export const validViews = ['nodes', 'users', 'firewall', 'routes', 'authkeys', 'apikeys',
+export const validViews = ['overview', 'nodes', 'users', 'firewall', 'routes', 'authkeys', 'apikeys',
                            'traefik', 'domains', 'adguard', 'docker', 'logs', 'settings', 'about']
 
 // Get initial tab from URL hash (for tab persistence on refresh)
@@ -36,8 +36,8 @@ function getViewFromPath() {
 
 // Current view - URL takes priority, then localStorage, then default
 const urlView = typeof window !== 'undefined' ? getViewFromPath() : null
-const savedView = typeof localStorage !== 'undefined' ? localStorage.getItem('hs_view') : 'nodes'
-export const currentView = writable(urlView || savedView || 'nodes')
+const savedView = typeof localStorage !== 'undefined' ? localStorage.getItem('hs_view') : 'overview'
+export const currentView = writable(urlView || savedView || 'overview')
 
 // Track if we're handling popstate to avoid double-pushing
 let handlingPopstate = false

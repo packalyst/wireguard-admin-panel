@@ -35,6 +35,40 @@ type DockerLogStreamer interface {
 	StreamLogs(containerName string, onLog func(DockerLogEntry), stop <-chan struct{}) error
 }
 
+// OverviewStats represents combined stats for the overview dashboard
+type OverviewStats struct {
+	System  SystemStats  `json:"system"`
+	Traffic TrafficStats `json:"traffic"`
+	Nodes   NodeStats    `json:"nodes"`
+}
+
+// SystemStats contains Go runtime metrics
+type SystemStats struct {
+	Uptime       int64  `json:"uptime"`
+	MemAlloc     uint64 `json:"mem_alloc"`
+	MemSys       uint64 `json:"mem_sys"`
+	NumGoroutine int    `json:"num_goroutine"`
+	NumGC        uint32 `json:"num_gc"`
+	WsClients    int    `json:"ws_clients"`
+}
+
+// TrafficStats contains VPN traffic metrics
+type TrafficStats struct {
+	TotalTx int64             `json:"total_tx"`
+	TotalRx int64             `json:"total_rx"`
+	RateTx  int64             `json:"rate_tx"`
+	RateRx  int64             `json:"rate_rx"`
+	ByPeer  []PeerTrafficInfo `json:"by_peer"`
+}
+
+// PeerTrafficInfo contains traffic for a single peer
+type PeerTrafficInfo struct {
+	Name string `json:"name"`
+	IP   string `json:"ip"`
+	Tx   int64  `json:"tx"`
+	Rx   int64  `json:"rx"`
+}
+
 var (
 	// syncNodesCallback refreshes node data from Headscale/WireGuard
 	syncNodesCallback func()
@@ -42,6 +76,8 @@ var (
 	getNodeStatsCallback func() NodeStats
 	// getDockerContainersCallback returns current docker containers
 	getDockerContainersCallback func() []DockerContainer
+	// getOverviewStatsCallback returns combined stats for dashboard
+	getOverviewStatsCallback func() OverviewStats
 	// dockerLogStreamer for streaming container logs
 	dockerLogStreamer DockerLogStreamer
 	callbackMu        sync.RWMutex
@@ -80,6 +116,13 @@ func SetDockerLogStreamer(streamer DockerLogStreamer) {
 	callbackMu.Lock()
 	defer callbackMu.Unlock()
 	dockerLogStreamer = streamer
+}
+
+// SetOverviewStatsProvider sets the callback for getting overview stats
+func SetOverviewStatsProvider(statsFn func() OverviewStats) {
+	callbackMu.Lock()
+	defer callbackMu.Unlock()
+	getOverviewStatsCallback = statsFn
 }
 
 // GetDockerLogStreamer returns the docker log streamer
@@ -132,6 +175,27 @@ func checkAndBroadcastStatus() {
 
 	// Check docker containers
 	checkAndBroadcastDocker()
+
+	// Check overview stats (always broadcast to stats channel if subscribers)
+	checkAndBroadcastOverviewStats()
+}
+
+// checkAndBroadcastOverviewStats broadcasts overview stats to stats channel
+func checkAndBroadcastOverviewStats() {
+	if serviceInstance.hub.ChannelSubscriberCount("stats") == 0 {
+		return
+	}
+
+	callbackMu.RLock()
+	statsFn := getOverviewStatsCallback
+	callbackMu.RUnlock()
+
+	if statsFn == nil {
+		return
+	}
+
+	stats := statsFn()
+	serviceInstance.hub.Broadcast("stats", stats)
 }
 
 // checkAndBroadcastNodes checks node status and broadcasts if changed
@@ -292,6 +356,19 @@ func GetCurrentNodeStats() NodeStats {
 		return NodeStats{}
 	}
 	return statsFn()
+}
+
+// GetCurrentOverviewStats returns current overview stats (for sending on subscribe)
+func GetCurrentOverviewStats() *OverviewStats {
+	callbackMu.RLock()
+	statsFn := getOverviewStatsCallback
+	callbackMu.RUnlock()
+
+	if statsFn == nil {
+		return nil
+	}
+	stats := statsFn()
+	return &stats
 }
 
 // BroadcastTraffic broadcasts traffic data to subscribers

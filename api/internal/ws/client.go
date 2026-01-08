@@ -111,6 +111,8 @@ func (c *Client) ReadPump() {
 						c.sendCurrentDockerContainers()
 					case "docker_logs":
 						c.startLogStream(msg.Container)
+					case "stats":
+						c.sendCurrentOverviewStats()
 					}
 				}
 			}
@@ -203,6 +205,15 @@ func (c *Client) sendCurrentDockerContainers() {
 		return
 	}
 	c.sendMessage("docker", map[string]interface{}{"containers": containers})
+}
+
+// sendCurrentOverviewStats sends current overview stats to this client immediately
+func (c *Client) sendCurrentOverviewStats() {
+	stats := GetCurrentOverviewStats()
+	if stats == nil {
+		return
+	}
+	c.sendMessage("stats", stats)
 }
 
 // sendInitMessage sends initial auth info when client connects

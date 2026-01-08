@@ -115,6 +115,8 @@ type VPNClient struct {
 	ExternalID string          `json:"externalId,omitempty"`
 	RawData    json.RawMessage `json:"rawData,omitempty"` // Full data from source system
 	ACLPolicy  string          `json:"aclPolicy"`         // block_all, selected, allow_all
+	TotalTx    int64           `json:"totalTx"`           // Total bytes transmitted
+	TotalRx    int64           `json:"totalRx"`           // Total bytes received
 	CreatedAt  time.Time       `json:"createdAt"`
 	UpdatedAt  time.Time       `json:"updatedAt"`
 	// Enriched fields (not stored in DB)
@@ -199,7 +201,7 @@ func (s *Service) handleGetClients(w http.ResponseWriter, r *http.Request) {
 	// Use LEFT JOIN with subquery to avoid N+1 query problem
 	rows, err := db.Query(`
 		SELECT c.id, c.name, c.ip, c.type, c.external_id, c.raw_data,
-		       c.acl_policy, c.created_at, c.updated_at,
+		       c.acl_policy, c.total_tx, c.total_rx, c.created_at, c.updated_at,
 		       COALESCE(counts.cnt, 0) as allowed_count
 		FROM vpn_clients c
 		LEFT JOIN (
@@ -219,7 +221,7 @@ func (s *Service) handleGetClients(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var c VPNClient
 		var externalID, rawData sql.NullString
-		if err := rows.Scan(&c.ID, &c.Name, &c.IP, &c.Type, &externalID, &rawData, &c.ACLPolicy, &c.CreatedAt, &c.UpdatedAt, &c.AllowedCount); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.IP, &c.Type, &externalID, &rawData, &c.ACLPolicy, &c.TotalTx, &c.TotalRx, &c.CreatedAt, &c.UpdatedAt, &c.AllowedCount); err != nil {
 			continue
 		}
 		c.ExternalID = database.StringFromNull(externalID, "")
@@ -247,9 +249,9 @@ func (s *Service) handleGetClient(w http.ResponseWriter, r *http.Request) {
 	var c VPNClient
 	var externalID sql.NullString
 	err = db.QueryRow(`
-		SELECT id, name, ip, type, external_id, acl_policy, created_at, updated_at
+		SELECT id, name, ip, type, external_id, acl_policy, total_tx, total_rx, created_at, updated_at
 		FROM vpn_clients WHERE id = ?
-	`, id).Scan(&c.ID, &c.Name, &c.IP, &c.Type, &externalID, &c.ACLPolicy, &c.CreatedAt, &c.UpdatedAt)
+	`, id).Scan(&c.ID, &c.Name, &c.IP, &c.Type, &externalID, &c.ACLPolicy, &c.TotalTx, &c.TotalRx, &c.CreatedAt, &c.UpdatedAt)
 	if err == sql.ErrNoRows {
 		router.JSONError(w, "client not found", http.StatusNotFound)
 		return

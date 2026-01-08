@@ -3,7 +3,7 @@
   import { toast, apiGet, apiPost, apiPut, apiDelete, apiGetText, apiGetBlob } from '../stores/app.js'
   import { subscribe, unsubscribe, nodesUpdatedStore } from '../stores/websocket.js'
   import { loadState, saveState, copyWithToast } from '../stores/helpers.js'
-  import { formatDate, timeAgo } from '$lib/utils/format.js'
+  import { formatDate, timeAgo, formatBytes } from '$lib/utils/format.js'
   import { useDataLoader } from '$lib/composables/index.js'
   import Icon from '../components/Icon.svelte'
   import Badge from '../components/Badge.svelte'
@@ -267,7 +267,9 @@
         enabled: raw.enabled !== false,
         publicKey: raw.publicKey,
         privateKey: raw.privateKey,
-        presharedKey: raw.presharedKey
+        presharedKey: raw.presharedKey,
+        totalTx: client.totalTx || 0,
+        totalRx: client.totalRx || 0
       }
     } else {
       // Headscale node
@@ -752,6 +754,8 @@
             <ContentBlock variant="data" label="Created" value={formatDate(selectedNode.createdAt)} />
             <ContentBlock variant="data" label="Last Seen" value={timeAgo(selectedNode.lastHandshake || selectedNode.lastSeen)} />
             {#if selectedNode._type === 'wireguard'}
+              <ContentBlock variant="data" label="Uploaded" value={formatBytes(selectedNode.totalTx)} />
+              <ContentBlock variant="data" label="Downloaded" value={formatBytes(selectedNode.totalRx)} />
               <ContentBlock variant="data" label="Public Key" value={selectedNode.publicKey} copyable mono class="col-span-2 sm:col-span-3" />
             {:else}
               <ContentBlock variant="data" label="User" value={selectedNode.user?.name || '—'} />
