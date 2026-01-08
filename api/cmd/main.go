@@ -66,6 +66,7 @@ func main() {
 			log.Printf("Warning: Failed to initialize auth service: %v", err)
 		} else {
 			auth.SetService(authSvc) // Store instance for other packages
+			authSvc.Start()          // Start background cleanup
 			r.RegisterService("auth", authSvc.Handlers())
 
 			// Register auth validator for middleware

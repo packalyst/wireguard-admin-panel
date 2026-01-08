@@ -1917,8 +1917,22 @@ fi
 
 # AdGuard config
 if [ -f "adguard/conf/AdGuardHome.yaml.template" ]; then
+    export ADGUARD_QUERYLOG_INTERVAL="${ADGUARD_QUERYLOG_INTERVAL:-720h}"
+    export ADGUARD_STATS_INTERVAL="${ADGUARD_STATS_INTERVAL:-720h}"
     envsubst < adguard/conf/AdGuardHome.yaml.template > adguard/conf/AdGuardHome.yaml
     echo "  ✓ adguard/conf/AdGuardHome.yaml"
+fi
+
+# Logrotate config for Traefik logs
+if [ -f "traefik/logrotate.conf" ]; then
+    LOGROTATE_CONF="/etc/logrotate.d/wgadmin-traefik"
+    export TRAEFIK_LOGS_DIR="$(pwd)/traefik/logs"
+    export TRAEFIK_LOG_ROTATE_COUNT="${TRAEFIK_LOG_ROTATE_COUNT:-7}"
+    export TRAEFIK_LOG_MAX_SIZE="${TRAEFIK_LOG_MAX_SIZE:-50M}"
+    if envsubst < traefik/logrotate.conf | sudo tee "$LOGROTATE_CONF" > /dev/null 2>&1; then
+        sudo chmod 644 "$LOGROTATE_CONF"
+        echo "  ✓ $LOGROTATE_CONF"
+    fi
 fi
 
 echo ""

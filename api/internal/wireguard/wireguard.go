@@ -200,14 +200,14 @@ func (s *Service) generateClientConfig(peer *Peer, mode string) string {
 	dns := s.config.DNS
 
 	if mode == "split" {
-		// Split tunnel: only route VPN, headscale, and server traffic through VPN
+		// Split tunnel: only route VPN and headscale traffic through VPN
+		// NOTE: Do NOT add server's public IP - it's the WireGuard endpoint
+		// and routing it through the tunnel creates a loop (can't reach endpoint via tunnel).
+		// - VPN-only domains: AdGuard rewrites to VPN IP (10.8.0.1) → works through tunnel
+		// - Public domains: clients reach via internet/Cloudflare → works
 		allowedIPs = s.config.IPRange
 		if s.config.HeadscaleIPRange != "" {
 			allowedIPs += ", " + s.config.HeadscaleIPRange
-		}
-		// Add public server IP so clients can reach server services
-		if s.config.PublicIP != "" {
-			allowedIPs += ", " + s.config.PublicIP + "/32"
 		}
 		// Keep DNS so AdGuard rewrites work for internal domains
 	}

@@ -91,14 +91,14 @@ tls:
 querylog:
   dir_path: ""
   ignored: []
-  interval: 2160h
+  interval: ${ADGUARD_QUERYLOG_INTERVAL}
   size_memory: 1000
   enabled: true
   file_enabled: true
 statistics:
   dir_path: ""
   ignored: []
-  interval: 2160h
+  interval: ${ADGUARD_STATS_INTERVAL}
   enabled: true
 filters:
   - enabled: true
@@ -158,7 +158,7 @@ filtering:
   safebrowsing_block_host: standard-block.dns.adguard.com
   rewrites:
     - domain: ${ADMIN_DOMAIN}
-      answer: ${SERVER_IP}
+      answer: ${WG_SERVER_IP}
       enabled: true
   safe_fs_patterns:
     - /opt/adguardhome/work/data/userfilters/*

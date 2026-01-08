@@ -34,15 +34,15 @@ func New() (*Service, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	config := Config{
-		TraefikLogPath:    helper.GetEnvOptional("TRAEFIK_LOGS", "/traefik/logs/access.log"),
-		AdGuardLogPath:    helper.GetEnvOptional("ADGUARD_LOGS", "/adguard/work/data/querylog.json"),
-		KernLogPath:       helper.GetEnvOptional("KERN_LOG", "/var/log/kern.log"),
+		TraefikLogPath:    helper.GetEnv("TRAEFIK_LOGS"),
+		AdGuardLogPath:    helper.GetEnv("ADGUARD_LOGS"),
+		KernLogPath:       helper.GetEnv("KERN_LOG"),
 		WgIPPrefix:        helper.GetEnvOptional("WG_IP_PREFIX", "10.8.0."),
 		HeadscaleIPPrefix: helper.GetEnvOptional("HEADSCALE_IP_PREFIX", "100.64."),
-		MaxEntries:        helper.GetEnvIntOptional("LOGS_MAX_ENTRIES", 100000),
-		CleanupInterval:   helper.GetEnvIntOptional("LOGS_CLEANUP_INTERVAL", 60),
-		CountryInterval:   helper.GetEnvIntOptional("LOGS_COUNTRY_INTERVAL", 5),
-		CountryBatchSize:  helper.GetEnvIntOptional("LOGS_COUNTRY_BATCH", 500),
+		MaxEntries:        helper.GetEnvInt("LOGS_MAX_ENTRIES"),
+		CleanupInterval:   helper.GetEnvInt("LOGS_CLEANUP_INTERVAL"),
+		CountryInterval:   helper.GetEnvInt("LOGS_COUNTRY_INTERVAL"),
+		CountryBatchSize:  helper.GetEnvInt("LOGS_COUNTRY_BATCH"),
 	}
 
 	s := &Service{

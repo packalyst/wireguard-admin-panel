@@ -1,3 +1,9 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: ${DOCKER_LOG_MAX_SIZE:-10m}
+    max-file: ${DOCKER_LOG_MAX_FILE:-3}
+
 services:
   # ============================================
   # DOCKER SOCKET PROXY - Secure Docker API Access
@@ -7,6 +13,7 @@ services:
     image: tecnativa/docker-socket-proxy:latest
     container_name: docker-socket-proxy
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "127.0.0.1:2375:2375"  # Only accessible from localhost
     environment:
@@ -46,6 +53,7 @@ services:
     image: traefik:v3.6
     container_name: traefik
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "${HTTP_PORT}:80"
       - "${HTTPS_PORT}:443"
@@ -71,6 +79,7 @@ services:
     image: headscale/headscale:0.25
     container_name: headscale
     restart: unless-stopped
+    logging: *default-logging
     command: serve
     volumes:
       - ./headscale/config:/etc/headscale
@@ -95,6 +104,7 @@ services:
     build: ./api
     container_name: api
     restart: unless-stopped
+    logging: *default-logging
     network_mode: host
     pid: host
     privileged: true
@@ -112,7 +122,7 @@ services:
       - CONFIG_PATH=/app/configs/endpoints.json
       - TRAEFIK_CONFIG=/traefik/dynamic
       - TRAEFIK_STATIC=/traefik/traefik.yml
-      - TRAEFIK_LOGS=/traefik/logs/access.log
+      - TRAEFIK_LOGS=${TRAEFIK_LOGS}
       # WireGuard settings
       - WG_INTERFACE=${WG_INTERFACE}
       - WG_PORT=${WG_PORT}
@@ -128,7 +138,12 @@ services:
       # AdGuard settings
       - ADGUARD_PORT=${ADGUARD_PORT}
       - ADGUARD_CONFIG=/adguard/AdGuardHome.yaml
-      - ADGUARD_LOGS=/adguard/work/data/querylog.json
+      - ADGUARD_LOGS=${ADGUARD_LOGS}
+      - KERN_LOG=${KERN_LOG}
+      - LOGS_MAX_ENTRIES=${LOGS_MAX_ENTRIES}
+      - LOGS_CLEANUP_INTERVAL=${LOGS_CLEANUP_INTERVAL}
+      - LOGS_COUNTRY_INTERVAL=${LOGS_COUNTRY_INTERVAL}
+      - LOGS_COUNTRY_BATCH=${LOGS_COUNTRY_BATCH}
       - DNS_PORT=${DNS_PORT}
       # Firewall settings
       - IGNORE_NETWORKS=${IGNORE_NETWORKS}
@@ -158,6 +173,7 @@ services:
     image: adguard/adguardhome:latest
     container_name: adguard
     restart: unless-stopped
+    logging: *default-logging
     network_mode: host
     volumes:
       - ./adguard/work:/opt/adguardhome/work
@@ -172,6 +188,7 @@ services:
       target: production  # Change to 'production' for smaller image (~80MB vs ~480MB)
     container_name: ui
     restart: unless-stopped
+    logging: *default-logging
     networks:
       vpn-network:
         ipv4_address: ${UI_CONTAINER_IP}
@@ -190,6 +207,7 @@ services:
     container_name: vpn-router
     hostname: vpn-router
     restart: unless-stopped
+    logging: *default-logging
     network_mode: host
     cap_add:
       - NET_ADMIN

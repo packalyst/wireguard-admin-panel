@@ -20,7 +20,8 @@ import (
 // Service handles domain routes
 type Service struct {
 	traefikConfigDir string
-	traefikIP        string
+	vpnIP            string // VPN IP for DNS rewrites (e.g., 10.8.0.1)
+	publicIP         string // Public IP for reference
 }
 
 // DomainRoute represents a domain to port mapping
@@ -46,16 +47,17 @@ type DomainRoute struct {
 func New() *Service {
 	svc := &Service{
 		traefikConfigDir: helper.GetEnvOptional("TRAEFIK_CONFIG", "/traefik/dynamic"),
-		traefikIP:        helper.GetEnvOptional("SERVER_IP", "127.0.0.1"), // Use public IP for DNS rewrites
+		vpnIP:            helper.GetEnvOptional("WG_SERVER_IP", "10.8.0.1"), // VPN IP for VPN-only domains
+		publicIP:         helper.GetEnvOptional("SERVER_IP", "127.0.0.1"),   // Public IP (for reference)
 	}
-	log.Printf("Domains service initialized, Traefik config: %s, DNS rewrite IP: %s", svc.traefikConfigDir, svc.traefikIP)
+	log.Printf("Domains service initialized, Traefik config: %s, VPN IP: %s", svc.traefikConfigDir, svc.vpnIP)
 	return svc
 }
 
 // ApplyRoutes generates Traefik config and syncs AdGuard DNS (exported for use by other packages)
 func ApplyRoutes() error {
 	traefikConfigDir := helper.GetEnvOptional("TRAEFIK_CONFIG", "/traefik/dynamic")
-	traefikIP := helper.GetEnvOptional("SERVER_IP", "127.0.0.1")
+	vpnIP := helper.GetEnvOptional("WG_SERVER_IP", "10.8.0.1") // VPN IP for DNS rewrites
 
 	db, err := database.GetDB()
 	if err != nil {
@@ -120,8 +122,8 @@ func ApplyRoutes() error {
 		return fmt.Errorf("failed to generate Traefik config: %v", err)
 	}
 
-	// Sync AdGuard DNS only for VPN mode domains
-	dnsErrors := adguard.SyncDomainRewrites(vpnDomains, traefikIP)
+	// Sync AdGuard DNS only for VPN mode domains (rewrite to VPN IP, not public IP!)
+	dnsErrors := adguard.SyncDomainRewrites(vpnDomains, vpnIP)
 	if len(dnsErrors) > 0 {
 		log.Printf("DNS sync warnings: %v", dnsErrors)
 	}
@@ -450,7 +452,7 @@ func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request) {
 
 	// Clean up old AdGuard entry before making changes
 	if needsAdGuardCleanup {
-		if err := adguard.DeleteDomainRewrite(oldDomain, s.traefikIP); err != nil {
+		if err := adguard.DeleteDomainRewrite(oldDomain, s.vpnIP); err != nil {
 			log.Printf("Warning: failed to delete old AdGuard rewrite for %s: %v", oldDomain, err)
 		}
 	}
@@ -559,7 +561,7 @@ func (s *Service) handleDelete(w http.ResponseWriter, r *http.Request) {
 	// Step 1: Delete AdGuard rewrite only for VPN mode routes
 	mode := database.StringFromNullNotEmpty(accessMode, "vpn")
 	if mode == "vpn" {
-		if err := adguard.DeleteDomainRewrite(domain, s.traefikIP); err != nil {
+		if err := adguard.DeleteDomainRewrite(domain, s.vpnIP); err != nil {
 			router.JSONError(w, "failed to delete DNS rewrite: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
