@@ -1,7 +1,6 @@
 package traefik
 
 import (
-	"bufio"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -53,7 +52,6 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"GetOverview":  s.handleOverview,
 		"GetConfig":    s.handleGetConfig,
 		"UpdateConfig": s.handleUpdateConfig,
-		"GetLogs":      s.handleLogs,
 		"GetVPNOnly":   s.handleGetVPNOnly,
 		"SetVPNOnly":   s.handleSetVPNOnly,
 	}
@@ -297,58 +295,6 @@ func updateTraefikDashboardAddress(configPath string, enabled bool) error {
 	}
 
 	return os.WriteFile(configPath, []byte(content), 0644)
-}
-
-func (s *Service) handleLogs(w http.ResponseWriter, r *http.Request) {
-	p := router.ParsePagination(r, helper.LargePaginationLimit)
-	limit := p.Limit
-
-	file, err := os.Open(s.accessLogPath)
-	if err != nil {
-		router.JSON(w, []map[string]interface{}{})
-		return
-	}
-	defer file.Close()
-
-	var lines []string
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
-		if len(lines) > limit*2 {
-			lines = lines[len(lines)-limit:]
-		}
-	}
-
-	if len(lines) > limit {
-		lines = lines[len(lines)-limit:]
-	}
-
-	var logs []map[string]interface{}
-	for i := len(lines) - 1; i >= 0 && len(logs) < limit; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line == "" {
-			continue
-		}
-
-		var entry map[string]interface{}
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			continue
-		}
-
-		logs = append(logs, map[string]interface{}{
-			"time":      entry["time"],
-			"method":    entry["RequestMethod"],
-			"path":      entry["RequestPath"],
-			"status":    entry["DownstreamStatus"],
-			"duration":  entry["Duration"],
-			"clientIP":  entry["ClientHost"],
-			"router":    entry["RouterName"],
-			"service":   entry["ServiceName"],
-			"userAgent": entry["request_User-Agent"],
-		})
-	}
-
-	router.JSON(w, logs)
 }
 
 // Helper functions

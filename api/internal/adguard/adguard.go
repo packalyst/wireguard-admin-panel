@@ -76,13 +76,12 @@ func (s *Service) getCredentials() (username, password string) {
 // Handlers returns the handler map for the router
 func (s *Service) Handlers() router.ServiceHandlers {
 	return router.ServiceHandlers{
-		"GetOverview":    s.handleOverview,
-		"UpdateConfig":   s.handleConfig,
-		"GetFiltering":   s.handleGetFiltering,
+		"GetOverview":     s.handleOverview,
+		"UpdateConfig":    s.handleConfig,
+		"GetFiltering":    s.handleGetFiltering,
 		"UpdateFiltering": s.handleFilteringAction,
-		"GetRewrites":    s.handleGetRewrites,
-		"UpdateRewrites": s.handleRewriteAction,
-		"GetQueryLog":    s.handleGetQueryLog,
+		"GetRewrites":     s.handleGetRewrites,
+		"UpdateRewrites":  s.handleRewriteAction,
 	}
 }
 
@@ -360,20 +359,6 @@ func (s *Service) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"validTypes": validConfigTypes,
 		})
 	}
-}
-
-func (s *Service) handleGetQueryLog(w http.ResponseWriter, r *http.Request) {
-	limit := r.URL.Query().Get("limit")
-	if limit == "" {
-		limit = "100"
-	}
-	offset := r.URL.Query().Get("offset")
-	if offset == "" {
-		offset = "0"
-	}
-
-	path := "/control/querylog?limit=" + limit + "&offset=" + offset
-	s.proxyGet(w, path)
 }
 
 func (s *Service) handleGetFiltering(w http.ResponseWriter, r *http.Request) {

@@ -50,12 +50,10 @@ type MiddlewareConfig struct {
 
 // FirewallAppConfig holds firewall-specific configuration
 type FirewallAppConfig struct {
-	MaxAttempts               int `json:"maxAttempts"`
-	MaxTrafficLogs            int `json:"maxTrafficLogs"`
-	JailCheckIntervalSec      int `json:"jailCheckIntervalSec"`
-	TrafficMonitorIntervalSec int `json:"trafficMonitorIntervalSec"`
-	CleanupIntervalMin        int `json:"cleanupIntervalMin"`
-	DNSLookupTimeoutSec       int `json:"dnsLookupTimeoutSec"`
+	MaxAttempts          int `json:"maxAttempts"`
+	JailCheckIntervalSec int `json:"jailCheckIntervalSec"`
+	CleanupIntervalMin   int `json:"cleanupIntervalMin"`
+	DNSLookupTimeoutSec  int `json:"dnsLookupTimeoutSec"`
 }
 
 // SessionAppConfig holds session-specific configuration
@@ -149,12 +147,10 @@ func GetApp() *AppConfig {
 func GetFirewallConfig() FirewallAppConfig {
 	if config == nil {
 		return FirewallAppConfig{
-			MaxAttempts:               10000,
-			MaxTrafficLogs:            50000,
-			JailCheckIntervalSec:      10,
-			TrafficMonitorIntervalSec: 5,
-			CleanupIntervalMin:        5,
-			DNSLookupTimeoutSec:       2,
+			MaxAttempts:          10000,
+			JailCheckIntervalSec: 10,
+			CleanupIntervalMin:   5,
+			DNSLookupTimeoutSec:  2,
 		}
 	}
 	cfg := config.App.Firewall
@@ -162,14 +158,8 @@ func GetFirewallConfig() FirewallAppConfig {
 	if cfg.MaxAttempts == 0 {
 		cfg.MaxAttempts = 10000
 	}
-	if cfg.MaxTrafficLogs == 0 {
-		cfg.MaxTrafficLogs = 50000
-	}
 	if cfg.JailCheckIntervalSec == 0 {
 		cfg.JailCheckIntervalSec = 10
-	}
-	if cfg.TrafficMonitorIntervalSec == 0 {
-		cfg.TrafficMonitorIntervalSec = 5
 	}
 	if cfg.CleanupIntervalMin == 0 {
 		cfg.CleanupIntervalMin = 5

@@ -106,6 +106,10 @@ func (s *Service) monitorJailWithContext(ctx context.Context, jailID int64, name
 	ticker := time.NewTicker(time.Duration(s.config.JailCheckInterval) * time.Second)
 	defer ticker.Stop()
 
+	// Cleanup ticker removes stale IPs from memory every 5 minutes
+	cleanupTicker := time.NewTicker(5 * time.Minute)
+	defer cleanupTicker.Stop()
+
 	regex := regexp.MustCompile(filterRegex)
 	ipAttempts := make(map[string][]time.Time)
 
@@ -123,6 +127,22 @@ func (s *Service) monitorJailWithContext(ctx context.Context, jailID int64, name
 			return
 		case <-ticker.C:
 			lastLogPos = s.processJailLogFile(name, logFile, regex, ipAttempts, lastLogPos, jailID, maxRetry, findTime, banTime)
+		case <-cleanupTicker.C:
+			// Remove IPs with no recent timestamps to prevent memory leak
+			cutoff := time.Now().Add(-time.Duration(findTime) * time.Second)
+			for ip, timestamps := range ipAttempts {
+				var recent []time.Time
+				for _, t := range timestamps {
+					if t.After(cutoff) {
+						recent = append(recent, t)
+					}
+				}
+				if len(recent) == 0 {
+					delete(ipAttempts, ip)
+				} else {
+					ipAttempts[ip] = recent
+				}
+			}
 		}
 	}
 }

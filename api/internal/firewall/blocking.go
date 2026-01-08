@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"api/internal/logs/sources"
 	"api/internal/nftables"
 )
 
@@ -207,10 +208,7 @@ func (s *Service) refreshBlockCacheIfNeeded() {
 	s.blockCache.updatedAt = time.Now()
 }
 
-// recordAttempt logs a connection attempt
+// recordAttempt logs a connection attempt to unified logs
 func (s *Service) recordAttempt(srcIP string, destPort int, protocol, jailName, action string) {
-	s.db.Exec(`
-		INSERT INTO attempts (source_ip, dest_port, protocol, jail_name, action)
-		VALUES (?, ?, ?, ?, ?)
-	`, srcIP, destPort, protocol, jailName, action)
+	sources.InsertFirewallLog(srcIP, destPort, protocol, jailName, action)
 }

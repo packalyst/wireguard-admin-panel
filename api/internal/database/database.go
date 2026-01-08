@@ -84,29 +84,6 @@ func createSchema(db *sql.DB) error {
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
-	-- Connection attempts log (for jail monitoring)
-	CREATE TABLE IF NOT EXISTS attempts (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-		source_ip TEXT NOT NULL,
-		dest_port INTEGER,
-		protocol TEXT,
-		jail_name TEXT,
-		action TEXT
-	);
-
-	-- VPN traffic logs
-	CREATE TABLE IF NOT EXISTS traffic_logs (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-		client_ip TEXT NOT NULL,
-		dest_ip TEXT NOT NULL,
-		dest_port INTEGER,
-		protocol TEXT,
-		domain TEXT,
-		country TEXT DEFAULT ''
-	);
-
 	-- Country zones cache (IP ranges for country blocking)
 	CREATE TABLE IF NOT EXISTS country_zones_cache (
 		country_code TEXT PRIMARY KEY,
@@ -131,20 +108,6 @@ func createSchema(db *sql.DB) error {
 		hit_count INTEGER DEFAULT 0,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
-
-	-- Attempts indexes
-	CREATE INDEX IF NOT EXISTS idx_attempts_timestamp ON attempts(timestamp);
-	CREATE INDEX IF NOT EXISTS idx_attempts_ip ON attempts(source_ip);
-	CREATE INDEX IF NOT EXISTS idx_attempts_jail ON attempts(jail_name);
-	CREATE INDEX IF NOT EXISTS idx_attempts_timestamp_id ON attempts(timestamp DESC, id);
-
-	-- Traffic logs indexes
-	CREATE INDEX IF NOT EXISTS idx_traffic_timestamp ON traffic_logs(timestamp);
-	CREATE INDEX IF NOT EXISTS idx_traffic_client_ip ON traffic_logs(client_ip);
-	CREATE INDEX IF NOT EXISTS idx_traffic_dest_ip ON traffic_logs(dest_ip);
-	CREATE INDEX IF NOT EXISTS idx_traffic_timestamp_protocol ON traffic_logs(timestamp, protocol);
-	CREATE INDEX IF NOT EXISTS idx_traffic_timestamp_client ON traffic_logs(timestamp, client_ip);
-	CREATE INDEX IF NOT EXISTS idx_traffic_timestamp_id ON traffic_logs(timestamp DESC, id);
 
 	-- Firewall entries indexes
 	CREATE UNIQUE INDEX IF NOT EXISTS idx_firewall_entries_unique ON firewall_entries(entry_type, value, protocol);
@@ -288,6 +251,53 @@ func createSchema(db *sql.DB) error {
 	// Execute VPN ACL schema
 	if _, err := db.Exec(vpnSchema); err != nil {
 		return fmt.Errorf("failed to create VPN schema: %v", err)
+	}
+
+	// Unified logs schema - outbound/inbound/dns
+	logsSchema := `
+	CREATE TABLE IF NOT EXISTS logs (
+		logs_id INTEGER PRIMARY KEY AUTOINCREMENT,
+		logs_timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		logs_type TEXT NOT NULL CHECK(logs_type IN ('outbound', 'inbound', 'dns', 'fw')),
+
+		-- Source
+		logs_src_ip TEXT NOT NULL,
+		logs_src_country TEXT,
+
+		-- Destination
+		logs_dest_ip TEXT,
+		logs_dest_port INTEGER,
+		logs_dest_country TEXT,
+
+		-- Common
+		logs_domain TEXT,
+		logs_protocol TEXT,
+		logs_status TEXT,
+		logs_duration INTEGER,
+		logs_bytes INTEGER,
+		logs_cached INTEGER DEFAULT 0,
+
+		-- Inbound extras
+		logs_method TEXT,
+		logs_path TEXT,
+		logs_router TEXT,
+		logs_service TEXT,
+
+		-- DNS extras
+		logs_query_type TEXT,
+		logs_upstream TEXT,
+		logs_rule TEXT
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_logs_type_time ON logs(logs_type, logs_timestamp DESC);
+	CREATE INDEX IF NOT EXISTS idx_logs_src ON logs(logs_src_ip, logs_timestamp DESC);
+	CREATE INDEX IF NOT EXISTS idx_logs_domain ON logs(logs_domain);
+	CREATE INDEX IF NOT EXISTS idx_logs_status ON logs(logs_type, logs_status);
+	`
+
+	// Execute logs schema
+	if _, err := db.Exec(logsSchema); err != nil {
+		return fmt.Errorf("failed to create logs schema: %v", err)
 	}
 
 	// Run migrations for existing databases

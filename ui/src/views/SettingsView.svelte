@@ -10,6 +10,7 @@
   import InfoCard from '../components/InfoCard.svelte'
   import ContentBlock from '../components/ContentBlock.svelte'
   import Checkbox from '../components/Checkbox.svelte'
+  import Modal from '../components/Modal.svelte'
 
   let { loading = $bindable(true) } = $props()
   let savingAdguard = $state(false)
@@ -70,6 +71,10 @@
   // UI settings (stored in localStorage)
   let itemsPerPage = $state('25')
 
+  // Logs watcher settings
+  let watcherStatuses = $state([])
+  let togglingWatcher = $state(null) // name of watcher being toggled
+
   // Geolocation settings
   let geoSettings = $state({
     lookup_provider: 'none',
@@ -86,6 +91,38 @@
   let savingGeo = $state(false)
   let originalGeoSettings = $state(null)
   let triggeringGeoUpdate = $state(false)
+
+  // Jails settings
+  let jails = $state([])
+  let loadingJails = $state(false)
+  let showJailModal = $state(false)
+  let savingJail = $state(false)
+
+  // Ports settings
+  let ports = $state([])
+  let loadingPorts = $state(false)
+  let newPort = $state('')
+
+  // SSH port settings
+  let sshPort = $state(22)
+  let showSSHModal = $state(false)
+  let newSSHPort = $state('')
+  let changingSSH = $state(false)
+  let jailForm = $state({
+    id: null,
+    name: '',
+    enabled: true,
+    logFile: '/var/log/auth.log',
+    filterRegex: '',
+    maxRetry: 5,
+    findTime: 3600,
+    banTime: 2592000,
+    port: '',
+    action: 'drop',
+    escalateEnabled: false,
+    escalateThreshold: 3,
+    escalateWindow: 3600
+  })
 
   // Original values for change detection
   let originalAdguard = { username: '', password: '', dashboardEnabled: true }
@@ -173,6 +210,17 @@
 
       // UI (from localStorage)
       itemsPerPage = localStorage.getItem('settings_items_per_page') || '25'
+
+      // Logs watchers
+      watcherStatuses = await apiGet('/api/logs/status')
+
+      // Jails, Ports & SSH port
+      const jailsRes = await apiGet('/api/fw/jails')
+      jails = jailsRes.jails || jailsRes || []
+      const fwStatus = await apiGet('/api/fw/status')
+      if (fwStatus?.sshPort) sshPort = fwStatus.sshPort
+      const portsRes = await apiGet('/api/fw/ports')
+      ports = portsRes.ports || portsRes || []
     } catch (e) {
       toast('Failed to load settings: ' + e.message, 'error')
     } finally {
@@ -491,12 +539,208 @@
     }
   }
 
+  // Toggle logs watcher
+  async function toggleWatcher(name, enable) {
+    togglingWatcher = name
+    try {
+      await apiPost('/api/logs/watcher', { name, enable })
+      // Update local state
+      watcherStatuses = watcherStatuses.map(w =>
+        w.name === name ? { ...w, enabled: enable, running: enable } : w
+      )
+      toast(`${name} watcher ${enable ? 'enabled' : 'disabled'}`, 'success')
+    } catch (e) {
+      toast(`Failed to toggle ${name}: ` + e.message, 'error')
+    } finally {
+      togglingWatcher = null
+    }
+  }
+
+  // Jail management
+  function openCreateJail() {
+    jailForm = {
+      id: null,
+      name: '',
+      enabled: true,
+      logFile: '/var/log/auth.log',
+      filterRegex: '',
+      maxRetry: 5,
+      findTime: 3600,
+      banTime: 2592000,
+      port: '',
+      action: 'drop',
+      escalateEnabled: false,
+      escalateThreshold: 3,
+      escalateWindow: 3600
+    }
+    showJailModal = true
+  }
+
+  function openEditJail(jail) {
+    jailForm = {
+      id: jail.id,
+      name: jail.name,
+      enabled: jail.enabled,
+      logFile: jail.logFile,
+      filterRegex: jail.filterRegex,
+      maxRetry: jail.maxRetry,
+      findTime: jail.findTime,
+      banTime: jail.banTime,
+      port: jail.port,
+      action: jail.action,
+      escalateEnabled: jail.escalateEnabled || false,
+      escalateThreshold: jail.escalateThreshold || 3,
+      escalateWindow: jail.escalateWindow || 3600
+    }
+    showJailModal = true
+  }
+
+  async function saveJail() {
+    if (!jailForm.name.trim()) {
+      toast('Jail name is required', 'error')
+      return
+    }
+    if (!jailForm.filterRegex.trim()) {
+      toast('Filter regex is required', 'error')
+      return
+    }
+
+    savingJail = true
+    try {
+      const jailData = {
+        enabled: jailForm.enabled,
+        logFile: jailForm.logFile,
+        filterRegex: jailForm.filterRegex,
+        maxRetry: parseInt(jailForm.maxRetry) || 5,
+        findTime: parseInt(jailForm.findTime) || 3600,
+        banTime: parseInt(jailForm.banTime) || 2592000,
+        port: jailForm.port,
+        action: jailForm.action,
+        escalateEnabled: jailForm.escalateEnabled,
+        escalateThreshold: parseInt(jailForm.escalateThreshold) || 3,
+        escalateWindow: parseInt(jailForm.escalateWindow) || 3600
+      }
+
+      if (jailForm.id) {
+        await apiPut(`/api/fw/jails/${jailForm.name}`, jailData)
+        toast(`Jail "${jailForm.name}" updated`, 'success')
+      } else {
+        await apiPost('/api/fw/jails', { name: jailForm.name, ...jailData })
+        toast(`Jail "${jailForm.name}" created`, 'success')
+      }
+      showJailModal = false
+      // Reload jails
+      const jailsRes = await apiGet('/api/fw/jails')
+      jails = jailsRes.jails || jailsRes || []
+    } catch (e) {
+      toast('Failed to save jail: ' + e.message, 'error')
+    } finally {
+      savingJail = false
+    }
+  }
+
+  async function deleteJail(jail) {
+    if (!confirm(`Delete jail "${jail.name}"?`)) return
+    try {
+      await apiDelete(`/api/fw/jails/${jail.name}`)
+      toast(`Jail "${jail.name}" deleted`, 'success')
+      jails = jails.filter(j => j.id !== jail.id)
+    } catch (e) {
+      toast('Failed to delete jail: ' + e.message, 'error')
+    }
+  }
+
+  async function toggleJail(jail) {
+    try {
+      await apiPut(`/api/fw/jails/${jail.name}`, { ...jail, enabled: !jail.enabled })
+      jails = jails.map(j => j.id === jail.id ? { ...j, enabled: !j.enabled } : j)
+      toast(`Jail "${jail.name}" ${!jail.enabled ? 'enabled' : 'disabled'}`, 'success')
+    } catch (e) {
+      toast('Failed to toggle jail: ' + e.message, 'error')
+    }
+  }
+
+  function formatBanTime(seconds) {
+    if (seconds < 60) return `${seconds}s`
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m`
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`
+    return `${Math.floor(seconds / 86400)}d`
+  }
+
+  // SSH port management
+  function openSSHModal() {
+    newSSHPort = sshPort.toString()
+    showSSHModal = true
+  }
+
+  async function changeSSHPort() {
+    const port = parseInt(newSSHPort)
+    if (!port || port < 1 || port > 65535) {
+      toast('Invalid port number (1-65535)', 'error')
+      return
+    }
+    if (port === sshPort) {
+      toast('SSH is already on this port', 'info')
+      return
+    }
+
+    changingSSH = true
+    try {
+      const res = await apiPost('/api/fw/ssh', { port })
+      if (res.newPort) {
+        toast(`SSH port changed from ${res.oldPort} to ${res.newPort}`, 'success')
+        sshPort = res.newPort
+        showSSHModal = false
+        newSSHPort = ''
+      }
+    } catch (e) {
+      toast('Failed to change SSH port: ' + e.message, 'error')
+    } finally {
+      changingSSH = false
+    }
+  }
+
   // Generate random secure credentials for AdGuard
   function regenerateAdguardCredentials() {
     const creds = generateAdguardCredentials()
     adguardUsername = creds.username
     adguardPassword = creds.password
     toast('Credentials generated', 'success')
+  }
+
+  // Port management
+  const sortedPorts = $derived.by(() => {
+    const arr = ports || []
+    if (!arr.slice) return []
+    return [...arr].sort((a, b) => a.port - b.port)
+  })
+
+  async function addPort() {
+    const port = parseInt(newPort)
+    if (!port || port < 1 || port > 65535) {
+      toast('Invalid port number', 'error')
+      return
+    }
+    try {
+      await apiPost('/api/fw/ports', { port, protocol: 'tcp' })
+      toast(`Port ${port} added`, 'success')
+      newPort = ''
+      const portsRes = await apiGet('/api/fw/ports')
+      ports = portsRes.ports || portsRes || []
+    } catch (e) {
+      toast('Failed: ' + e.message, 'error')
+    }
+  }
+
+  async function removePort(port, protocol = 'tcp') {
+    try {
+      await apiDelete(`/api/fw/ports/${port}?protocol=${protocol}`)
+      toast(`Port ${port} removed`, 'success')
+      const portsRes = await apiGet('/api/fw/ports')
+      ports = portsRes.ports || portsRes || []
+    } catch (e) {
+      toast('Failed: ' + e.message, 'error')
+    }
   }
 
   onMount(() => {
@@ -733,6 +977,193 @@
               iconOnly
             />
           </div>
+        </div>
+      </div>
+
+      <!-- Logs Watchers -->
+      <div class="kt-panel">
+        <div class="kt-panel-header">
+          <h3 class="kt-panel-title">
+            <Icon name="file-text" size={16} />
+            Log Watchers
+          </h3>
+        </div>
+        <div class="kt-panel-body">
+          <p class="text-[10px] text-muted-foreground mb-3">
+            Enable or disable log collection from various sources.
+          </p>
+          {#if watcherStatuses.length > 0}
+            <div class="flex flex-wrap gap-2">
+              {#each watcherStatuses as watcher}
+                {@const isToggling = togglingWatcher === watcher.name}
+                {@const hasError = watcher.enabled && !watcher.running && watcher.lastError}
+                <Button
+                  size="sm"
+                  variant={watcher.enabled ? (hasError ? 'destructive' : 'success') : 'outline'}
+                  icon={isToggling ? 'loader-2' : (hasError ? 'alert-triangle' : (watcher.running ? 'activity' : 'player-stop'))}
+                  loading={isToggling}
+                  onclick={() => toggleWatcher(watcher.name, !watcher.enabled)}
+                >
+                  {watcher.name}
+                  {#if watcher.processed > 0}
+                    <span class="opacity-60">({watcher.processed})</span>
+                  {/if}
+                </Button>
+              {/each}
+            </div>
+            {#if watcherStatuses.some(w => w.lastError)}
+              <div class="mt-2 p-2 bg-destructive/10 rounded text-[10px] text-destructive">
+                {#each watcherStatuses.filter(w => w.lastError) as w}
+                  <div><strong>{w.name}:</strong> {w.lastError}</div>
+                {/each}
+              </div>
+            {/if}
+          {:else}
+            <p class="text-xs text-muted-foreground italic">No watchers configured</p>
+          {/if}
+        </div>
+      </div>
+
+      <!-- Jails (Intrusion Detection) -->
+      <div class="kt-panel">
+        <div class="kt-panel-header">
+          <h3 class="kt-panel-title">
+            <Icon name="shield-lock" size={16} />
+            Jails
+          </h3>
+          <div class="kt-btn-group">
+            <Button onclick={openSSHModal} variant="outline" size="xs" icon="key">
+              SSH: {sshPort}
+            </Button>
+            <Button onclick={openCreateJail} variant="outline" size="xs" icon="plus">
+              Add Jail
+            </Button>
+          </div>
+        </div>
+        <div class="kt-panel-body">
+          <p class="text-[10px] text-muted-foreground mb-3">
+            Intrusion detection - automatically block IPs based on log patterns.
+          </p>
+          {#if jails.length > 0}
+            <div class="space-y-2">
+              {#each jails as jail}
+                <div class="flex items-center justify-between p-2 rounded border border-border {!jail.enabled && 'opacity-50'}">
+                  <div class="flex items-center gap-2">
+                    <button
+                      onclick={() => toggleJail(jail)}
+                      class="flex h-6 w-6 items-center justify-center rounded {jail.enabled ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}"
+                      title={jail.enabled ? 'Click to disable' : 'Click to enable'}
+                    >
+                      <Icon name={jail.enabled ? 'shield-check' : 'shield'} size={14} />
+                    </button>
+                    <div>
+                      <span class="text-xs font-medium text-foreground capitalize">{jail.name}</span>
+                      <div class="text-[10px] text-muted-foreground">
+                        {jail.maxRetry} retries / {formatBanTime(jail.findTime)} → ban {formatBanTime(jail.banTime)}
+                      </div>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    {#if jail.currentlyBanned > 0}
+                      <Badge variant="destructive" size="sm">{jail.currentlyBanned} banned</Badge>
+                    {/if}
+                    <div class="kt-btn-group">
+                      <Button onclick={() => openEditJail(jail)} variant="outline" size="xs" icon="edit" title="Edit" />
+                      <Button onclick={() => deleteJail(jail)} variant="outline" size="xs" icon="trash" title="Delete" />
+                    </div>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {:else}
+            <p class="text-xs text-muted-foreground italic">No jails configured</p>
+          {/if}
+        </div>
+      </div>
+
+      <!-- Allowed Ports -->
+      <div class="kt-panel">
+        <div class="kt-panel-header">
+          <h3 class="kt-panel-title">
+            <Icon name="lock" size={16} />
+            Allowed Ports
+          </h3>
+          <Input
+            type="number"
+            bind:value={newPort}
+            placeholder="Port"
+            prefixIcon="plug"
+            suffixAddonBtn={{ icon: "plus", onclick: addPort }}
+            class="w-32"
+            min="1"
+            max="65535"
+            onkeydown={(e) => e.key === 'Enter' && addPort()}
+          />
+        </div>
+        <div class="kt-panel-body">
+          <p class="text-[10px] text-muted-foreground mb-3">
+            Firewall ports allowed for incoming connections.
+          </p>
+          {#if sortedPorts.length > 0}
+            <div class="rounded-lg border border-border overflow-hidden">
+              <table class="w-full text-xs">
+                <thead>
+                  <tr class="border-b border-border bg-muted/50">
+                    <th class="px-3 py-2 text-left text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Port</th>
+                    <th class="px-3 py-2 text-left text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Protocol</th>
+                    <th class="px-3 py-2 text-left text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Service</th>
+                    <th class="px-3 py-2 w-8"></th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-border/50">
+                  {#each sortedPorts as p}
+                    <tr class="hover:bg-muted/30 transition-colors">
+                      <td class="px-3 py-1.5">
+                        <code class="font-mono font-semibold text-foreground">{p.port}</code>
+                      </td>
+                      <td class="px-3 py-1.5">
+                        <span class="inline-flex items-center justify-center min-w-[36px] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide rounded bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">
+                          {p.protocol || 'tcp'}
+                        </span>
+                      </td>
+                      <td class="px-3 py-1.5 text-muted-foreground">
+                        {#if p.service}
+                          {p.service}
+                        {:else if p.port === 22}SSH
+                        {:else if p.port === 80}HTTP
+                        {:else if p.port === 443}HTTPS
+                        {:else if p.port === 51820}WireGuard
+                        {:else if p.port === 8080}API
+                        {:else if p.port === 8081}Admin API
+                        {:else if p.port === 8082}Traefik
+                        {:else if p.port === 8083}AdGuard
+                        {:else if p.port === 3478}STUN
+                        {:else}—
+                        {/if}
+                      </td>
+                      <td class="px-3 py-1.5">
+                        {#if !p.essential}
+                          <button
+                            onclick={() => removePort(p.port, p.protocol)}
+                            class="p-1 text-muted-foreground hover:text-destructive transition-colors"
+                            title="Remove port"
+                          >
+                            <Icon name="trash" size={12} />
+                          </button>
+                        {:else}
+                          <span class="p-1 text-muted-foreground/50" title="Essential port">
+                            <Icon name="lock" size={12} />
+                          </span>
+                        {/if}
+                      </td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {:else}
+            <p class="text-xs text-muted-foreground italic">No ports configured</p>
+          {/if}
         </div>
       </div>
 
@@ -1162,3 +1593,166 @@
     </div>
   {/if}
 </div>
+
+<!-- Create/Edit Jail Modal -->
+<Modal bind:open={showJailModal} title={jailForm.id ? 'Edit Jail' : 'Create Jail'} size="md">
+  <div class="space-y-4">
+    <div class="grid grid-cols-2 gap-4">
+      <Input
+        label="Name"
+        bind:value={jailForm.name}
+        placeholder="e.g. sshd, portscan"
+        disabled={!!jailForm.id}
+      />
+      <Select label="Status" bind:value={jailForm.enabled}>
+        <option value={true}>Enabled</option>
+        <option value={false}>Disabled</option>
+      </Select>
+    </div>
+
+    <Input
+      label="Log File"
+      bind:value={jailForm.logFile}
+      placeholder="/var/log/auth.log"
+    />
+
+    <Input
+      label="Filter Regex"
+      bind:value={jailForm.filterRegex}
+      placeholder="e.g. Failed password.*from (\d+\.\d+\.\d+\.\d+)"
+      class="font-mono"
+      helperText="Must contain at least one capture group for the IP address"
+    />
+
+    <div class="grid grid-cols-3 gap-4">
+      <Input
+        label="Max Retry"
+        type="number"
+        bind:value={jailForm.maxRetry}
+        min="1"
+        max="100"
+      />
+      <Select label="Find Time" bind:value={jailForm.findTime}>
+        <option value={300}>5 minutes</option>
+        <option value={600}>10 minutes</option>
+        <option value={1800}>30 minutes</option>
+        <option value={3600}>1 hour</option>
+        <option value={7200}>2 hours</option>
+        <option value={86400}>24 hours</option>
+      </Select>
+      <Select label="Ban Time" bind:value={jailForm.banTime}>
+        <option value={3600}>1 hour</option>
+        <option value={86400}>1 day</option>
+        <option value={604800}>7 days</option>
+        <option value={2592000}>30 days</option>
+        <option value={31536000}>1 year</option>
+        <option value={-1}>Permanent</option>
+      </Select>
+    </div>
+
+    <div class="grid grid-cols-2 gap-4">
+      <Input
+        label="Port"
+        bind:value={jailForm.port}
+        placeholder="all or specific port"
+      />
+      <Select label="Action" bind:value={jailForm.action}>
+        <option value="drop">Drop</option>
+        <option value="reject">Reject</option>
+      </Select>
+    </div>
+
+    <!-- Auto-Escalation Settings -->
+    <div class="border-t border-border pt-4 mt-4">
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <span class="kt-label mb-0">Auto-Escalation</span>
+          <p class="text-xs text-muted-foreground">Automatically block entire /24 range when threshold IPs are blocked</p>
+        </div>
+        <Checkbox variant="switch" bind:checked={jailForm.escalateEnabled} />
+      </div>
+
+      {#if jailForm.escalateEnabled}
+        <div class="grid grid-cols-2 gap-4 p-3 bg-muted/50 rounded-lg">
+          <Input
+            label="IP Threshold"
+            type="number"
+            bind:value={jailForm.escalateThreshold}
+            min="2"
+            max="20"
+            helperText="Block /24 when this many IPs blocked"
+          />
+          <Select label="Time Window" bind:value={jailForm.escalateWindow}>
+            <option value={1800}>30 minutes</option>
+            <option value={3600}>1 hour</option>
+            <option value={7200}>2 hours</option>
+            <option value={14400}>4 hours</option>
+            <option value={86400}>24 hours</option>
+          </Select>
+        </div>
+      {/if}
+    </div>
+  </div>
+
+  {#snippet footer()}
+    <Button onclick={() => showJailModal = false} variant="secondary" disabled={savingJail}>
+      Cancel
+    </Button>
+    <Button onclick={saveJail} icon={jailForm.id ? 'check' : 'plus'} disabled={savingJail}>
+      {savingJail ? 'Saving...' : (jailForm.id ? 'Save Changes' : 'Create Jail')}
+    </Button>
+  {/snippet}
+</Modal>
+
+<!-- Change SSH Port Modal -->
+<Modal bind:open={showSSHModal} title="Change SSH Port" size="sm">
+  <div class="space-y-4">
+    <div class="kt-alert kt-alert-warning">
+      <Icon name="alert-triangle" size={18} />
+      <div>
+        <strong>This will change your SSH port.</strong>
+        Ensure you can access the server on the new port before closing your session.
+      </div>
+    </div>
+
+    <div class="flex gap-3">
+      <div class="flex-1">
+        <Input
+          label="Current Port"
+          value={sshPort}
+          prefixIcon="key"
+          size="default"
+          class="font-mono"
+          readonly
+          disabled
+        />
+      </div>
+      <div class="flex-1">
+        <Input
+          label="New Port"
+          type="number"
+          bind:value={newSSHPort}
+          prefixIcon="key"
+          size="default"
+          class="font-mono"
+          placeholder="2222"
+          min="1"
+          max="65535"
+        />
+      </div>
+    </div>
+
+    <p class="text-xs text-muted-foreground">
+      Common ports: 2222, 2022, 22022
+    </p>
+  </div>
+
+  {#snippet footer()}
+    <Button onclick={() => showSSHModal = false} variant="secondary" disabled={changingSSH}>
+      Cancel
+    </Button>
+    <Button onclick={changeSSHPort} icon="key" disabled={changingSSH || !newSSHPort || parseInt(newSSHPort) === sshPort}>
+      {changingSSH ? 'Changing...' : 'Change Port'}
+    </Button>
+  {/snippet}
+</Modal>

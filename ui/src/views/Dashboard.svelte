@@ -304,7 +304,7 @@
         <!-- Mobile menu button -->
         <button
           onclick={() => sidebarOpen = !sidebarOpen}
-          class="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-card text-muted-foreground hover:bg-muted lg:hidden"
+          class="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-card text-muted-foreground hover:bg-muted lg:hidden cursor-pointer"
         >
           <Icon name="menu" size={16} />
         </button>

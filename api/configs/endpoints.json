@@ -3,9 +3,7 @@
   "app": {
     "firewall": {
       "maxAttempts": 10000,
-      "maxTrafficLogs": 50000,
       "jailCheckIntervalSec": 10,
-      "trafficMonitorIntervalSec": 5,
       "cleanupIntervalMin": 5,
       "dnsLookupTimeoutSec": 2
     },
@@ -76,7 +74,6 @@
         {"path": "/entries/import", "methods": ["POST"], "handler": "ImportEntries", "description": "Import from blocklist"},
         {"path": "/entries/source/{source}", "methods": ["DELETE"], "handler": "DeleteBySource", "description": "Delete all entries from source"},
         {"path": "/entries/all", "methods": ["DELETE"], "handler": "DeleteAll", "description": "Delete all non-essential entries"},
-        {"path": "/attempts", "methods": ["GET"], "handler": "GetAttempts", "description": "List connection attempts"},
         {"path": "/ports", "methods": ["GET"], "handler": "GetPorts", "description": "List allowed ports"},
         {"path": "/ports", "methods": ["POST"], "handler": "AddPort", "description": "Add allowed port"},
         {"path": "/ports/{port}", "methods": ["DELETE"], "handler": "RemovePort", "description": "Remove allowed port"},
@@ -85,9 +82,6 @@
         {"path": "/jails/{name}", "methods": ["GET"], "handler": "GetJail", "description": "Get jail details"},
         {"path": "/jails/{name}", "methods": ["PUT"], "handler": "UpdateJail", "description": "Update jail"},
         {"path": "/jails/{name}", "methods": ["DELETE"], "handler": "DeleteJail", "description": "Delete jail"},
-        {"path": "/traffic", "methods": ["GET"], "handler": "GetTraffic", "description": "Get traffic logs"},
-        {"path": "/traffic/stats", "methods": ["GET"], "handler": "GetTrafficStats", "description": "Get traffic statistics"},
-        {"path": "/traffic/live", "methods": ["GET"], "handler": "GetTrafficLive", "description": "Get live traffic metrics"},
         {"path": "/config", "methods": ["GET"], "handler": "GetConfig", "description": "Get configuration"},
         {"path": "/config", "methods": ["PUT"], "handler": "UpdateConfig", "description": "Update configuration"},
         {"path": "/apply", "methods": ["POST"], "handler": "ApplyRules", "description": "Apply firewall rules"},
@@ -119,7 +113,6 @@
         {"path": "/overview", "methods": ["GET"], "handler": "GetOverview", "description": "Get Traefik overview with routers, services, middlewares"},
         {"path": "/config", "methods": ["GET"], "handler": "GetConfig", "description": "Get dynamic config"},
         {"path": "/config", "methods": ["PUT"], "handler": "UpdateConfig", "description": "Update dynamic config"},
-        {"path": "/logs", "methods": ["GET"], "handler": "GetLogs", "description": "Get access logs"},
         {"path": "/vpn-only", "methods": ["GET"], "handler": "GetVPNOnly", "description": "Get VPN-only mode status"},
         {"path": "/vpn-only", "methods": ["POST"], "handler": "SetVPNOnly", "description": "Set VPN-only mode"}
       ]
@@ -159,8 +152,7 @@
         {"path": "/filtering", "methods": ["GET"], "handler": "GetFiltering", "description": "Get filtering status and rules"},
         {"path": "/filtering", "methods": ["PUT"], "handler": "UpdateFiltering", "description": "Filtering actions (action: add|remove|toggle|refresh|setRules)"},
         {"path": "/rewrites", "methods": ["GET"], "handler": "GetRewrites", "description": "Get DNS rewrites"},
-        {"path": "/rewrites", "methods": ["PUT"], "handler": "UpdateRewrites", "description": "Rewrite actions (action: add|delete)"},
-        {"path": "/querylog", "methods": ["GET"], "handler": "GetQueryLog", "description": "Get query log"}
+        {"path": "/rewrites", "methods": ["PUT"], "handler": "UpdateRewrites", "description": "Rewrite actions (action: add|delete)"}
       ]
     },
     "docker": {
@@ -218,6 +210,16 @@
         {"path": "/{id}/toggle", "methods": ["POST"], "handler": "Toggle", "description": "Toggle domain route"},
         {"path": "/certificates", "methods": ["GET"], "handler": "GetCertificates", "description": "Get SSL certificate info"},
         {"path": "/system-domain", "methods": ["GET"], "handler": "GetSystemDomain", "description": "Get main SSL domain info"}
+      ]
+    },
+    "logs": {
+      "prefix": "/api/logs",
+      "enabled": true,
+      "endpoints": [
+        {"path": "", "methods": ["GET"], "handler": "GetLogs", "description": "Get unified logs with filtering"},
+        {"path": "/stats", "methods": ["GET"], "handler": "GetStats", "description": "Get aggregated statistics"},
+        {"path": "/status", "methods": ["GET"], "handler": "GetStatus", "description": "Get watcher statuses"},
+        {"path": "/watcher", "methods": ["POST"], "handler": "SetWatcher", "description": "Enable/disable watcher"}
       ]
     }
   },

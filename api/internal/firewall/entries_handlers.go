@@ -42,7 +42,7 @@ func (s *Service) handleGetEntries(w http.ResponseWriter, r *http.Request) {
 
 	if search != "" {
 		where += " AND (value LIKE ? ESCAPE '\\' OR source LIKE ? ESCAPE '\\' OR reason LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\')"
-		searchPattern := "%" + escapeLikePattern(search) + "%"
+		searchPattern := "%" + database.EscapeLikePattern(search) + "%"
 		args = append(args, searchPattern, searchPattern, searchPattern, searchPattern)
 	}
 
@@ -593,61 +593,6 @@ func (s *Service) validateIPNotProtected(ip string, r *http.Request) error {
 	}
 
 	return nil
-}
-
-// handleAttempts returns connection attempts with pagination
-func (s *Service) handleAttempts(w http.ResponseWriter, r *http.Request) {
-	p := router.ParsePagination(r, helper.DefaultPaginationLimit)
-	search := r.URL.Query().Get("search")
-	jailFilter := r.URL.Query().Get("jail")
-
-	where := "1=1"
-	args := []interface{}{}
-
-	if jailFilter != "" {
-		where += " AND jail_name = ?"
-		args = append(args, jailFilter)
-	}
-
-	if search != "" {
-		where += " AND (source_ip LIKE ? ESCAPE '\\' OR jail_name LIKE ? ESCAPE '\\' OR protocol LIKE ? ESCAPE '\\' OR CAST(dest_port AS TEXT) LIKE ? ESCAPE '\\')"
-		searchPattern := "%" + escapeLikePattern(search) + "%"
-		args = append(args, searchPattern, searchPattern, searchPattern, searchPattern)
-	}
-
-	var total int
-	countQuery := "SELECT COUNT(*) FROM attempts WHERE " + where
-	_ = s.db.QueryRow(countQuery, args...).Scan(&total)
-
-	jails := s.getDistinctValues("attempts", "jail_name")
-
-	query := fmt.Sprintf(`SELECT id, timestamp, source_ip, dest_port, protocol, jail_name, action
-		FROM attempts WHERE %s ORDER BY timestamp DESC LIMIT ? OFFSET ?`, where)
-	args = append(args, p.Limit, p.Offset)
-
-	rows, err := s.db.Query(query, args...)
-	if err != nil {
-		router.JSONError(w, "database error", http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
-
-	attempts := []Attempt{}
-	for rows.Next() {
-		var a Attempt
-		if err := rows.Scan(&a.ID, &a.Timestamp, &a.SourceIP, &a.DestPort, &a.Protocol, &a.JailName, &a.Action); err != nil {
-			continue
-		}
-		attempts = append(attempts, a)
-	}
-
-	router.JSON(w, map[string]interface{}{
-		"attempts": attempts,
-		"total":    total,
-		"limit":    p.Limit,
-		"offset":   p.Offset,
-		"jails":    jails,
-	})
 }
 
 // handleGetBlocklists returns available blocklist sources

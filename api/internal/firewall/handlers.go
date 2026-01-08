@@ -14,8 +14,6 @@ import (
 var validSQLIdentifiers = map[string]bool{
 	// Tables
 	"firewall_entries": true,
-	"attempts":         true,
-	"traffic_logs":     true,
 	"jails":            true,
 	// Columns
 	"jail_name":  true,
@@ -52,8 +50,9 @@ func (s *Service) handleStatus(w http.ResponseWriter, r *http.Request) {
 	_ = s.db.QueryRow(`SELECT COUNT(*) FROM firewall_entries
 		WHERE entry_type = 'country' AND enabled = 1`).Scan(&countryCount)
 
-	// Count attempts
-	_ = s.db.QueryRow("SELECT COUNT(*) FROM attempts").Scan(&attemptsCount)
+	// Count recent firewall log entries (last 24h)
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM logs
+		WHERE logs_type = 'fw' AND logs_timestamp > datetime('now', '-1 day')`).Scan(&attemptsCount)
 
 	// Count active jails
 	_ = s.db.QueryRow("SELECT COUNT(*) FROM jails WHERE enabled = 1").Scan(&jailsCount)

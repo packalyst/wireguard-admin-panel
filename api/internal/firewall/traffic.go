@@ -1,113 +1,9 @@
 package firewall
 
 import (
-	"bufio"
 	"log"
-	"os"
-	"regexp"
-	"strconv"
-	"strings"
 	"time"
-
-	"api/internal/geolocation"
 )
-
-// runVPNTrafficMonitor monitors VPN client outbound traffic
-func (s *Service) runVPNTrafficMonitor() {
-	logFile := "/var/log/kern.log"
-	if _, err := os.Stat(logFile); os.IsNotExist(err) {
-		logFile = "/var/log/syslog"
-	}
-
-	if _, err := os.Stat(logFile); os.IsNotExist(err) {
-		log.Printf("VPN traffic monitor: no log file found, skipping")
-		return
-	}
-
-	log.Printf("Starting VPN traffic monitor: %s", logFile)
-
-	ticker := time.NewTicker(time.Duration(s.config.TrafficMonitorInterval) * time.Second)
-	defer ticker.Stop()
-
-	var lastSize int64
-	trafficRegex := regexp.MustCompile(`VPN_TRAFFIC:.*SRC=(\d+\.\d+\.\d+\.\d+).*DST=(\d+\.\d+\.\d+\.\d+).*PROTO=(\w+)(?:.*DPT=(\d+))?`)
-
-	for {
-		select {
-		case <-s.ctx.Done():
-			log.Printf("VPN traffic monitor stopping (context cancelled)")
-			return
-		case <-ticker.C:
-			lastSize = s.processVPNTrafficLog(logFile, trafficRegex, lastSize)
-		}
-	}
-}
-
-// processVPNTrafficLog processes the VPN traffic log file
-func (s *Service) processVPNTrafficLog(logFile string, trafficRegex *regexp.Regexp, lastSize int64) int64 {
-	file, err := os.Open(logFile)
-	if err != nil {
-		return lastSize
-	}
-	defer file.Close()
-
-	stat, _ := file.Stat()
-	currentSize := stat.Size()
-
-	if currentSize < lastSize || lastSize == 0 {
-		return currentSize
-	}
-
-	file.Seek(lastSize, 0)
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.Contains(line, "VPN_TRAFFIC") {
-			continue
-		}
-
-		matches := trafficRegex.FindStringSubmatch(line)
-		if len(matches) < 4 {
-			continue
-		}
-
-		srcIP := matches[1]
-		dstIP := matches[2]
-		proto := strings.ToLower(matches[3])
-		dstPort := 0
-		if len(matches) >= 5 && matches[4] != "" {
-			dstPort, _ = strconv.Atoi(matches[4])
-		}
-
-		// Only VPN client traffic
-		if !strings.HasPrefix(srcIP, s.config.WgIPPrefix) && !strings.HasPrefix(srcIP, s.config.HeadscaleIPPrefix) {
-			continue
-		}
-
-		// Skip internal destinations
-		if s.isPrivateIP(dstIP) {
-			continue
-		}
-
-		domain := s.reverseDNS(dstIP)
-
-		// Lookup country code for destination IP
-		country := ""
-		if geoSvc := geolocation.GetService(); geoSvc != nil && geoSvc.IsLookupAvailable() {
-			if result, err := geoSvc.LookupIP(dstIP); err == nil && result != nil {
-				country = result.CountryCode
-			}
-		}
-
-		s.db.Exec(`
-			INSERT INTO traffic_logs (client_ip, dest_ip, dest_port, protocol, domain, country)
-			VALUES (?, ?, ?, ?, ?, ?)
-		`, srcIP, dstIP, dstPort, proto, domain, country)
-	}
-
-	return currentSize
-}
 
 // runExpirationCleanup periodically cleans up expired bans and old data
 func (s *Service) runExpirationCleanup() {
@@ -125,7 +21,7 @@ func (s *Service) runExpirationCleanup() {
 	}
 }
 
-// cleanupExpiredData removes expired bans and old attempts
+// cleanupExpiredData removes expired bans
 func (s *Service) cleanupExpiredData() {
 	// Remove expired entries from firewall_entries
 	result, err := s.db.Exec("DELETE FROM firewall_entries WHERE expires_at IS NOT NULL AND expires_at < datetime('now')")
@@ -135,10 +31,4 @@ func (s *Service) cleanupExpiredData() {
 			s.RequestApply()
 		}
 	}
-
-	// Cleanup old attempts
-	s.db.Exec("DELETE FROM attempts WHERE id NOT IN (SELECT id FROM attempts ORDER BY timestamp DESC LIMIT ?)", s.config.MaxAttempts)
-
-	// Cleanup old traffic logs
-	s.db.Exec("DELETE FROM traffic_logs WHERE id NOT IN (SELECT id FROM traffic_logs ORDER BY timestamp DESC LIMIT ?)", s.config.MaxTrafficLogs)
 }

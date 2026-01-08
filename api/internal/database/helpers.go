@@ -2,8 +2,17 @@ package database
 
 import (
 	"database/sql"
+	"strings"
 	"time"
 )
+
+// EscapeLikePattern escapes SQL LIKE special characters (%, _, \)
+func EscapeLikePattern(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "%", "\\%")
+	s = strings.ReplaceAll(s, "_", "\\_")
+	return s
+}
 
 // TimePointerFromNull converts sql.NullTime to *time.Time
 // Returns nil if the value is not valid

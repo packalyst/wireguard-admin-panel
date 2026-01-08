@@ -42,13 +42,11 @@ func New(dataDir string, nftSvc *nftables.Service) (*Service, error) {
 			EssentialPorts:         helper.BuildEssentialPorts(),
 			IgnoreNetworks:         helper.ParseStringList(helper.GetEnv("IGNORE_NETWORKS")),
 			MaxAttempts:            fwCfg.MaxAttempts,
-			MaxTrafficLogs:         fwCfg.MaxTrafficLogs,
 			DataDir:                dataDir,
 			WgPort:                 helper.GetEnvInt("WG_PORT"),
 			WgIPPrefix:             helper.ExtractIPPrefix(helper.GetEnv("WG_IP_RANGE")),
 			HeadscaleIPPrefix:      helper.ExtractIPPrefix(helper.GetEnv("HEADSCALE_IP_RANGE")),
 			JailCheckInterval:      fwCfg.JailCheckIntervalSec,
-			TrafficMonitorInterval: fwCfg.TrafficMonitorIntervalSec,
 			CleanupInterval:        fwCfg.CleanupIntervalMin,
 			DNSLookupTimeout:       fwCfg.DNSLookupTimeoutSec,
 			ServerIP:               helper.GetEnv("SERVER_IP"),
@@ -85,7 +83,6 @@ func New(dataDir string, nftSvc *nftables.Service) (*Service, error) {
 
 	// Start background tasks
 	go svc.runJailMonitors()
-	go svc.runVPNTrafficMonitor()
 	go svc.runExpirationCleanup()
 
 	log.Printf("Firewall service initialized")
@@ -208,11 +205,10 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"DeleteBySource":  s.handleDeleteBySource,
 		"DeleteAll":       s.handleDeleteAll,
 
-		// Legacy endpoints (ports, attempts, blocklists)
+		// Legacy endpoints (ports, blocklists)
 		"GetPorts":        s.handleGetPorts,
 		"AddPort":         s.handleAddPort,
 		"RemovePort":      s.handleRemovePort,
-		"GetAttempts":     s.handleAttempts,
 		"GetBlocklists":   s.handleGetBlocklists,
 
 		// SSH port management
@@ -224,10 +220,5 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"GetJail":    s.handleGetJail,
 		"UpdateJail": s.handleUpdateJail,
 		"DeleteJail": s.handleDeleteJail,
-
-		// Traffic monitoring
-		"GetTraffic":      s.handleTraffic,
-		"GetTrafficStats": s.handleTrafficStats,
-		"GetTrafficLive":  s.handleTrafficLive,
 	}
 }

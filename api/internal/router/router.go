@@ -608,8 +608,10 @@ type PaginationParams struct {
 }
 
 // ParsePagination extracts limit and offset from URL query parameters
-// with sensible defaults and validation
+// with sensible defaults and validation. Max limit is 1000.
 func ParsePagination(r *http.Request, defaultLimit int) PaginationParams {
+	const maxLimit = 1000
+
 	p := PaginationParams{
 		Limit:  defaultLimit,
 		Offset: 0,
@@ -619,6 +621,10 @@ func ParsePagination(r *http.Request, defaultLimit int) PaginationParams {
 		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
 			p.Limit = parsed
 		}
+	}
+
+	if p.Limit > maxLimit {
+		p.Limit = maxLimit
 	}
 
 	if o := r.URL.Query().Get("offset"); o != "" {

@@ -128,6 +128,7 @@ services:
       # AdGuard settings
       - ADGUARD_PORT=${ADGUARD_PORT}
       - ADGUARD_CONFIG=/adguard/AdGuardHome.yaml
+      - ADGUARD_LOGS=/adguard/work/data/querylog.json
       - DNS_PORT=${DNS_PORT}
       # Firewall settings
       - IGNORE_NETWORKS=${IGNORE_NETWORKS}
@@ -145,6 +146,7 @@ services:
       - /var/log:/var/log:ro
       - ./traefik:/traefik
       - ./adguard/conf:/adguard
+      - ./adguard/work:/adguard/work:ro
       - ./headscale/config:/headscale/config
       # Docker socket removed - using docker-socket-proxy instead
       - /etc/ssh/sshd_config:/etc/ssh/sshd_config

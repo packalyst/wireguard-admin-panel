@@ -57,19 +57,17 @@ type Service struct {
 
 // Config holds firewall configuration
 type Config struct {
-	EssentialPorts         []helper.EssentialPort `json:"-"`
-	IgnoreNetworks         []string               `json:"ignoreNetworks"`
-	MaxAttempts            int                    `json:"maxAttempts"`
-	MaxTrafficLogs         int                    `json:"maxTrafficLogs"`
-	DataDir                string                 `json:"-"`
-	WgPort                 int                    `json:"-"`
-	WgIPPrefix             string                 `json:"-"`
-	HeadscaleIPPrefix      string                 `json:"-"`
-	JailCheckInterval      int                    `json:"-"`
-	TrafficMonitorInterval int                    `json:"-"`
-	CleanupInterval        int                    `json:"-"`
-	DNSLookupTimeout       int                    `json:"-"`
-	ServerIP               string                 `json:"-"` // Server's own IP for self-protection
+	EssentialPorts    []helper.EssentialPort `json:"-"`
+	IgnoreNetworks    []string               `json:"ignoreNetworks"`
+	MaxAttempts       int                    `json:"maxAttempts"`
+	DataDir           string                 `json:"-"`
+	WgPort            int                    `json:"-"`
+	WgIPPrefix        string                 `json:"-"`
+	HeadscaleIPPrefix string                 `json:"-"`
+	JailCheckInterval int                    `json:"-"`
+	CleanupInterval   int                    `json:"-"`
+	DNSLookupTimeout  int                    `json:"-"`
+	ServerIP          string                 `json:"-"` // Server's own IP for self-protection
 }
 
 // Jail represents a blocking rule configuration (fail2ban-style)
@@ -89,29 +87,6 @@ type Jail struct {
 	EscalateEnabled   bool   `json:"escalateEnabled"`
 	EscalateThreshold int    `json:"escalateThreshold"`
 	EscalateWindow    int    `json:"escalateWindow"`
-}
-
-// Attempt represents a logged connection attempt
-type Attempt struct {
-	ID        int64  `json:"id"`
-	Timestamp string `json:"timestamp"`
-	SourceIP  string `json:"sourceIP"`
-	DestPort  int    `json:"destPort"`
-	Protocol  string `json:"protocol"`
-	JailName  string `json:"jailName"`
-	Action    string `json:"action"`
-}
-
-// TrafficLog represents VPN client outbound traffic
-type TrafficLog struct {
-	ID        int64  `json:"id"`
-	Timestamp string `json:"timestamp"`
-	ClientIP  string `json:"src_ip"`
-	DestIP    string `json:"dest_ip"`
-	DestPort  int    `json:"dest_port"`
-	Protocol  string `json:"protocol"`
-	Domain    string `json:"domain"`
-	Country   string `json:"country"`
 }
 
 // BlocklistSource represents a blocklist source configuration

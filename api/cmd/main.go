@@ -19,6 +19,8 @@ import (
 	"api/internal/geolocation"
 	"api/internal/headscale"
 	"api/internal/helper"
+	"api/internal/logs"
+	"api/internal/logs/sources"
 	"api/internal/nftables"
 	"api/internal/router"
 	"api/internal/settings"
@@ -203,6 +205,21 @@ func main() {
 		domainsSvc := domains.New()
 		r.RegisterService("domains", domainsSvc.Handlers())
 		log.Println("Domains service registered")
+	}
+
+	if config.IsServiceEnabled("logs") {
+		logsSvc, err := logs.New()
+		if err != nil {
+			log.Printf("Warning: Failed to initialize logs service: %v", err)
+		} else {
+			// Register watchers
+			logsSvc.RegisterWatcher("traefik", sources.NewTraefikWatcher(logsSvc.GetDB(), logsSvc.GetConfig()))
+			logsSvc.RegisterWatcher("adguard", sources.NewAdGuardWatcher(logsSvc.GetDB(), logsSvc.GetConfig()))
+			logsSvc.RegisterWatcher("outbound", sources.NewOutboundWatcher(logsSvc.GetDB(), logsSvc.GetConfig()))
+			logsSvc.Start()
+			r.RegisterService("logs", logsSvc.Handlers())
+			log.Println("Logs service registered")
+		}
 	}
 
 	// Initialize WebSocket service

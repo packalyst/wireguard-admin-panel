@@ -10,14 +10,6 @@ import (
 	"api/internal/helper"
 )
 
-// escapeLikePattern escapes SQL LIKE special characters to prevent wildcard injection
-func escapeLikePattern(s string) string {
-	s = strings.ReplaceAll(s, "\\", "\\\\")
-	s = strings.ReplaceAll(s, "%", "\\%")
-	s = strings.ReplaceAll(s, "_", "\\_")
-	return s
-}
-
 // validateIPOrCIDR validates an IP address or CIDR range
 func validateIPOrCIDR(input string) (string, bool, error) {
 	input = strings.TrimSpace(input)

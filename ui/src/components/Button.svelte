@@ -20,6 +20,7 @@
     primary: '',
     secondary: 'kt-btn-secondary',
     destructive: 'kt-btn-destructive',
+    success: 'kt-btn-success',
     outline: 'kt-btn-outline',
     ghost: 'kt-btn-ghost',
     mono: 'kt-btn-mono'
