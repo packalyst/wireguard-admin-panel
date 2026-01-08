@@ -193,6 +193,154 @@ prompt_yes_no() {
     [[ "$response" =~ ^[Yy] ]]
 }
 
+CERT_BACKUP_DIR="/usr/local/wgadmin/certs"
+
+backup_certificate() {
+    local domain="$1"
+
+    if [ ! -f "traefik/acme.json" ]; then
+        return 1
+    fi
+
+    # Check if certificate exists in acme.json
+    if ! command -v jq &>/dev/null; then
+        return 1
+    fi
+
+    local certs=$(cat traefik/acme.json 2>/dev/null | jq -r '.letsencrypt.Certificates // empty' 2>/dev/null)
+    if [ -z "$certs" ] || [ "$certs" = "null" ]; then
+        return 1
+    fi
+
+    # Create backup directory
+    sudo mkdir -p "$CERT_BACKUP_DIR"
+    sudo chmod 700 "$CERT_BACKUP_DIR"
+
+    # Backup with timestamp
+    local backup_file="${CERT_BACKUP_DIR}/acme_${domain}_$(date +%Y%m%d_%H%M%S).json"
+    local latest_link="${CERT_BACKUP_DIR}/acme_${domain}_latest.json"
+
+    sudo cp traefik/acme.json "$backup_file"
+    sudo chmod 600 "$backup_file"
+    sudo ln -sf "$backup_file" "$latest_link"
+
+    echo -e "${GREEN}✓ Certificate backed up to: ${backup_file}${NC}"
+    return 0
+}
+
+restore_certificate() {
+    local domain="$1"
+    local backup_file="${CERT_BACKUP_DIR}/acme_${domain}_latest.json"
+
+    if [ ! -f "$backup_file" ]; then
+        return 1
+    fi
+
+    # Verify backup has valid certificates
+    if command -v jq &>/dev/null; then
+        local certs=$(sudo cat "$backup_file" 2>/dev/null | jq -r '.letsencrypt.Certificates // empty' 2>/dev/null)
+        if [ -z "$certs" ] || [ "$certs" = "null" ]; then
+            echo -e "${YELLOW}Backup exists but contains no valid certificates${NC}"
+            return 1
+        fi
+    fi
+
+    # Restore
+    sudo cp "$backup_file" traefik/acme.json
+    chmod 600 traefik/acme.json
+
+    echo -e "${GREEN}✓ Certificate restored from backup${NC}"
+    return 0
+}
+
+check_certificate_backup() {
+    local domain="$1"
+    local backup_file="${CERT_BACKUP_DIR}/acme_${domain}_latest.json"
+
+    if [ ! -f "$backup_file" ]; then
+        return 1
+    fi
+
+    # Get backup info
+    local backup_date=$(stat -c %y "$backup_file" 2>/dev/null | cut -d' ' -f1 || stat -f %Sm -t %Y-%m-%d "$backup_file" 2>/dev/null)
+    local backup_size=$(stat -c %s "$backup_file" 2>/dev/null || stat -f %z "$backup_file" 2>/dev/null)
+
+    echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║${NC}  ${GREEN}✓ Certificate backup found${NC}                                ${CYAN}║${NC}"
+    echo -e "${CYAN}╠════════════════════════════════════════════════════════════╣${NC}"
+    echo -e "${CYAN}║${NC}                                                            ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}  Domain: ${YELLOW}${domain}${NC}"
+    printf "${CYAN}║${NC}  %-56s ${CYAN}║${NC}\n" ""
+    echo -e "${CYAN}║${NC}  Backup date: ${backup_date:-unknown}                              "
+    echo -e "${CYAN}║${NC}  Size: ${backup_size:-0} bytes                                      "
+    echo -e "${CYAN}║${NC}                                                            ${CYAN}║${NC}"
+    echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+
+    return 0
+}
+
+check_cert_rate_limit() {
+    local domain="$1"
+    echo -e "${YELLOW}Checking Let's Encrypt rate limits for ${domain}...${NC}"
+
+    # Query crt.sh for recent certificates
+    local week_ago=$(date -u -d '7 days ago' '+%Y-%m-%d' 2>/dev/null || date -u -v-7d '+%Y-%m-%d' 2>/dev/null)
+
+    if [ -z "$week_ago" ]; then
+        echo -e "  ${YELLOW}⚠${NC} Could not calculate date range, skipping rate limit check"
+        return 0
+    fi
+
+    # Fetch certificate count from crt.sh
+    local response
+    response=$(curl -s --max-time 10 "https://crt.sh/?q=${domain}&output=json" 2>/dev/null)
+
+    if [ -z "$response" ] || [ "$response" = "null" ]; then
+        echo -e "  ${YELLOW}⚠${NC} Could not query crt.sh, skipping rate limit check"
+        return 0
+    fi
+
+    # Count certificates issued in last 7 days
+    local recent_count
+    if command -v jq &>/dev/null; then
+        recent_count=$(echo "$response" | jq "[.[] | select(.not_before > \"${week_ago}\")] | length" 2>/dev/null || echo "0")
+    else
+        echo -e "  ${YELLOW}⚠${NC} jq not installed, skipping rate limit check"
+        return 0
+    fi
+
+    # Handle empty or invalid response
+    if [ -z "$recent_count" ] || ! [[ "$recent_count" =~ ^[0-9]+$ ]]; then
+        recent_count=0
+    fi
+
+    if [ "$recent_count" -ge 5 ]; then
+        echo -e "${RED}╔════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${RED}║${NC}  ${YELLOW}⚠ LET'S ENCRYPT RATE LIMIT WARNING${NC}                        ${RED}║${NC}"
+        echo -e "${RED}╠════════════════════════════════════════════════════════════╣${NC}"
+        echo -e "${RED}║${NC}                                                            ${RED}║${NC}"
+        echo -e "${RED}║${NC}  ${recent_count} certificates issued for ${domain} in the last 7 days"
+        printf "${RED}║${NC}  %-56s ${RED}║${NC}\n" ""
+        echo -e "${RED}║${NC}  Let's Encrypt limit: 5 duplicate certs per 7 days        ${RED}║${NC}"
+        echo -e "${RED}║${NC}                                                            ${RED}║${NC}"
+        echo -e "${RED}║${NC}  You may encounter rate limiting errors.                  ${RED}║${NC}"
+        echo -e "${RED}║${NC}  Check: https://crt.sh/?q=${domain}                        "
+        echo -e "${RED}╚════════════════════════════════════════════════════════════╝${NC}"
+        echo ""
+
+        if ! prompt_yes_no "Continue anyway? (may fail to get certificate)" "n"; then
+            return 1
+        fi
+    elif [ "$recent_count" -gt 0 ]; then
+        echo -e "  ${GREEN}✓${NC} Rate limit OK (${recent_count}/5 certs issued in last 7 days)"
+    else
+        echo -e "  ${GREEN}✓${NC} No recent certificates found - rate limit OK"
+    fi
+
+    return 0
+}
+
 update_env_value() {
     local key="$1"
     local value="$2"
@@ -1474,12 +1622,42 @@ if prompt_yes_no "Enable HTTPS with Let's Encrypt?" "y"; then
 
     # Save SSL configuration
     if [ "$SSL_ENABLED" = "true" ]; then
-        update_env_value "SSL_ENABLED" "true"
-        update_env_value "SSL_DOMAIN" "$SSL_DOMAIN"
-        update_env_value "LETSENCRYPT_EMAIL" "$LETSENCRYPT_EMAIL"
         echo ""
-        echo -e "${GREEN}✓ SSL enabled for: ${SSL_DOMAIN}${NC}"
-        echo -e "${GREEN}✓ Certificates will be auto-renewed${NC}"
+
+        # Check for existing backup
+        RESTORE_FROM_BACKUP="false"
+        if check_certificate_backup "$SSL_DOMAIN"; then
+            if prompt_yes_no "Restore certificate from backup? (avoids rate limits)" "y"; then
+                RESTORE_FROM_BACKUP="true"
+            fi
+        fi
+
+        # Check rate limits if not restoring
+        if [ "$RESTORE_FROM_BACKUP" = "false" ]; then
+            if ! check_cert_rate_limit "$SSL_DOMAIN"; then
+                echo -e "${YELLOW}SSL disabled due to rate limit concerns${NC}"
+                SSL_ENABLED="false"
+                update_env_value "SSL_ENABLED" "false"
+            fi
+        fi
+
+        if [ "$SSL_ENABLED" = "true" ]; then
+            update_env_value "SSL_ENABLED" "true"
+            update_env_value "SSL_DOMAIN" "$SSL_DOMAIN"
+            update_env_value "LETSENCRYPT_EMAIL" "$LETSENCRYPT_EMAIL"
+
+            # Store for later restore
+            export RESTORE_FROM_BACKUP
+            export SSL_DOMAIN
+
+            echo ""
+            echo -e "${GREEN}✓ SSL enabled for: ${SSL_DOMAIN}${NC}"
+            if [ "$RESTORE_FROM_BACKUP" = "true" ]; then
+                echo -e "${GREEN}✓ Will restore certificate from backup${NC}"
+            else
+                echo -e "${GREEN}✓ Certificates will be auto-renewed${NC}"
+            fi
+        fi
     else
         update_env_value "SSL_ENABLED" "false"
     fi
@@ -1618,6 +1796,16 @@ if [ "$SSL_ENABLED" = "true" ]; then
         chmod 600 traefik/acme.json
         echo "  ✓ traefik/acme.json (permissions verified)"
     fi
+
+    # Restore certificate from backup if requested
+    if [ "${RESTORE_FROM_BACKUP:-}" = "true" ] && [ -n "${SSL_DOMAIN:-}" ]; then
+        echo ""
+        if restore_certificate "$SSL_DOMAIN"; then
+            echo -e "${GREEN}✓ Certificate restored - Traefik will use existing cert${NC}"
+        else
+            echo -e "${YELLOW}⚠ Could not restore certificate, will request new one${NC}"
+        fi
+    fi
 fi
 
 # Headscale config
@@ -1750,6 +1938,88 @@ else
 fi
 
 echo ""
+
+# Post-deploy SSL certificate check
+if [ "$SSL_ENABLED" = "true" ]; then
+    echo -e "${YELLOW}Waiting for SSL certificate...${NC}"
+
+    CERT_TIMEOUT=90
+    CERT_INTERVAL=5
+    CERT_ELAPSED=0
+    CERT_OBTAINED="false"
+    CERT_ERROR=""
+
+    # Poll until certificate obtained, error, or timeout
+    while [ $CERT_ELAPSED -lt $CERT_TIMEOUT ]; do
+        sleep $CERT_INTERVAL
+        CERT_ELAPSED=$((CERT_ELAPSED + CERT_INTERVAL))
+
+        # Check for certificate errors in Traefik logs
+        if [ -f "traefik/logs/traefik.log" ]; then
+            CERT_ERROR=$(grep -i "rateLimited\|acme.*error\|unable to generate a certificate" traefik/logs/traefik.log 2>/dev/null | tail -1 || true)
+            if [ -n "$CERT_ERROR" ]; then
+                break
+            fi
+        fi
+
+        # Check if certificates were obtained
+        if [ -f "traefik/acme.json" ] && command -v jq &>/dev/null; then
+            CERTS=$(cat traefik/acme.json 2>/dev/null | jq -r '.letsencrypt.Certificates // empty' 2>/dev/null)
+            if [ -n "$CERTS" ] && [ "$CERTS" != "null" ]; then
+                CERT_OBTAINED="true"
+                break
+            fi
+        fi
+
+        # Show progress
+        printf "\r  Waiting... %ds / %ds" "$CERT_ELAPSED" "$CERT_TIMEOUT"
+    done
+    printf "\r                              \r"  # Clear progress line
+
+    if [ -n "$CERT_ERROR" ]; then
+        echo -e "${RED}╔════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${RED}║${NC}  ${YELLOW}⚠ SSL CERTIFICATE ERROR${NC}                                    ${RED}║${NC}"
+        echo -e "${RED}╠════════════════════════════════════════════════════════════╣${NC}"
+        echo -e "${RED}║${NC}                                                            ${RED}║${NC}"
+        if echo "$CERT_ERROR" | grep -q "rateLimited"; then
+            echo -e "${RED}║${NC}  Rate limited by Let's Encrypt!                           ${RED}║${NC}"
+            echo -e "${RED}║${NC}  Wait 7 days or use a different domain.                  ${RED}║${NC}"
+        else
+            echo -e "${RED}║${NC}  Certificate error detected in Traefik logs.             ${RED}║${NC}"
+        fi
+        echo -e "${RED}║${NC}                                                            ${RED}║${NC}"
+        echo -e "${RED}║${NC}  Check: tail -f traefik/logs/traefik.log                   ${RED}║${NC}"
+        echo -e "${RED}╚════════════════════════════════════════════════════════════╝${NC}"
+        echo ""
+    elif [ "$CERT_OBTAINED" = "true" ]; then
+        echo -e "${GREEN}✓ SSL certificate active${NC}"
+        # Backup the certificate (only if not restored from backup)
+        if [ "${RESTORE_FROM_BACKUP:-}" != "true" ]; then
+            if backup_certificate "$SSL_DOMAIN"; then
+                echo -e "${GREEN}✓ Certificate backed up for future restores${NC}"
+            fi
+        else
+            echo -e "${CYAN}✓ Using restored certificate from backup${NC}"
+        fi
+        echo ""
+    else
+        echo -e "${YELLOW}╔════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${YELLOW}║${NC}  ${CYAN}⏳ CERTIFICATE PENDING${NC}                                      ${YELLOW}║${NC}"
+        echo -e "${YELLOW}╠════════════════════════════════════════════════════════════╣${NC}"
+        echo -e "${YELLOW}║${NC}                                                            ${YELLOW}║${NC}"
+        echo -e "${YELLOW}║${NC}  Certificate not obtained within ${CERT_TIMEOUT}s timeout.            ${YELLOW}║${NC}"
+        echo -e "${YELLOW}║${NC}  This may be normal if Let's Encrypt is slow.             ${YELLOW}║${NC}"
+        echo -e "${YELLOW}║${NC}                                                            ${YELLOW}║${NC}"
+        echo -e "${YELLOW}║${NC}  Monitor progress:                                         ${YELLOW}║${NC}"
+        echo -e "${YELLOW}║${NC}    tail -f traefik/logs/traefik.log                        ${YELLOW}║${NC}"
+        echo -e "${YELLOW}║${NC}                                                            ${YELLOW}║${NC}"
+        echo -e "${YELLOW}║${NC}  Check certificate status:                                 ${YELLOW}║${NC}"
+        echo -e "${YELLOW}║${NC}    cat traefik/acme.json | jq '.letsencrypt.Certificates'  ${YELLOW}║${NC}"
+        echo -e "${YELLOW}╚════════════════════════════════════════════════════════════╝${NC}"
+        echo ""
+    fi
+fi
+
 echo -e "${GREEN}=== VPN Stack Started ===${NC}"
 echo ""
 echo -e "${BLUE}Access your services:${NC}"
