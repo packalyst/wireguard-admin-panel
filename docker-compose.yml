@@ -22,6 +22,7 @@ services:
       - INFO=1            # Docker info
       - VERSION=1         # Docker version
       - LOGS=1            # Container logs
+      - SYSTEM=1          # System info (disk usage)
       # Write operations (limited)
       - POST=1            # Allow POST requests (start/stop/restart)
       - ALLOW_START=1     # Container start

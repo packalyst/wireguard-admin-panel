@@ -129,9 +129,8 @@
     imageAnalysis = null
 
     try {
-      // Extract image name (handle full image paths like library/nginx:alpine)
-      const imageName = container.image.replace(/^docker\.io\//, '').replace(/^library\//, '')
-      imageAnalysis = await apiGet(`/api/docker/images/${encodeURIComponent(imageName)}/analyze`)
+      // Use imageId (short sha256 hash) to avoid URL encoding issues with image names
+      imageAnalysis = await apiGet(`/api/docker/images/${container.imageId}/analyze`)
     } catch (e) {
       toast('Failed to analyze image: ' + e.message, 'error')
     } finally {

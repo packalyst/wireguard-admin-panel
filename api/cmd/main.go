@@ -267,6 +267,13 @@ func main() {
 		// Get node stats
 		nodeStats := vpn.GetNodeStats()
 
+		// Get docker stats (if available)
+		var dockerInfo *docker.DockerInfo
+		var diskUsage *docker.DiskUsage
+		if dockerSvc != nil {
+			dockerInfo, diskUsage = dockerSvc.GetOverviewStats()
+		}
+
 		return ws.OverviewStats{
 			System: ws.SystemStats{
 				Uptime:       sysStats.Uptime,
@@ -289,28 +296,19 @@ func main() {
 				HsNodes: nodeStats.HsNodes,
 				WgPeers: nodeStats.WgPeers,
 			},
+			DockerInfo: dockerInfo,
+			DiskUsage:  diskUsage,
 		}
 	})
 
 	// Set up docker provider for real-time container updates
 	if dockerSvc != nil {
-		ws.SetDockerProvider(func() []ws.DockerContainer {
+		ws.SetDockerProvider(func() []docker.Container {
 			containers, err := dockerSvc.GetContainers()
 			if err != nil {
 				return nil
 			}
-			// Convert docker.Container to ws.DockerContainer
-			result := make([]ws.DockerContainer, len(containers))
-			for i, c := range containers {
-				result[i] = ws.DockerContainer{
-					ID:     c.ID,
-					Name:   c.Name,
-					Image:  c.Image,
-					State:  c.State,
-					Status: c.Status,
-				}
-			}
-			return result
+			return containers
 		})
 
 		// Set up docker log streamer

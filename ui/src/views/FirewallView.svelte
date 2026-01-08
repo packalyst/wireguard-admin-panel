@@ -1030,7 +1030,7 @@
         </div>
       {:else}
         <div class="text-center py-8 text-sm text-muted-foreground">
-          <Icon name="check-circle" size={24} class="mx-auto text-success mb-2" />
+          <Icon name="circle-check" size={24} class="mx-auto text-success mb-2" />
           All available countries are blocked
         </div>
       {/if}

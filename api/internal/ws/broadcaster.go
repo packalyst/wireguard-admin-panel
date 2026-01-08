@@ -4,6 +4,8 @@ import (
 	"log"
 	"sync"
 	"time"
+
+	"api/internal/docker"
 )
 
 // NodeStats represents VPN node statistics for the dashboard
@@ -12,15 +14,6 @@ type NodeStats struct {
 	Offline int `json:"offline"`
 	HsNodes int `json:"hsNodes"`
 	WgPeers int `json:"wgPeers"`
-}
-
-// DockerContainer represents a Docker container for WebSocket broadcast
-type DockerContainer struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Image  string `json:"image"`
-	State  string `json:"state"`
-	Status string `json:"status"`
 }
 
 // DockerLogEntry represents a single log line from Docker
@@ -37,9 +30,11 @@ type DockerLogStreamer interface {
 
 // OverviewStats represents combined stats for the overview dashboard
 type OverviewStats struct {
-	System  SystemStats  `json:"system"`
-	Traffic TrafficStats `json:"traffic"`
-	Nodes   NodeStats    `json:"nodes"`
+	System      SystemStats       `json:"system"`
+	Traffic     TrafficStats      `json:"traffic"`
+	Nodes       NodeStats         `json:"nodes"`
+	DockerInfo  *docker.DockerInfo `json:"dockerInfo,omitempty"`
+	DiskUsage   *docker.DiskUsage  `json:"diskUsage,omitempty"`
 }
 
 // SystemStats contains Go runtime metrics
@@ -75,7 +70,7 @@ var (
 	// getNodeStatsCallback returns current node statistics
 	getNodeStatsCallback func() NodeStats
 	// getDockerContainersCallback returns current docker containers
-	getDockerContainersCallback func() []DockerContainer
+	getDockerContainersCallback func() []docker.Container
 	// getOverviewStatsCallback returns combined stats for dashboard
 	getOverviewStatsCallback func() OverviewStats
 	// dockerLogStreamer for streaming container logs
@@ -87,7 +82,7 @@ var (
 	lastNodeStatsMu sync.RWMutex
 
 	// lastDockerContainers stores previous container states for change detection
-	lastDockerContainers   []DockerContainer
+	lastDockerContainers   []docker.Container
 	lastDockerContainersMu sync.RWMutex
 
 	// statusTicker for periodic status checks
@@ -105,7 +100,7 @@ func SetNodeStatsProvider(syncFn func(), statsFn func() NodeStats) {
 }
 
 // SetDockerProvider sets the callback for getting docker containers
-func SetDockerProvider(containersFn func() []DockerContainer) {
+func SetDockerProvider(containersFn func() []docker.Container) {
 	callbackMu.Lock()
 	defer callbackMu.Unlock()
 	getDockerContainersCallback = containersFn
@@ -286,11 +281,11 @@ func checkAndBroadcastDocker() {
 }
 
 // dockerContainersChanged checks if container states have changed
-func dockerContainersChanged(old, new []DockerContainer) bool {
+func dockerContainersChanged(old, new []docker.Container) bool {
 	if len(old) != len(new) {
 		return true
 	}
-	oldMap := make(map[string]DockerContainer)
+	oldMap := make(map[string]docker.Container)
 	for _, c := range old {
 		oldMap[c.ID] = c
 	}
@@ -377,7 +372,7 @@ func BroadcastTraffic(traffic interface{}) {
 }
 
 // GetCurrentDockerContainers returns current docker containers (for sending on subscribe)
-func GetCurrentDockerContainers() []DockerContainer {
+func GetCurrentDockerContainers() []docker.Container {
 	callbackMu.RLock()
 	containersFn := getDockerContainersCallback
 	callbackMu.RUnlock()

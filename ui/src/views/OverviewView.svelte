@@ -323,4 +323,121 @@
       </div>
     </div>
   </div>
+
+  <!-- Docker Stats -->
+  {#if $statsStore?.dockerInfo}
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+    <!-- Docker Info -->
+    <div class="kt-panel">
+      <div class="kt-panel-header">
+        <h3 class="kt-panel-title">Docker</h3>
+        <span class="text-sm text-muted-foreground">{$statsStore.dockerInfo.operatingSystem}</span>
+      </div>
+      <div class="kt-panel-body">
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-4">
+          <div class="flex items-center gap-3">
+            <div class="p-2 rounded-lg bg-info/10">
+              <Icon name="server" size={20} class="text-info" />
+            </div>
+            <div>
+              <div class="text-xs text-muted-foreground">Version</div>
+              <div class="font-semibold">{$statsStore.dockerInfo.serverVersion}</div>
+            </div>
+          </div>
+          <div class="flex items-center gap-3">
+            <div class="p-2 rounded-lg bg-primary/10">
+              <Icon name="cpu" size={20} class="text-primary" />
+            </div>
+            <div>
+              <div class="text-xs text-muted-foreground">CPUs</div>
+              <div class="font-semibold">{$statsStore.dockerInfo.ncpu}</div>
+            </div>
+          </div>
+          <div class="flex items-center gap-3">
+            <div class="p-2 rounded-lg bg-warning/10">
+              <Icon name="device-floppy" size={20} class="text-warning" />
+            </div>
+            <div>
+              <div class="text-xs text-muted-foreground">Memory</div>
+              <div class="font-semibold">{$statsStore.dockerInfo.memTotalHR}</div>
+            </div>
+          </div>
+          <div class="flex items-center gap-3">
+            <div class="p-2 rounded-lg bg-success/10">
+              <Icon name="box" size={20} class="text-success" />
+            </div>
+            <div>
+              <div class="text-xs text-muted-foreground">Containers</div>
+              <div class="font-semibold">
+                <span class="text-success">{$statsStore.dockerInfo.containersRunning}</span>
+                <span class="text-muted-foreground">/</span>
+                {$statsStore.dockerInfo.containers}
+              </div>
+            </div>
+          </div>
+          <div class="flex items-center gap-3">
+            <div class="p-2 rounded-lg bg-secondary/10">
+              <Icon name="layers-subtract" size={20} class="text-muted-foreground" />
+            </div>
+            <div>
+              <div class="text-xs text-muted-foreground">Images</div>
+              <div class="font-semibold">{$statsStore.dockerInfo.images}</div>
+            </div>
+          </div>
+          <div class="flex items-center gap-3">
+            <div class="p-2 rounded-lg bg-secondary/10">
+              <Icon name="layout" size={20} class="text-muted-foreground" />
+            </div>
+            <div>
+              <div class="text-xs text-muted-foreground">Storage</div>
+              <div class="font-semibold">{$statsStore.dockerInfo.storageDriver}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Disk Usage -->
+    {#if $statsStore?.diskUsage}
+    <div class="kt-panel">
+      <div class="kt-panel-header">
+        <h3 class="kt-panel-title">Disk Usage</h3>
+        <span class="text-sm text-muted-foreground">{$statsStore.diskUsage.totalSizeHR} total</span>
+      </div>
+      <div class="kt-panel-body">
+        <div class="space-y-3">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <Icon name="layers-subtract" size={16} class="text-info" />
+              <span class="text-sm">Images ({$statsStore.diskUsage.imagesCount})</span>
+            </div>
+            <span class="text-sm font-medium">{$statsStore.diskUsage.imagesSizeHR}</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <Icon name="box" size={16} class="text-success" />
+              <span class="text-sm">Containers ({$statsStore.diskUsage.containersCount})</span>
+            </div>
+            <span class="text-sm font-medium">{$statsStore.diskUsage.containersSizeHR}</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <Icon name="server" size={16} class="text-warning" />
+              <span class="text-sm">Volumes ({$statsStore.diskUsage.volumesCount})</span>
+            </div>
+            <span class="text-sm font-medium">{$statsStore.diskUsage.volumesSizeHR}</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <Icon name="code" size={16} class="text-muted-foreground" />
+              <span class="text-sm">Build Cache</span>
+            </div>
+            <span class="text-sm font-medium">{$statsStore.diskUsage.buildCacheSizeHR}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    {/if}
+  </div>
+  {/if}
 </div>

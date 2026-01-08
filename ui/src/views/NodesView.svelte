@@ -930,7 +930,7 @@
                           {/if}
                         </button>
                         <!-- Client info -->
-                        <div class="flex-1 min-w-0" onclick={() => !isBlockedPolicy && toggleClient(client.id)} role="button" tabindex="0" class:cursor-pointer={!isBlockedPolicy}>
+                        <div class="flex-1 min-w-0" onclick={() => !isBlockedPolicy && toggleClient(client.id)} onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && !isBlockedPolicy && toggleClient(client.id)} role="button" tabindex="0" class:cursor-pointer={!isBlockedPolicy}>
                           <div class="text-sm font-medium text-foreground truncate">{client.name}</div>
                           <div class="text-[10px] text-muted-foreground">
                             {client.ip} • {client.type === 'wireguard' ? 'WG' : 'TS'}

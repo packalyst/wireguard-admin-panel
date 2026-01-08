@@ -456,7 +456,7 @@
               {#if testingConnection}
                 Testing...
               {:else if connectionValid}
-                <Icon name="check-circle" size={18} class="text-success" />
+                <Icon name="circle-check" size={18} class="text-success" />
                 Connection Valid
               {:else}
                 <Icon name="plug" size={18} />

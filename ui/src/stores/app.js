@@ -56,7 +56,7 @@ currentView.subscribe(value => {
 // Handle browser back/forward
 if (typeof window !== 'undefined') {
   window.addEventListener('popstate', (event) => {
-    const view = event.state?.view || getViewFromPath() || 'nodes'
+    const view = event.state?.view || getViewFromPath() || 'overview'
     if (validViews.includes(view)) {
       handlingPopstate = true
       currentView.set(view)
@@ -66,7 +66,7 @@ if (typeof window !== 'undefined') {
 
   // Set initial history state (replaceState so we don't add to history)
   // Preserve the hash (for tab persistence)
-  const initialView = getViewFromPath() || savedView || 'nodes'
+  const initialView = getViewFromPath() || savedView || 'overview'
   const hash = window.location.hash || ''
   window.history.replaceState({ view: initialView }, '', '/' + initialView + hash)
 }

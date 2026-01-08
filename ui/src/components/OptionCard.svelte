@@ -28,8 +28,8 @@
     info: { border: 'border-info', bg: 'bg-info/10', hover: 'hover:border-info/50', text: 'text-info' }
   }
 
-  const s = sizes[size]
-  const c = colors[color]
+  const s = $derived(sizes[size])
+  const c = $derived(colors[color])
 </script>
 
 <button

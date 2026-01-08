@@ -34,6 +34,7 @@ type Container struct {
 	ID      string            `json:"id"`
 	Name    string            `json:"name"`
 	Image   string            `json:"image"`
+	ImageID string            `json:"imageId"`
 	State   string            `json:"state"`
 	Status  string            `json:"status"`
 	Created int64             `json:"created"`
@@ -141,6 +142,7 @@ func (s *Service) GetContainers() ([]Container, error) {
 		ID      string `json:"Id"`
 		Names   []string
 		Image   string
+		ImageID string
 		State   string
 		Status  string
 		Created int64
@@ -174,10 +176,17 @@ func (s *Service) GetContainers() ([]Container, error) {
 			}
 		}
 
+		// ImageID comes as sha256:abc123..., extract the short hash
+		imageID := strings.TrimPrefix(c.ImageID, "sha256:")
+		if len(imageID) > 12 {
+			imageID = imageID[:12]
+		}
+
 		containers = append(containers, Container{
 			ID:      c.ID[:12],
 			Name:    name,
 			Image:   c.Image,
+			ImageID: imageID,
 			State:   c.State,
 			Status:  c.Status,
 			Created: c.Created,
@@ -737,5 +746,277 @@ func truncateCommand(cmd string) string {
 		return cmd[:77] + "..."
 	}
 	return cmd
+}
+
+// DockerInfo represents Docker daemon system info
+type DockerInfo struct {
+	Containers        int    `json:"containers"`
+	ContainersRunning int    `json:"containersRunning"`
+	ContainersPaused  int    `json:"containersPaused"`
+	ContainersStopped int    `json:"containersStopped"`
+	Images            int    `json:"images"`
+	ServerVersion     string `json:"serverVersion"`
+	NCPU              int    `json:"ncpu"`
+	MemTotal          int64  `json:"memTotal"`
+	MemTotalHR        string `json:"memTotalHR"`
+	StorageDriver     string `json:"storageDriver"`
+	OperatingSystem   string `json:"operatingSystem"`
+	OSType            string `json:"osType"`
+	Architecture      string `json:"architecture"`
+}
+
+// DiskUsage represents Docker disk usage
+type DiskUsage struct {
+	ImagesSize       int64  `json:"imagesSize"`
+	ImagesSizeHR     string `json:"imagesSizeHR"`
+	ImagesCount      int    `json:"imagesCount"`
+	ContainersSize   int64  `json:"containersSize"`
+	ContainersSizeHR string `json:"containersSizeHR"`
+	ContainersCount  int    `json:"containersCount"`
+	VolumesSize      int64  `json:"volumesSize"`
+	VolumesSizeHR    string `json:"volumesSizeHR"`
+	VolumesCount     int    `json:"volumesCount"`
+	BuildCacheSize   int64  `json:"buildCacheSize"`
+	BuildCacheSizeHR string `json:"buildCacheSizeHR"`
+	TotalSize        int64  `json:"totalSize"`
+	TotalSizeHR      string `json:"totalSizeHR"`
+}
+
+// ContainerStats represents container resource usage
+type ContainerStats struct {
+	ID         string  `json:"id"`
+	Name       string  `json:"name"`
+	CPUPercent float64 `json:"cpuPercent"`
+	MemUsage   int64   `json:"memUsage"`
+	MemLimit   int64   `json:"memLimit"`
+	MemPercent float64 `json:"memPercent"`
+	MemUsageHR string  `json:"memUsageHR"`
+	MemLimitHR string  `json:"memLimitHR"`
+	NetRx      int64   `json:"netRx"`
+	NetTx      int64   `json:"netTx"`
+	NetRxHR    string  `json:"netRxHR"`
+	NetTxHR    string  `json:"netTxHR"`
+	BlockRead  int64   `json:"blockRead"`
+	BlockWrite int64   `json:"blockWrite"`
+}
+
+// DockerStats combines all Docker statistics
+type DockerStats struct {
+	Info       *DockerInfo       `json:"info,omitempty"`
+	DiskUsage  *DiskUsage        `json:"diskUsage,omitempty"`
+	Containers []Container       `json:"containers"`
+	Stats      []ContainerStats  `json:"stats,omitempty"`
+}
+
+// GetInfo returns Docker daemon system info
+func (s *Service) GetInfo() (*DockerInfo, error) {
+	resp, err := s.doRequest("GET", "/v1.44/info")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get docker info: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var raw struct {
+		Containers        int    `json:"Containers"`
+		ContainersRunning int    `json:"ContainersRunning"`
+		ContainersPaused  int    `json:"ContainersPaused"`
+		ContainersStopped int    `json:"ContainersStopped"`
+		Images            int    `json:"Images"`
+		ServerVersion     string `json:"ServerVersion"`
+		NCPU              int    `json:"NCPU"`
+		MemTotal          int64  `json:"MemTotal"`
+		Driver            string `json:"Driver"`
+		OperatingSystem   string `json:"OperatingSystem"`
+		OSType            string `json:"OSType"`
+		Architecture      string `json:"Architecture"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil, fmt.Errorf("failed to parse docker info: %w", err)
+	}
+
+	return &DockerInfo{
+		Containers:        raw.Containers,
+		ContainersRunning: raw.ContainersRunning,
+		ContainersPaused:  raw.ContainersPaused,
+		ContainersStopped: raw.ContainersStopped,
+		Images:            raw.Images,
+		ServerVersion:     raw.ServerVersion,
+		NCPU:              raw.NCPU,
+		MemTotal:          raw.MemTotal,
+		MemTotalHR:        formatBytes(raw.MemTotal),
+		StorageDriver:     raw.Driver,
+		OperatingSystem:   raw.OperatingSystem,
+		OSType:            raw.OSType,
+		Architecture:      raw.Architecture,
+	}, nil
+}
+
+// GetDiskUsage returns Docker disk usage stats
+func (s *Service) GetDiskUsage() (*DiskUsage, error) {
+	resp, err := s.doRequest("GET", "/v1.44/system/df")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get disk usage: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var raw struct {
+		LayersSize  int64 `json:"LayersSize"`
+		Images      []struct{ Size int64 }
+		Containers  []struct{ SizeRw int64 }
+		Volumes     []struct{ UsageData struct{ Size int64 } }
+		BuildCache  []struct{ Size int64 }
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil, fmt.Errorf("failed to parse disk usage: %w", err)
+	}
+
+	du := &DiskUsage{
+		ImagesCount:     len(raw.Images),
+		ContainersCount: len(raw.Containers),
+		VolumesCount:    len(raw.Volumes),
+	}
+
+	// Sum image sizes
+	for _, img := range raw.Images {
+		du.ImagesSize += img.Size
+	}
+
+	// Sum container sizes
+	for _, c := range raw.Containers {
+		du.ContainersSize += c.SizeRw
+	}
+
+	// Sum volume sizes
+	for _, v := range raw.Volumes {
+		du.VolumesSize += v.UsageData.Size
+	}
+
+	// Sum build cache sizes
+	for _, bc := range raw.BuildCache {
+		du.BuildCacheSize += bc.Size
+	}
+
+	du.TotalSize = du.ImagesSize + du.ContainersSize + du.VolumesSize + du.BuildCacheSize
+
+	// Format human-readable sizes
+	du.ImagesSizeHR = formatBytes(du.ImagesSize)
+	du.ContainersSizeHR = formatBytes(du.ContainersSize)
+	du.VolumesSizeHR = formatBytes(du.VolumesSize)
+	du.BuildCacheSizeHR = formatBytes(du.BuildCacheSize)
+	du.TotalSizeHR = formatBytes(du.TotalSize)
+
+	return du, nil
+}
+
+// GetContainerStats returns resource usage for a specific container (non-streaming, one-shot)
+func (s *Service) GetContainerStats(containerID, containerName string) (*ContainerStats, error) {
+	// stream=false for one-shot stats
+	resp, err := s.doRequest("GET", "/v1.44/containers/"+containerID+"/stats?stream=false")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get container stats: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 404 {
+		return nil, fmt.Errorf("container not found")
+	}
+
+	var raw struct {
+		Read      string `json:"read"`
+		CPUStats  struct {
+			CPUUsage struct {
+				TotalUsage int64 `json:"total_usage"`
+			} `json:"cpu_usage"`
+			SystemCPUUsage int64 `json:"system_cpu_usage"`
+			OnlineCPUs     int   `json:"online_cpus"`
+		} `json:"cpu_stats"`
+		PreCPUStats struct {
+			CPUUsage struct {
+				TotalUsage int64 `json:"total_usage"`
+			} `json:"cpu_usage"`
+			SystemCPUUsage int64 `json:"system_cpu_usage"`
+		} `json:"precpu_stats"`
+		MemoryStats struct {
+			Usage int64 `json:"usage"`
+			Limit int64 `json:"limit"`
+		} `json:"memory_stats"`
+		Networks map[string]struct {
+			RxBytes int64 `json:"rx_bytes"`
+			TxBytes int64 `json:"tx_bytes"`
+		} `json:"networks"`
+		BlkioStats struct {
+			IoServiceBytesRecursive []struct {
+				Op    string `json:"op"`
+				Value int64  `json:"value"`
+			} `json:"io_service_bytes_recursive"`
+		} `json:"blkio_stats"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil, fmt.Errorf("failed to parse container stats: %w", err)
+	}
+
+	// Calculate CPU percentage
+	var cpuPercent float64
+	cpuDelta := float64(raw.CPUStats.CPUUsage.TotalUsage - raw.PreCPUStats.CPUUsage.TotalUsage)
+	systemDelta := float64(raw.CPUStats.SystemCPUUsage - raw.PreCPUStats.SystemCPUUsage)
+	if systemDelta > 0 && cpuDelta > 0 {
+		cpuPercent = (cpuDelta / systemDelta) * float64(raw.CPUStats.OnlineCPUs) * 100.0
+	}
+
+	// Sum network IO across all interfaces
+	var netRx, netTx int64
+	for _, net := range raw.Networks {
+		netRx += net.RxBytes
+		netTx += net.TxBytes
+	}
+
+	// Sum block IO
+	var blockRead, blockWrite int64
+	for _, bio := range raw.BlkioStats.IoServiceBytesRecursive {
+		switch bio.Op {
+		case "Read":
+			blockRead += bio.Value
+		case "Write":
+			blockWrite += bio.Value
+		}
+	}
+
+	// Calculate memory percentage
+	var memPercent float64
+	if raw.MemoryStats.Limit > 0 {
+		memPercent = float64(raw.MemoryStats.Usage) / float64(raw.MemoryStats.Limit) * 100.0
+	}
+
+	return &ContainerStats{
+		ID:         containerID,
+		Name:       containerName,
+		CPUPercent: cpuPercent,
+		MemUsage:   raw.MemoryStats.Usage,
+		MemLimit:   raw.MemoryStats.Limit,
+		MemPercent: memPercent,
+		MemUsageHR: formatBytes(raw.MemoryStats.Usage),
+		MemLimitHR: formatBytes(raw.MemoryStats.Limit),
+		NetRx:      netRx,
+		NetTx:      netTx,
+		NetRxHR:    formatBytes(netRx),
+		NetTxHR:    formatBytes(netTx),
+		BlockRead:  blockRead,
+		BlockWrite: blockWrite,
+	}, nil
+}
+
+// GetOverviewStats returns docker info and disk usage for overview page
+func (s *Service) GetOverviewStats() (*DockerInfo, *DiskUsage) {
+	var info *DockerInfo
+	var du *DiskUsage
+
+	if i, err := s.GetInfo(); err == nil {
+		info = i
+	}
+	if d, err := s.GetDiskUsage(); err == nil {
+		du = d
+	}
+
+	return info, du
 }
 
