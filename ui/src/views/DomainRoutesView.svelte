@@ -3,6 +3,11 @@
   import { generalInfoStore } from '../stores/websocket.js'
   import { useDataLoader } from '$lib/composables/index.js'
   import { filterByFields } from '$lib/utils/data.js'
+  import { toggleInArray } from '$lib/utils/array.js'
+  import {
+    defaultSentinelConfig, normalizeSentinelConfig, buildRoutePayload,
+    defaultRouteForm, routeToFormData, TIMEZONES, WEEK_DAYS, ERROR_MODES
+  } from '$lib/utils/domains.js'
   import Icon from '../components/Icon.svelte'
   import Badge from '../components/Badge.svelte'
   import Button from '../components/Button.svelte'
@@ -98,111 +103,33 @@
   })
 
   // Form state
-  let formData = $state({
-    domain: '',
-    targetIp: '',
-    targetPort: 80,
-    vpnClientId: null,
-    httpsBackend: false,
-    middlewares: [],
-    description: '',
-    accessMode: 'vpn',
-    frontendSsl: false,
-    sentinelConfig: null // Custom sentinel middleware config
-  })
-
-  // Default sentinel config template
-  const defaultSentinelConfig = () => ({
-    enabled: true,
-    errorMode: '403',
-    ipFilter: { sourceRange: [] },
-    maintenance: { enabled: false, message: '' },
-    timeAccess: { timezone: 'UTC', days: [], allowRange: '', denyRange: '' },
-    headers: [], // [{name, values, matchType, regex, required, contains}]
-    userAgents: { block: [], allow: [] }
-  })
-
-  // Ensure sentinel config has all required nested objects
-  function normalizeSentinelConfig(config) {
-    if (!config) return null
-    return {
-      enabled: config.enabled ?? true,
-      errorMode: config.errorMode || '403',
-      ipFilter: { sourceRange: config.ipFilter?.sourceRange || [] },
-      maintenance: { enabled: config.maintenance?.enabled || false, message: config.maintenance?.message || '' },
-      timeAccess: {
-        timezone: config.timeAccess?.timezone || 'UTC',
-        days: config.timeAccess?.days || [],
-        allowRange: config.timeAccess?.allowRange || '',
-        denyRange: config.timeAccess?.denyRange || ''
-      },
-      headers: config.headers || [],
-      userAgents: { block: config.userAgents?.block || [], allow: config.userAgents?.allow || [] }
-    }
-  }
-
-  // Timezone options
-  const timezones = [
-    'UTC', 'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Europe/Riga',
-    'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles',
-    'Asia/Tokyo', 'Asia/Shanghai', 'Asia/Singapore', 'Australia/Sydney'
-  ]
-
-  const weekDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-  const errorModes = [
-    { value: '403', label: '403 Forbidden' },
-    { value: '404', label: '404 Not Found' },
-    { value: '503', label: '503 Service Unavailable' },
-    { value: 'silent', label: 'Silent (close connection)' }
-  ]
+  let formData = $state(defaultRouteForm())
 
   // Helper functions for sentinel config
   function toggleSentinelConfig() {
-    if (formData.sentinelConfig) {
-      formData.sentinelConfig = null
-    } else {
-      formData.sentinelConfig = defaultSentinelConfig()
-    }
+    formData.sentinelConfig = formData.sentinelConfig ? null : defaultSentinelConfig()
   }
 
-  function addIpRange() {
+  // Generic array helpers for sentinel config
+  function addToSentinel(path, item) {
     if (!formData.sentinelConfig) return
-    formData.sentinelConfig.ipFilter.sourceRange = [...formData.sentinelConfig.ipFilter.sourceRange, '']
+    const parts = path.split('.')
+    let target = formData.sentinelConfig
+    for (let i = 0; i < parts.length - 1; i++) target = target[parts[i]]
+    target[parts[parts.length - 1]] = [...target[parts[parts.length - 1]], item]
   }
 
-  function removeIpRange(index) {
+  function removeFromSentinel(path, index) {
     if (!formData.sentinelConfig) return
-    formData.sentinelConfig.ipFilter.sourceRange = formData.sentinelConfig.ipFilter.sourceRange.filter((_, i) => i !== index)
-  }
-
-  function addHeader() {
-    if (!formData.sentinelConfig) return
-    formData.sentinelConfig.headers = [...formData.sentinelConfig.headers, { name: '', values: [], matchType: 'one', regex: '', required: false, contains: false }]
-  }
-
-  function removeHeader(index) {
-    if (!formData.sentinelConfig) return
-    formData.sentinelConfig.headers = formData.sentinelConfig.headers.filter((_, i) => i !== index)
-  }
-
-  function addUserAgent() {
-    if (!formData.sentinelConfig) return
-    formData.sentinelConfig.userAgents.block = [...formData.sentinelConfig.userAgents.block, '']
-  }
-
-  function removeUserAgent(index) {
-    if (!formData.sentinelConfig) return
-    formData.sentinelConfig.userAgents.block = formData.sentinelConfig.userAgents.block.filter((_, i) => i !== index)
+    const parts = path.split('.')
+    let target = formData.sentinelConfig
+    for (let i = 0; i < parts.length - 1; i++) target = target[parts[i]]
+    target[parts[parts.length - 1]] = target[parts[parts.length - 1]].filter((_, i) => i !== index)
   }
 
   function toggleDay(day) {
     if (!formData.sentinelConfig) return
-    const days = formData.sentinelConfig.timeAccess.days
-    if (days.includes(day)) {
-      formData.sentinelConfig.timeAccess.days = days.filter(d => d !== day)
-    } else {
-      formData.sentinelConfig.timeAccess.days = [...days, day]
-    }
+    formData.sentinelConfig.timeAccess.days = toggleInArray(formData.sentinelConfig.timeAccess.days, day)
   }
 
   // Certificate lookup by domain
@@ -222,18 +149,7 @@
   ])
 
   function resetForm() {
-    formData = {
-      domain: '',
-      targetIp: '',
-      targetPort: 80,
-      vpnClientId: null,
-      httpsBackend: false,
-      middlewares: [],
-      description: '',
-      accessMode: 'vpn',
-      frontendSsl: false,
-      sentinelConfig: null
-    }
+    formData = defaultRouteForm()
   }
 
   function openCreateModal() {
@@ -244,18 +160,7 @@
 
   function openEditModal(route) {
     editingRoute = route
-    formData = {
-      domain: route.domain,
-      targetIp: route.targetIp,
-      targetPort: route.targetPort,
-      vpnClientId: route.vpnClientId || '',
-      httpsBackend: route.httpsBackend,
-      middlewares: route.middlewares || [],
-      description: route.description || '',
-      accessMode: route.accessMode || 'vpn',
-      frontendSsl: route.frontendSsl || false,
-      sentinelConfig: normalizeSentinelConfig(route.sentinelConfig)
-    }
+    formData = routeToFormData(route)
     formModalMode = 'edit'
   }
 
@@ -265,11 +170,7 @@
   }
 
   function toggleMiddleware(mwName) {
-    if (formData.middlewares.includes(mwName)) {
-      formData.middlewares = formData.middlewares.filter(m => m !== mwName)
-    } else {
-      formData.middlewares = [...formData.middlewares, mwName]
-    }
+    formData.middlewares = toggleInArray(formData.middlewares, mwName)
   }
 
   async function confirmDelete(route) {
@@ -304,60 +205,24 @@
     }
   }
 
-  async function createRoute() {
+  async function submitForm() {
     if (!formData.domain || !formData.targetIp || !formData.targetPort) {
       toast('Domain, IP, and Port are required', 'error')
       return
     }
+    const payload = buildRoutePayload(formData)
+    const isCreate = formModalMode === 'create'
     try {
-      await apiPost('/api/domains', {
-        domain: formData.domain,
-        targetIp: formData.targetIp,
-        targetPort: parseInt(formData.targetPort),
-        vpnClientId: formData.vpnClientId ? parseInt(formData.vpnClientId) : null,
-        httpsBackend: formData.httpsBackend,
-        middlewares: formData.middlewares,
-        description: formData.description,
-        accessMode: formData.accessMode,
-        frontendSsl: formData.frontendSsl,
-        sentinelConfig: formData.sentinelConfig
-      })
-      toast('Domain route created', 'success')
+      if (isCreate) {
+        await apiPost('/api/domains', payload)
+      } else {
+        await apiPut(`/api/domains/${editingRoute.id}`, payload)
+      }
+      toast(`Domain route ${isCreate ? 'created' : 'updated'}`, 'success')
       closeFormModal()
       loader.reload()
     } catch (e) {
-      toast('Failed to create route: ' + e.message, 'error')
-    }
-  }
-
-  async function updateRoute() {
-    if (!editingRoute) return
-    try {
-      await apiPut(`/api/domains/${editingRoute.id}`, {
-        domain: formData.domain,
-        targetIp: formData.targetIp,
-        targetPort: parseInt(formData.targetPort),
-        vpnClientId: formData.vpnClientId ? parseInt(formData.vpnClientId) : null,
-        httpsBackend: formData.httpsBackend,
-        middlewares: formData.middlewares,
-        description: formData.description,
-        accessMode: formData.accessMode,
-        frontendSsl: formData.frontendSsl,
-        sentinelConfig: formData.sentinelConfig
-      })
-      toast('Domain route updated', 'success')
-      closeFormModal()
-      loader.reload()
-    } catch (e) {
-      toast('Failed to update route: ' + e.message, 'error')
-    }
-  }
-
-  function submitForm() {
-    if (formModalMode === 'create') {
-      createRoute()
-    } else if (formModalMode === 'edit') {
-      updateRoute()
+      toast(`Failed to ${isCreate ? 'create' : 'update'} route: ${e.message}`, 'error')
     }
   }
 
@@ -833,7 +698,7 @@
             label="Error Response Mode"
             bind:value={formData.sentinelConfig.errorMode}
           >
-            {#each errorModes as mode}
+            {#each ERROR_MODES as mode}
               <option value={mode.value}>{mode.label}</option>
             {/each}
           </Select>
@@ -847,7 +712,7 @@
                 <Icon name="shield" size={16} class="text-muted-foreground" />
                 <span class="text-sm font-medium text-foreground">IP Allowlist</span>
               </div>
-              <Button variant="outline" size="xs" icon="plus" onclick={addIpRange}>Add</Button>
+              <Button variant="outline" size="xs" icon="plus" onclick={() => addToSentinel('ipFilter.sourceRange', '')}>Add</Button>
             </div>
             <p class="text-xs text-muted-foreground">Only these IP ranges will be allowed (CIDR notation)</p>
             <div class="space-y-2 mt-3">
@@ -859,7 +724,7 @@
                     value={ip}
                     oninput={(e) => formData.sentinelConfig.ipFilter.sourceRange[i] = e.target.value}
                     prefixIcon="network"
-                    suffixAddonBtn={{ icon: 'trash', onclick: () => removeIpRange(i) }}
+                    suffixAddonBtn={{ icon: 'trash', onclick: () => removeFromSentinel('ipFilter.sourceRange', i) }}
                   />
                 {/each}
               </div>
@@ -908,7 +773,7 @@
                 label="Timezone"
                 bind:value={formData.sentinelConfig.timeAccess.timezone}
               >
-                {#each timezones as tz}
+                {#each TIMEZONES as tz}
                   <option value={tz}>{tz}</option>
                 {/each}
               </Select>
@@ -926,7 +791,7 @@
             <div>
               <span class="text-xs text-muted-foreground">Allowed Days (lowercase: mon, tue, wed, thu, fri, sat, sun)</span>
               <div class="mt-1 kt-btn-group">
-                {#each weekDays as day}
+                {#each WEEK_DAYS as day}
                   <Button
                     variant={formData.sentinelConfig.timeAccess.days.includes(day.substring(0, 3).toLowerCase()) ? 'success' : 'outline'}
                     size="xs"
@@ -950,7 +815,7 @@
                 <Icon name="key" size={16} class="text-muted-foreground" />
                 <span class="text-sm font-medium text-foreground">Required Headers</span>
               </div>
-              <Button variant="outline" size="xs" icon="plus" onclick={addHeader}>Add</Button>
+              <Button variant="outline" size="xs" icon="plus" onclick={() => addToSentinel('headers', { name: '', values: [], matchType: 'one', regex: '', required: true, contains: false })}>Add</Button>
             </div>
             <p class="text-xs text-muted-foreground">Require specific headers to be present</p>
 
@@ -977,7 +842,7 @@
                   placeholder="Regex pattern (optional)"
                   value={header.regex}
                   oninput={(e) => formData.sentinelConfig.headers[i].regex = e.target.value}
-                  suffixAddonBtn={{ icon: 'trash', onclick: () => removeHeader(i) }}
+                  suffixAddonBtn={{ icon: 'trash', onclick: () => removeFromSentinel('headers', i) }}
                 />
               </div>
             {/each}
@@ -993,7 +858,7 @@
                 <Icon name="robot" size={16} class="text-muted-foreground" />
                 <span class="text-sm font-medium text-foreground">Blocked User Agents</span>
               </div>
-              <Button variant="outline" size="xs" icon="plus" onclick={addUserAgent}>Add</Button>
+              <Button variant="outline" size="xs" icon="plus" onclick={() => addToSentinel('userAgents.block', '')}>Add</Button>
             </div>
             <p class="text-xs text-muted-foreground">Block requests matching these patterns (regex)</p>
             <div class="space-y-2 mt-3">
@@ -1005,7 +870,7 @@
                     value={ua}
                     oninput={(e) => formData.sentinelConfig.userAgents.block[i] = e.target.value}
                     prefixIcon="robot"
-                    suffixAddonBtn={{ icon: 'trash', onclick: () => removeUserAgent(i) }}
+                    suffixAddonBtn={{ icon: 'trash', onclick: () => removeFromSentinel('userAgents.block', i) }}
                   />
                 {/each}
               </div>
