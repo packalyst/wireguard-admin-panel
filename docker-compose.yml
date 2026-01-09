@@ -60,7 +60,7 @@ services:
       - "${HTTPS_PORT}:443"
       - "${TRAEFIK_PORT}:8080"
     environment:
-      - SILENTDROP_DEBUG=${SILENTDROP_DEBUG:-false}
+      - SENTINEL_DEBUG=${SENTINEL_DEBUG:-false}
     volumes:
       - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
       - ./traefik/dynamic:/etc/traefik/dynamic

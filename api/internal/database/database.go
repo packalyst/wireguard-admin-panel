@@ -332,6 +332,14 @@ func runMigrations(db *sql.DB) {
 			}
 		}
 	}
+
+	// Add sentinel_config column to domain_routes if missing (JSON config for per-domain sentinel middleware)
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('domain_routes') WHERE name = 'sentinel_config'`).Scan(&count)
+	if err == nil && count == 0 {
+		if _, err := db.Exec(`ALTER TABLE domain_routes ADD COLUMN sentinel_config TEXT DEFAULT ''`); err == nil {
+			log.Printf("Migration: added sentinel_config column to domain_routes")
+		}
+	}
 }
 
 // Close closes the database connection

@@ -30,7 +30,7 @@
   const availableMiddlewares = $derived.by(() => {
     const mws = loader.data.traefik?.middlewares || []
     return mws
-      .filter(m => m.provider === 'file' && !m.name.includes('@internal'))
+      .filter(m => m.provider === 'file' && !m.name.includes('@internal') && !m.name.startsWith('sentinel_domain-'))
       .map(m => ({ name: m.name, type: m.type }))
   })
 
@@ -61,7 +61,7 @@
     if (!info) return
 
     const event = info.event
-    if ((event === 'scan:progress' || event === 'scan:complete') && info.clientId == scanClientId) {
+    if ((event === 'scan:progress' || event === 'scan:complete') && String(info.clientId) === String(scanClientId)) {
       // If we receive scan:progress and we're not in scanning state, restore it
       if (event === 'scan:progress' && !info.completed && !scanning) {
         scanning = true
@@ -107,8 +107,103 @@
     middlewares: [],
     description: '',
     accessMode: 'vpn',
-    frontendSsl: false
+    frontendSsl: false,
+    sentinelConfig: null // Custom sentinel middleware config
   })
+
+  // Default sentinel config template
+  const defaultSentinelConfig = () => ({
+    enabled: true,
+    errorMode: '403',
+    ipFilter: { sourceRange: [] },
+    maintenance: { enabled: false, message: '' },
+    timeAccess: { timezone: 'UTC', allowDays: [], allowStart: '', allowEnd: '' },
+    headers: { required: [] }, // [{name, value, matchType}]
+    userAgents: { blocked: [] }
+  })
+
+  // Ensure sentinel config has all required nested objects
+  function normalizeSentinelConfig(config) {
+    if (!config) return null
+    return {
+      enabled: config.enabled ?? true,
+      errorMode: config.errorMode || '403',
+      ipFilter: { sourceRange: config.ipFilter?.sourceRange || [] },
+      maintenance: { enabled: config.maintenance?.enabled || false, message: config.maintenance?.message || '' },
+      timeAccess: {
+        timezone: config.timeAccess?.timezone || 'UTC',
+        allowDays: config.timeAccess?.allowDays || [],
+        allowStart: config.timeAccess?.allowStart || '',
+        allowEnd: config.timeAccess?.allowEnd || ''
+      },
+      headers: { required: config.headers?.required || [] },
+      userAgents: { blocked: config.userAgents?.blocked || [] }
+    }
+  }
+
+  // Timezone options
+  const timezones = [
+    'UTC', 'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Europe/Riga',
+    'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles',
+    'Asia/Tokyo', 'Asia/Shanghai', 'Asia/Singapore', 'Australia/Sydney'
+  ]
+
+  const weekDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+  const errorModes = [
+    { value: '403', label: '403 Forbidden' },
+    { value: '404', label: '404 Not Found' },
+    { value: '503', label: '503 Service Unavailable' },
+    { value: 'silent', label: 'Silent (close connection)' }
+  ]
+
+  // Helper functions for sentinel config
+  function toggleSentinelConfig() {
+    if (formData.sentinelConfig) {
+      formData.sentinelConfig = null
+    } else {
+      formData.sentinelConfig = defaultSentinelConfig()
+    }
+  }
+
+  function addIpRange() {
+    if (!formData.sentinelConfig) return
+    formData.sentinelConfig.ipFilter.sourceRange = [...formData.sentinelConfig.ipFilter.sourceRange, '']
+  }
+
+  function removeIpRange(index) {
+    if (!formData.sentinelConfig) return
+    formData.sentinelConfig.ipFilter.sourceRange = formData.sentinelConfig.ipFilter.sourceRange.filter((_, i) => i !== index)
+  }
+
+  function addHeader() {
+    if (!formData.sentinelConfig) return
+    formData.sentinelConfig.headers.required = [...formData.sentinelConfig.headers.required, { name: '', value: '', matchType: 'exact' }]
+  }
+
+  function removeHeader(index) {
+    if (!formData.sentinelConfig) return
+    formData.sentinelConfig.headers.required = formData.sentinelConfig.headers.required.filter((_, i) => i !== index)
+  }
+
+  function addUserAgent() {
+    if (!formData.sentinelConfig) return
+    formData.sentinelConfig.userAgents.blocked = [...formData.sentinelConfig.userAgents.blocked, '']
+  }
+
+  function removeUserAgent(index) {
+    if (!formData.sentinelConfig) return
+    formData.sentinelConfig.userAgents.blocked = formData.sentinelConfig.userAgents.blocked.filter((_, i) => i !== index)
+  }
+
+  function toggleDay(day) {
+    if (!formData.sentinelConfig) return
+    const days = formData.sentinelConfig.timeAccess.allowDays
+    if (days.includes(day)) {
+      formData.sentinelConfig.timeAccess.allowDays = days.filter(d => d !== day)
+    } else {
+      formData.sentinelConfig.timeAccess.allowDays = [...days, day]
+    }
+  }
 
   // Certificate lookup by domain
   function getCertForDomain(domain) {
@@ -136,7 +231,8 @@
       middlewares: [],
       description: '',
       accessMode: 'vpn',
-      frontendSsl: false
+      frontendSsl: false,
+      sentinelConfig: null
     }
   }
 
@@ -157,7 +253,8 @@
       middlewares: route.middlewares || [],
       description: route.description || '',
       accessMode: route.accessMode || 'vpn',
-      frontendSsl: route.frontendSsl || false
+      frontendSsl: route.frontendSsl || false,
+      sentinelConfig: normalizeSentinelConfig(route.sentinelConfig)
     }
     formModalMode = 'edit'
   }
@@ -222,7 +319,8 @@
         middlewares: formData.middlewares,
         description: formData.description,
         accessMode: formData.accessMode,
-        frontendSsl: formData.frontendSsl
+        frontendSsl: formData.frontendSsl,
+        sentinelConfig: formData.sentinelConfig
       })
       toast('Domain route created', 'success')
       closeFormModal()
@@ -244,7 +342,8 @@
         middlewares: formData.middlewares,
         description: formData.description,
         accessMode: formData.accessMode,
-        frontendSsl: formData.frontendSsl
+        frontendSsl: formData.frontendSsl,
+        sentinelConfig: formData.sentinelConfig
       })
       toast('Domain route updated', 'success')
       closeFormModal()
@@ -710,6 +809,219 @@
         </div>
       </div>
     {/if}
+
+    <!-- Custom Sentinel Config -->
+    <div class="border-t border-border pt-4 mt-4">
+      <div class="flex items-center justify-between">
+        <span class="text-sm font-medium text-foreground">Custom Access Rules</span>
+        <Checkbox
+          variant="chip"
+          icon="shield"
+          checked={!!formData.sentinelConfig}
+          onchange={toggleSentinelConfig}
+          label={formData.sentinelConfig ? 'Enabled' : 'Disabled'}
+        />
+      </div>
+      <p class="text-xs text-muted-foreground mt-1">
+        Configure custom IP filtering, time-based access, maintenance mode, and more
+      </p>
+
+      {#if formData.sentinelConfig}
+        <div class="mt-4 space-y-4">
+          <!-- Error Mode -->
+          <Select
+            label="Error Response Mode"
+            bind:value={formData.sentinelConfig.errorMode}
+          >
+            {#each errorModes as mode}
+              <option value={mode.value}>{mode.label}</option>
+            {/each}
+          </Select>
+
+          <div class="border-t border-border my-4"></div>
+
+          <!-- IP Filter Section -->
+          <div >
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <Icon name="shield" size={16} class="text-muted-foreground" />
+                <span class="text-sm font-medium text-foreground">IP Allowlist</span>
+              </div>
+              <Button variant="outline" size="xs" icon="plus" onclick={addIpRange}>Add</Button>
+            </div>
+            <p class="text-xs text-muted-foreground">Only these IP ranges will be allowed (CIDR notation)</p>
+            <div class="space-y-2 mt-3">
+            {#if formData.sentinelConfig.ipFilter.sourceRange.length > 0}
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {#each formData.sentinelConfig.ipFilter.sourceRange as ip, i}
+                  <Input
+                    placeholder="10.0.0.0/8 or 192.168.1.100"
+                    value={ip}
+                    oninput={(e) => formData.sentinelConfig.ipFilter.sourceRange[i] = e.target.value}
+                    prefixIcon="network"
+                    suffixAddonBtn={{ icon: 'trash', onclick: () => removeIpRange(i) }}
+                  />
+                {/each}
+              </div>
+            {/if}
+            </div>
+          </div>
+
+          <div class="border-t border-border my-4"></div>
+
+          <!-- Maintenance Mode -->
+          <div class="space-y-2">
+            <div class="flex items-center justify-between mb-4">
+              <div class="flex items-center gap-2">
+                <Icon name="tool" size={16} class="text-muted-foreground" />
+                <span class="text-sm font-medium text-foreground">Maintenance Mode</span>
+              </div>
+              <Checkbox
+                variant="chip"
+                icon="tool"
+                checked={formData.sentinelConfig.maintenance.enabled}
+                onchange={(e) => formData.sentinelConfig.maintenance.enabled = e.target.checked}
+                label={formData.sentinelConfig.maintenance.enabled ? 'On' : 'Off'}
+              />
+            </div>
+            {#if formData.sentinelConfig.maintenance.enabled}
+              <Input
+                placeholder="Service is undergoing scheduled maintenance"
+                bind:value={formData.sentinelConfig.maintenance.message}
+                prefixIcon="message"
+              />
+            {/if}
+          </div>
+
+          <div class="border-t border-border my-4"></div>
+
+          <!-- Time Access Section -->
+          <div >
+            <div class="flex items-center gap-2">
+              <Icon name="calendar-time" size={16} class="text-muted-foreground" />
+              <span class="text-sm font-medium text-foreground">Time-Based Access</span>
+            </div>
+            <p class="text-xs text-muted-foreground">Restrict access to specific days and times</p>
+            <div class="space-y-2 mt-3">
+            <div class="grid grid-cols-3 gap-3">
+              <Select
+                label="Timezone"
+                bind:value={formData.sentinelConfig.timeAccess.timezone}
+              >
+                {#each timezones as tz}
+                  <option value={tz}>{tz}</option>
+                {/each}
+              </Select>
+              <Input
+                label="Start Time"
+                type="time"
+                bind:value={formData.sentinelConfig.timeAccess.allowStart}
+              />
+              <Input
+                label="End Time"
+                type="time"
+                bind:value={formData.sentinelConfig.timeAccess.allowEnd}
+              />
+            </div>
+            <div>
+              <span class="text-xs text-muted-foreground">Allowed Days</span>
+              <div class="mt-1 kt-btn-group">
+                {#each weekDays as day}
+                  <Button
+                    variant={formData.sentinelConfig.timeAccess.allowDays.includes(day) ? 'success' : 'outline'}
+                    size="xs"
+                    icon="calendar"
+                    onclick={() => toggleDay(day)}
+                  >
+                    {day.substring(0, 3)}
+                  </Button>
+                {/each}
+              </div>
+            </div>
+            </div>
+          </div>
+
+          <div class="border-t border-border my-4"></div>
+
+          <!-- Header Validation Section -->
+          <div>
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <Icon name="key" size={16} class="text-muted-foreground" />
+                <span class="text-sm font-medium text-foreground">Required Headers</span>
+              </div>
+              <Button variant="outline" size="xs" icon="plus" onclick={addHeader}>Add</Button>
+            </div>
+            <p class="text-xs text-muted-foreground">Require specific headers to be present</p>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3">
+            {#each formData.sentinelConfig.headers.required as header, i}
+              <div class="border border-border rounded-lg p-3 space-y-2">
+                <div class="grid grid-cols-2 gap-2">
+                  <Input
+                    placeholder="X-Api-Key"
+                    value={header.name}
+                    oninput={(e) => formData.sentinelConfig.headers.required[i].name = e.target.value}
+                    prefixIcon="key"
+                  />
+                  <Select
+                    value={header.matchType}
+                    onchange={(e) => formData.sentinelConfig.headers.required[i].matchType = e.target.value}
+                  >
+                    <option value="exact">Exact match</option>
+                    <option value="contains">Contains</option>
+                    <option value="regex">Regex</option>
+                    <option value="exists">Exists (any value)</option>
+                  </Select>
+                </div>
+                {#if header.matchType !== 'exists'}
+                  <Input
+                    placeholder="Expected value..."
+                    value={header.value}
+                    oninput={(e) => formData.sentinelConfig.headers.required[i].value = e.target.value}
+                    suffixAddonBtn={{ icon: 'trash', onclick: () => removeHeader(i) }}
+                  />
+                {:else}
+                  <div class="flex justify-end">
+                    <Button variant="ghost" size="xs" icon="trash" onclick={() => removeHeader(i)}>Remove</Button>
+                  </div>
+                {/if}
+              </div>
+            {/each}
+            </div>
+          </div>
+
+          <div class="border-t border-border my-4"></div>
+
+          <!-- User Agent Blocking Section -->
+          <div>
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <Icon name="robot" size={16} class="text-muted-foreground" />
+                <span class="text-sm font-medium text-foreground">Blocked User Agents</span>
+              </div>
+              <Button variant="outline" size="xs" icon="plus" onclick={addUserAgent}>Add</Button>
+            </div>
+            <p class="text-xs text-muted-foreground">Block requests matching these patterns (regex)</p>
+            <div class="space-y-2 mt-3">
+            {#if formData.sentinelConfig.userAgents.blocked.length > 0}
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {#each formData.sentinelConfig.userAgents.blocked as ua, i}
+                  <Input
+                    placeholder="(?i)bot|crawler|spider"
+                    value={ua}
+                    oninput={(e) => formData.sentinelConfig.userAgents.blocked[i] = e.target.value}
+                    prefixIcon="robot"
+                    suffixAddonBtn={{ icon: 'trash', onclick: () => removeUserAgent(i) }}
+                  />
+                {/each}
+              </div>
+            {/if}
+            </div>
+          </div>
+        </div>
+      {/if}
+    </div>
   </div>
 
   {#snippet footer()}

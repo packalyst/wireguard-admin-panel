@@ -17,6 +17,16 @@ import (
 	"api/internal/router"
 )
 
+// Sentinel middleware names - used throughout the codebase
+const (
+	MiddlewareSentinelVPN       = "sentinel_vpn"
+	MiddlewareSentinelVPNSilent = "sentinel_vpn_silent"
+	MiddlewareSentinelDrop      = "sentinel_drop"
+	// With @file suffix for router middleware lists
+	MiddlewareSentinelVPNFile       = "sentinel_vpn@file"
+	MiddlewareSentinelVPNSilentFile = "sentinel_vpn_silent@file"
+)
+
 // Service handles Traefik operations
 type Service struct {
 	traefikAPI    string
@@ -180,7 +190,7 @@ func (s *Service) GetConfig() *TraefikConfig {
 		StrictRateBurst:   extractInt(content, "rate-limit-strict:", "burst:", 20),
 		SecurityHeaders:   strings.Contains(content, "security-headers:"),
 		IPAllowlist:       extractIPList(content),
-		IPAllowEnabled:    strings.Contains(content, "vpn-only:"),
+		IPAllowEnabled:    strings.Contains(content, MiddlewareSentinelVPN+":"),
 		DashboardEnabled:  true,
 	}
 
@@ -330,7 +340,7 @@ func extractInt(content, section, key string, defaultVal int) int {
 
 func extractIPList(content string) []string {
 	var ips []string
-	idx := strings.Index(content, "vpn-only:")
+	idx := strings.Index(content, MiddlewareSentinelVPN+":")
 	if idx == -1 {
 		return ips
 	}
@@ -390,8 +400,8 @@ func updateMiddlewareValue(content, section, key string, value int) string {
 }
 
 func updateIPAllowlist(content string, ips []string) string {
-	// Update both vpn-only and vpn-only-silent middlewares
-	middlewares := []string{"vpn-only:", "vpn-only-silent:"}
+	// Update both sentinel_vpn and sentinel_vpn_silent middlewares
+	middlewares := []string{MiddlewareSentinelVPN + ":", MiddlewareSentinelVPNSilent + ":"}
 
 	for _, middleware := range middlewares {
 		content = updateMiddlewareSourceRange(content, middleware, ips)
@@ -655,9 +665,9 @@ func (s *Service) GetVPNOnlyMode() string {
 	}
 
 	content := string(data)
-	if routerHasMiddleware(content, "ui", "vpn-only-silent") {
+	if routerHasMiddleware(content, "ui", MiddlewareSentinelVPNSilent) {
 		return "silent"
-	} else if routerHasMiddleware(content, "ui", "vpn-only") {
+	} else if routerHasMiddleware(content, "ui", MiddlewareSentinelVPN) {
 		return "403"
 	}
 	return "off"
@@ -688,9 +698,9 @@ func (s *Service) handleSetVPNOnly(w http.ResponseWriter, r *http.Request) {
 	routers := []string{"ui", "ui-secure"}
 
 	// Remove both middlewares from all routers first
-	for _, router := range routers {
-		s.removeMiddlewareFromRouter(router, "vpn-only")
-		s.removeMiddlewareFromRouter(router, "vpn-only-silent")
+	for _, rtr := range routers {
+		s.removeMiddlewareFromRouter(rtr, MiddlewareSentinelVPN)
+		s.removeMiddlewareFromRouter(rtr, MiddlewareSentinelVPNSilent)
 	}
 
 	// Add the appropriate middleware to all routers
@@ -698,9 +708,9 @@ func (s *Service) handleSetVPNOnly(w http.ResponseWriter, r *http.Request) {
 	for _, routerName := range routers {
 		switch req.Mode {
 		case "403":
-			err = s.addMiddlewareToRouter(routerName, "vpn-only")
+			err = s.addMiddlewareToRouter(routerName, MiddlewareSentinelVPN)
 		case "silent":
-			err = s.addMiddlewareToRouter(routerName, "vpn-only-silent")
+			err = s.addMiddlewareToRouter(routerName, MiddlewareSentinelVPNSilent)
 		}
 		if err != nil {
 			// Log but continue - router may not exist (e.g., SSL not enabled)
@@ -712,15 +722,56 @@ func (s *Service) handleSetVPNOnly(w http.ResponseWriter, r *http.Request) {
 	router.JSON(w, map[string]string{"mode": req.Mode})
 }
 
+// escapeYAMLString escapes a string for safe YAML output
+func escapeYAMLString(s string) string {
+	// Replace backslashes first, then other special chars
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	s = strings.ReplaceAll(s, "\n", `\n`)
+	s = strings.ReplaceAll(s, "\r", `\r`)
+	s = strings.ReplaceAll(s, "\t", `\t`)
+	return s
+}
+
+// SentinelConfig represents per-domain sentinel middleware configuration
+type SentinelConfig struct {
+	Enabled   bool   `json:"enabled"`
+	ErrorMode string `json:"errorMode,omitempty"` // "403", "404", "503", "silent"
+	IPFilter  struct {
+		SourceRange []string `json:"sourceRange,omitempty"`
+	} `json:"ipFilter,omitempty"`
+	Maintenance *struct {
+		Enabled bool   `json:"enabled"`
+		Message string `json:"message,omitempty"`
+	} `json:"maintenance,omitempty"`
+	TimeAccess *struct {
+		Timezone   string   `json:"timezone,omitempty"`
+		AllowDays  []string `json:"allowDays,omitempty"`
+		AllowStart string   `json:"allowStart,omitempty"`
+		AllowEnd   string   `json:"allowEnd,omitempty"`
+	} `json:"timeAccess,omitempty"`
+	Headers *struct {
+		Required []struct {
+			Name      string `json:"name"`
+			Value     string `json:"value,omitempty"`
+			MatchType string `json:"matchType,omitempty"` // "exact", "contains", "regex", "exists"
+		} `json:"required,omitempty"`
+	} `json:"headers,omitempty"`
+	UserAgents *struct {
+		Blocked []string `json:"blocked,omitempty"`
+	} `json:"userAgents,omitempty"`
+}
+
 // DomainRouteConfig represents a domain route for Traefik config generation
 type DomainRouteConfig struct {
-	Domain       string
-	TargetIP     string
-	TargetPort   int
-	HTTPSBackend bool
-	Middlewares  []string
-	AccessMode   string // "vpn" or "public"
-	FrontendSSL  bool   // use websecure entrypoint with TLS
+	Domain         string
+	TargetIP       string
+	TargetPort     int
+	HTTPSBackend   bool
+	Middlewares    []string
+	AccessMode     string          // "vpn" or "public"
+	FrontendSSL    bool            // use websecure entrypoint with TLS
+	SentinelConfig *SentinelConfig // per-domain sentinel middleware config
 }
 
 // GenerateDomainRoutes writes domain routes to Traefik's dynamic config directory
@@ -736,8 +787,28 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig) error {
 		sb.WriteString("http:\n")
 		sb.WriteString("  routers:\n")
 
+		// Track routes that need per-domain middlewares
+		var sentinelMiddlewares []struct {
+			name   string
+			config *SentinelConfig
+		}
+
 		for _, route := range routes {
 			name := helper.SanitizeDomainName(route.Domain)
+
+			// Build middlewares list
+			middlewares := make([]string, len(route.Middlewares))
+			copy(middlewares, route.Middlewares)
+
+			// Add per-domain sentinel config middleware if configured
+			if route.SentinelConfig != nil {
+				mwName := fmt.Sprintf("sentinel_domain-%s", name)
+				middlewares = append([]string{mwName}, middlewares...) // prepend
+				sentinelMiddlewares = append(sentinelMiddlewares, struct {
+					name   string
+					config *SentinelConfig
+				}{mwName, route.SentinelConfig})
+			}
 
 			// HTTP router (web entrypoint) - always created
 			sb.WriteString(fmt.Sprintf("    domain-%s:\n", name))
@@ -746,9 +817,9 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig) error {
 			sb.WriteString("      priority: 50\n")
 			sb.WriteString("      entryPoints:\n")
 			sb.WriteString("        - web\n")
-			if len(route.Middlewares) > 0 {
+			if len(middlewares) > 0 {
 				sb.WriteString("      middlewares:\n")
-				for _, mw := range route.Middlewares {
+				for _, mw := range middlewares {
 					sb.WriteString(fmt.Sprintf("        - %s\n", mw))
 				}
 			}
@@ -762,9 +833,9 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig) error {
 				sb.WriteString("      priority: 50\n")
 				sb.WriteString("      entryPoints:\n")
 				sb.WriteString("        - websecure\n")
-				if len(route.Middlewares) > 0 {
+				if len(middlewares) > 0 {
 					sb.WriteString("      middlewares:\n")
-					for _, mw := range route.Middlewares {
+					for _, mw := range middlewares {
 						sb.WriteString(fmt.Sprintf("        - %s\n", mw))
 					}
 				}
@@ -795,6 +866,96 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig) error {
 			sb.WriteString("        servers:\n")
 			sb.WriteString(fmt.Sprintf("          - url: \"%s://%s:%d\"\n", protocol, route.TargetIP, route.TargetPort))
 			sb.WriteString("\n")
+		}
+
+		// Generate per-domain sentinel middlewares
+		if len(sentinelMiddlewares) > 0 {
+			sb.WriteString("  middlewares:\n")
+			for _, mw := range sentinelMiddlewares {
+				sb.WriteString(fmt.Sprintf("    %s:\n", mw.name))
+				sb.WriteString("      plugin:\n")
+				sb.WriteString("        sentinel:\n")
+
+				// IP Filter
+				if len(mw.config.IPFilter.SourceRange) > 0 {
+					sb.WriteString("          ipFilter:\n")
+					sb.WriteString("            sourceRange:\n")
+					for _, ip := range mw.config.IPFilter.SourceRange {
+						sb.WriteString(fmt.Sprintf("              - \"%s\"\n", escapeYAMLString(ip)))
+					}
+				}
+
+				// Error Mode (whitelist valid values)
+				errorMode := mw.config.ErrorMode
+				switch errorMode {
+				case "403", "404", "503", "silent":
+					// valid
+				default:
+					errorMode = "403"
+				}
+				sb.WriteString(fmt.Sprintf("          errorMode: \"%s\"\n", errorMode))
+
+				// Maintenance Mode
+				if mw.config.Maintenance != nil && mw.config.Maintenance.Enabled {
+					sb.WriteString("          maintenance:\n")
+					sb.WriteString("            enabled: true\n")
+					if mw.config.Maintenance.Message != "" {
+						sb.WriteString(fmt.Sprintf("            message: \"%s\"\n", escapeYAMLString(mw.config.Maintenance.Message)))
+					}
+				}
+
+				// Time Access
+				if mw.config.TimeAccess != nil && len(mw.config.TimeAccess.AllowDays) > 0 {
+					sb.WriteString("          timeAccess:\n")
+					if mw.config.TimeAccess.Timezone != "" {
+						sb.WriteString(fmt.Sprintf("            timezone: \"%s\"\n", escapeYAMLString(mw.config.TimeAccess.Timezone)))
+					}
+					sb.WriteString("            allowDays:\n")
+					for _, day := range mw.config.TimeAccess.AllowDays {
+						sb.WriteString(fmt.Sprintf("              - \"%s\"\n", escapeYAMLString(day)))
+					}
+					if mw.config.TimeAccess.AllowStart != "" {
+						sb.WriteString(fmt.Sprintf("            allowStart: \"%s\"\n", escapeYAMLString(mw.config.TimeAccess.AllowStart)))
+					}
+					if mw.config.TimeAccess.AllowEnd != "" {
+						sb.WriteString(fmt.Sprintf("            allowEnd: \"%s\"\n", escapeYAMLString(mw.config.TimeAccess.AllowEnd)))
+					}
+				}
+
+				// Headers
+				if mw.config.Headers != nil && len(mw.config.Headers.Required) > 0 {
+					sb.WriteString("          headers:\n")
+					sb.WriteString("            required:\n")
+					for _, h := range mw.config.Headers.Required {
+						sb.WriteString(fmt.Sprintf("              - name: \"%s\"\n", escapeYAMLString(h.Name)))
+						if h.Value != "" {
+							sb.WriteString(fmt.Sprintf("                value: \"%s\"\n", escapeYAMLString(h.Value)))
+						}
+						if h.MatchType != "" {
+							// Whitelist valid match types
+							matchType := h.MatchType
+							switch matchType {
+							case "exact", "contains", "regex", "exists":
+								// valid
+							default:
+								matchType = "exact"
+							}
+							sb.WriteString(fmt.Sprintf("                matchType: \"%s\"\n", matchType))
+						}
+					}
+				}
+
+				// User Agents
+				if mw.config.UserAgents != nil && len(mw.config.UserAgents.Blocked) > 0 {
+					sb.WriteString("          userAgents:\n")
+					sb.WriteString("            blocked:\n")
+					for _, ua := range mw.config.UserAgents.Blocked {
+						sb.WriteString(fmt.Sprintf("              - \"%s\"\n", escapeYAMLString(ua)))
+					}
+				}
+
+				sb.WriteString("\n")
+			}
 		}
 	}
 

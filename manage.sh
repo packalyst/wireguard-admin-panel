@@ -1827,8 +1827,8 @@ api:
 
 experimental:
   localPlugins:
-    silentdrop:
-      moduleName: local/silentdrop
+    sentinel:
+      moduleName: local/sentinel
 
 entryPoints:
   web:

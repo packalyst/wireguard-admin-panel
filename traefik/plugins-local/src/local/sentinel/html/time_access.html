@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Access Not Available</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #21232a;
+            color: #e4e6eb;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            text-align: center;
+            max-width: 520px;
+        }
+        .clock-wrapper {
+            margin-bottom: 30px;
+            display: inline-block;
+        }
+        .clock {
+            width: 100px;
+            height: 100px;
+            border: 4px solid #6366f1;
+            border-radius: 50%;
+            position: relative;
+            background: linear-gradient(180deg, rgba(99, 102, 241, 0.1) 0%, rgba(99, 102, 241, 0.05) 100%);
+            box-shadow: 0 0 50px rgba(99, 102, 241, 0.25);
+        }
+        .clock::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 8px;
+            height: 8px;
+            background: #6366f1;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 3;
+        }
+        .hand {
+            position: absolute;
+            bottom: 50%;
+            left: 50%;
+            transform-origin: bottom center;
+            background: #6366f1;
+            border-radius: 2px;
+        }
+        .hour-hand {
+            width: 4px;
+            height: 25px;
+            transform: translateX(-50%) rotate(45deg);
+        }
+        .minute-hand {
+            width: 3px;
+            height: 35px;
+            transform: translateX(-50%) rotate(180deg);
+            animation: tick 60s steps(60) infinite;
+        }
+        @keyframes tick {
+            to { transform: translateX(-50%) rotate(540deg); }
+        }
+        .clock-marks {
+            position: absolute;
+            top: 8px;
+            left: 50%;
+            width: 2px;
+            height: 8px;
+            background: #6366f1;
+            transform: translateX(-50%);
+        }
+        .clock-marks:nth-child(2) { transform: translateX(-50%) rotate(90deg); top: 46px; left: 8px; }
+        .clock-marks:nth-child(3) { transform: translateX(-50%) rotate(180deg); top: 84px; }
+        .clock-marks:nth-child(4) { transform: translateX(-50%) rotate(270deg); top: 46px; left: 84px; }
+        .status-code {
+            font-size: 14px;
+            color: #6366f1;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            margin-bottom: 15px;
+            font-weight: 600;
+        }
+        h1 {
+            font-size: 30px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: #fff;
+        }
+        .subtitle {
+            font-size: 17px;
+            color: #9ca3af;
+            margin-bottom: 30px;
+        }
+        .schedule-card {
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(99, 102, 241, 0.05) 100%);
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            border-radius: 16px;
+            padding: 25px 30px;
+            margin: 20px 0;
+        }
+        .schedule-label {
+            font-size: 12px;
+            color: #8b8fa3;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 10px;
+        }
+        .schedule-time {
+            font-size: 28px;
+            font-weight: 700;
+            color: #a5b4fc;
+            font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+            letter-spacing: 1px;
+        }
+        .timezone-info {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid rgba(99, 102, 241, 0.2);
+        }
+        .timezone-icon {
+            font-size: 16px;
+        }
+        .timezone-text {
+            color: #9ca3af;
+            font-size: 14px;
+        }
+        .timezone-value {
+            color: #c7d2fe;
+            font-weight: 500;
+        }
+        .hint {
+            margin-top: 30px;
+            font-size: 14px;
+            color: #6b7280;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="clock-wrapper">
+            <div class="clock">
+                <div class="clock-marks"></div>
+                <div class="clock-marks"></div>
+                <div class="clock-marks"></div>
+                <div class="clock-marks"></div>
+                <div class="hand hour-hand"></div>
+                <div class="hand minute-hand"></div>
+            </div>
+        </div>
+        <div class="status-code">Status {CODE}</div>
+        <h1>Outside Access Hours</h1>
+        <p class="subtitle">This resource is only available during scheduled hours</p>
+        <div class="schedule-card">
+            <p class="schedule-label">Allowed Access Times</p>
+            <p class="schedule-time">{SCHEDULE}</p>
+            <div class="timezone-info">
+                <span class="timezone-icon">&#127760;</span>
+                <span class="timezone-text">Timezone:</span>
+                <span class="timezone-value">{TIMEZONE}</span>
+            </div>
+        </div>
+        <p class="hint">Please return during the scheduled access window</p>
+    </div>
+</body>
+</html>

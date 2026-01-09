@@ -45,7 +45,7 @@ http:
       service: headscale
       priority: 100
       middlewares:
-        - vpn-only
+        - sentinel_vpn
         - rate-limit-strict
         - security-headers
       entryPoints:
@@ -58,7 +58,7 @@ http:
       service: ui
       priority: 1
       middlewares:
-        - drop-unknown
+        - sentinel_drop
       entryPoints:
         - web
 
@@ -67,7 +67,7 @@ http:
       service: ui
       priority: 1
       middlewares:
-        - drop-unknown
+        - sentinel_drop
       entryPoints:
         - websecure
       tls: {}
@@ -110,20 +110,22 @@ http:
         referrerPolicy: "strict-origin-when-cross-origin"
 
     # VPN-only with custom error page
-    vpn-only:
+    sentinel_vpn:
       plugin:
-        silentdrop:
-          sourceRange:
+        sentinel:
+          ipFilter:
+            sourceRange:
 ${VPN_SOURCE_RANGE}
-          mode: "error"
+          errorMode: "403"
 
     # VPN-only silent drop (closes connection silently)
-    vpn-only-silent:
+    sentinel_vpn_silent:
       plugin:
-        silentdrop:
-          sourceRange:
+        sentinel:
+          ipFilter:
+            sourceRange:
 ${VPN_SOURCE_RANGE}
-          mode: "silent"
+          errorMode: "silent"
 
     # Redirect HTTP to HTTPS (for public domain only)
     redirect-to-https:
@@ -132,9 +134,29 @@ ${VPN_SOURCE_RANGE}
         permanent: true
 
     # Drop unknown domains (returns 404 for unconfigured hosts)
-    drop-unknown:
+    sentinel_drop:
       plugin:
-        silentdrop:
-          sourceRange:
-            - "0.0.0.0/32"
-          mode: "error"
+        sentinel:
+          ipFilter:
+            sourceRange:
+              - "0.0.0.0/32"
+          errorMode: "404"
+
+    # Block AI bots and crawlers via robots.txt
+    sentinel_robots:
+      plugin:
+        sentinel:
+          robots:
+            enabled: true
+            listUrl: "https://raw.githubusercontent.com/ai-robots-txt/ai.robots.txt/main/robots.json"
+            cacheTTL: 86400
+            disallow:
+              - "/"
+
+    # Block known crawlers and bots by user-agent
+    sentinel_deny_agents:
+      plugin:
+        sentinel:
+          userAgents:
+            listUrl: "https://raw.githubusercontent.com/monperrus/crawler-user-agents/master/crawler-user-agents.json"
+            cacheTTL: 86400

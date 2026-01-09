@@ -82,22 +82,22 @@
   </label>
 
 {:else if variant === 'chip'}
-  <!-- Chip toggle variant (hidden input, styled label) -->
-  <label class="inline-flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer transition-colors text-xs
+  <!-- Chip toggle variant (button-like, no hidden input to avoid focus/scroll issues) -->
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+  <button
+    type="button"
+    class="inline-flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer transition-colors text-xs select-none
     {!borderless ? 'border' : ''}
     {checked
       ? getChipColorClass(color)
       : borderless ? 'text-muted-foreground hover:bg-accent hover:text-foreground' : 'border-border text-muted-foreground hover:bg-accent hover:text-foreground'}
     {disabled ? 'opacity-50 cursor-not-allowed' : ''}
-    {className}">
-    <input
-      type="checkbox"
-      class="sr-only"
-      {checked}
-      {disabled}
-      onchange={handleChange}
-      {...restProps}
-    />
+    {className}"
+    {disabled}
+    onclick={(e) => { e.preventDefault(); if (!disabled) { checked = !checked; onchange?.({ target: { checked } }); } }}
+    onkeydown={(e) => { if (e.key === ' ') e.preventDefault(); }}
+    {...restProps}
+  >
     {#if icon}
       <Icon name={icon} size={12} />
     {/if}
@@ -106,7 +106,7 @@
     {:else if label}
       <span>{label}</span>
     {/if}
-  </label>
+  </button>
 
 {:else}
   <!-- Default checkbox variant -->
