@@ -1093,7 +1093,7 @@ func GetCertificates() ([]CertificateInfo, error) {
 
 // GetACMEError checks traefik.log for ACME errors for a specific domain
 func GetACMEError(domain string) string {
-	logPath := helper.GetEnvOptional("TRAEFIK_MAIN_LOG", "/var/log/traefik/traefik.log")
+	logPath := helper.GetEnv("TRAEFIK_MAIN_LOG")
 
 	// Read last 500 lines of log file
 	data, err := os.ReadFile(logPath)

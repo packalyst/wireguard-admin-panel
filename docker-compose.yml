@@ -124,6 +124,7 @@ services:
       - TRAEFIK_CONFIG=/traefik/dynamic
       - TRAEFIK_STATIC=/traefik/traefik.yml
       - TRAEFIK_LOGS=${TRAEFIK_LOGS}
+      - TRAEFIK_MAIN_LOG=${TRAEFIK_MAIN_LOG}
       # WireGuard settings
       - WG_INTERFACE=${WG_INTERFACE}
       - WG_PORT=${WG_PORT}
