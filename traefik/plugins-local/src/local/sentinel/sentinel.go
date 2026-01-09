@@ -63,10 +63,8 @@ type IPFilterConfig struct {
 
 // MaintenanceConfig configures maintenance mode.
 type MaintenanceConfig struct {
-	// Enabled activates maintenance mode (also requires trigger file)
+	// Enabled activates maintenance mode
 	Enabled bool `json:"enabled,omitempty"`
-	// TriggerFile path - maintenance active when this file exists
-	TriggerFile string `json:"triggerFile,omitempty"`
 	// Code is the HTTP status code (default 503)
 	Code int `json:"code,omitempty"`
 	// Message to display
@@ -494,11 +492,7 @@ func (s *Sentinel) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 func (s *Sentinel) checkMaintenance() bool {
 	m := s.config.Maintenance
-	if m == nil || !m.Enabled || m.TriggerFile == "" {
-		return false
-	}
-	_, err := os.Stat(m.TriggerFile)
-	return err == nil
+	return m != nil && m.Enabled
 }
 
 func (s *Sentinel) serveMaintenance(rw http.ResponseWriter, req *http.Request) {
