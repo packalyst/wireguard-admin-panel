@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -998,11 +999,12 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig) error {
 // CertificateInfo holds certificate data parsed from acme.json
 type CertificateInfo struct {
 	Domain    string    `json:"domain"`
-	NotBefore time.Time `json:"notBefore"`
-	NotAfter  time.Time `json:"notAfter"`
-	Issuer    string    `json:"issuer"`
-	Status    string    `json:"status"`   // "valid", "warning", "critical", "expired"
-	DaysLeft  int       `json:"daysLeft"`
+	NotBefore time.Time `json:"notBefore,omitempty"`
+	NotAfter  time.Time `json:"notAfter,omitempty"`
+	Issuer    string    `json:"issuer,omitempty"`
+	Status    string    `json:"status"` // "valid", "warning", "critical", "expired", "pending", "error"
+	DaysLeft  int       `json:"daysLeft,omitempty"`
+	Error     string    `json:"error,omitempty"` // error message if status is "error"
 }
 
 // acmeStorage represents the structure of acme.json
@@ -1087,4 +1089,122 @@ func GetCertificates() ([]CertificateInfo, error) {
 	}
 
 	return certs, nil
+}
+
+// GetACMEError checks traefik.log for ACME errors for a specific domain
+func GetACMEError(domain string) string {
+	logPath := helper.GetEnvOptional("TRAEFIK_MAIN_LOG", "/var/log/traefik/traefik.log")
+
+	// Read last 500 lines of log file
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		return ""
+	}
+
+	lines := strings.Split(string(data), "\n")
+	// Start from end, look for recent errors
+	startIdx := len(lines) - 500
+	if startIdx < 0 {
+		startIdx = 0
+	}
+
+	domainLower := strings.ToLower(domain)
+	for i := len(lines) - 1; i >= startIdx; i-- {
+		line := strings.ToLower(lines[i])
+		// Check if line contains domain and is an ACME/certificate error
+		if strings.Contains(line, domainLower) &&
+			strings.Contains(line, "error") &&
+			(strings.Contains(line, "acme") || strings.Contains(line, "certificate") || strings.Contains(line, "unable to obtain")) {
+
+			// Extract error message - look for msg="..."
+			if idx := strings.Index(lines[i], "msg="); idx != -1 {
+				msg := lines[i][idx+4:]
+				// Remove quotes if present
+				msg = strings.Trim(msg, "\"")
+				// Truncate if too long
+				if len(msg) > 200 {
+					msg = msg[:200] + "..."
+				}
+				return msg
+			}
+			return "Certificate generation failed"
+		}
+	}
+	return ""
+}
+
+// GetPendingSSLDomains returns domains that have SSL enabled but no certificate yet
+func GetPendingSSLDomains() ([]CertificateInfo, error) {
+	// Get existing certificates
+	existingCerts, err := GetCertificates()
+	if err != nil {
+		return nil, err
+	}
+
+	// Create map of domains that have certs
+	certMap := make(map[string]bool)
+	for _, c := range existingCerts {
+		certMap[c.Domain] = true
+	}
+
+	// Read domains.yml to find domains with frontendSsl=true
+	dynamicPath := helper.GetEnvOptional("TRAEFIK_DYNAMIC", "/traefik/dynamic")
+	domainsFile := filepath.Join(dynamicPath, "domains.yml")
+
+	data, err := os.ReadFile(domainsFile)
+	if err != nil {
+		return []CertificateInfo{}, nil // No domains file yet
+	}
+
+	// Parse YAML to find domains with SSL enabled
+	var pending []CertificateInfo
+	lines := strings.Split(string(data), "\n")
+	var currentDomain string
+	var hasCertResolver bool
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Look for router definitions like "domain-wiki-example-com-secure:"
+		if strings.HasSuffix(trimmed, "-secure:") && strings.HasPrefix(trimmed, "domain-") {
+			currentDomain = ""
+			hasCertResolver = false
+		}
+
+		// Look for Host rule to extract domain
+		if strings.Contains(trimmed, "Host(`") && currentDomain == "" {
+			start := strings.Index(trimmed, "Host(`") + 6
+			end := strings.Index(trimmed[start:], "`")
+			if end > 0 {
+				currentDomain = trimmed[start : start+end]
+			}
+		}
+
+		// Check if this router uses certResolver
+		if strings.Contains(trimmed, "certResolver:") {
+			hasCertResolver = true
+		}
+
+		// At end of router block, check if it's pending
+		if currentDomain != "" && hasCertResolver {
+			if !certMap[currentDomain] {
+				// No cert exists - check for error
+				acmeError := GetACMEError(currentDomain)
+				status := "pending"
+				if acmeError != "" {
+					status = "error"
+				}
+				pending = append(pending, CertificateInfo{
+					Domain: currentDomain,
+					Status: status,
+					Error:  acmeError,
+				})
+				certMap[currentDomain] = true // Avoid duplicates
+			}
+			currentDomain = ""
+			hasCertResolver = false
+		}
+	}
+
+	return pending, nil
 }

@@ -829,8 +829,18 @@ func (s *Service) handleGetCertificates(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Also get pending/error domains
+	pending, err := traefik.GetPendingSSLDomains()
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Combine valid certs with pending/error
+	allCerts := append(certs, pending...)
+
 	router.JSON(w, map[string]interface{}{
-		"certificates": certs,
+		"certificates": allCerts,
 	})
 }
 

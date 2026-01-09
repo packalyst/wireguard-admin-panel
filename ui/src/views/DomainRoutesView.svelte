@@ -478,8 +478,8 @@
                   </Badge>
                   {#if getCertForDomain(route.domain)}
                     {@const cert = getCertForDomain(route.domain)}
-                    <Badge variant={cert.status === 'valid' ? 'success' : cert.status === 'warning' ? 'warning' : 'destructive'} size="sm">
-                      SSL
+                    <Badge variant={cert.status === 'error' ? 'destructive' : cert.status === 'pending' ? 'warning' : cert.status === 'valid' ? 'success' : 'destructive'} size="sm">
+                      {cert.status === 'error' ? 'SSL!' : cert.status === 'pending' ? 'SSL...' : 'SSL'}
                     </Badge>
                   {:else if route.frontendSsl}
                     <Badge variant="muted" size="sm">SSL?</Badge>
@@ -527,16 +527,26 @@
                   <!-- Frontend SSL Badge with certificate status -->
                   {#if getCertForDomain(route.domain)}
                     {@const cert = getCertForDomain(route.domain)}
-                    <Badge
-                      variant={cert.status === 'valid' ? 'success' : cert.status === 'warning' ? 'warning' : 'destructive'}
-                      size="sm"
-                      title={`Expires: ${new Date(cert.notAfter).toLocaleDateString()} (${cert.daysLeft} days)`}
-                    >
-                      SSL {cert.daysLeft}d
-                    </Badge>
+                    {#if cert.status === 'error'}
+                      <Badge variant="destructive" size="sm" title={cert.error || 'Certificate generation failed'}>
+                        SSL Error
+                      </Badge>
+                    {:else if cert.status === 'pending'}
+                      <Badge variant="warning" size="sm" title="Waiting for certificate">
+                        SSL Pending
+                      </Badge>
+                    {:else}
+                      <Badge
+                        variant={cert.status === 'valid' ? 'success' : cert.status === 'warning' ? 'warning' : 'destructive'}
+                        size="sm"
+                        title={`Expires: ${new Date(cert.notAfter).toLocaleDateString()} (${cert.daysLeft} days)`}
+                      >
+                        SSL {cert.daysLeft}d
+                      </Badge>
+                    {/if}
                   {:else if route.frontendSsl}
-                    <Badge variant="muted" size="sm" title="SSL enabled, waiting for certificate">
-                      SSL Pending
+                    <Badge variant="muted" size="sm" title="SSL enabled, not yet processed">
+                      SSL?
                     </Badge>
                   {/if}
                   <!-- Backend HTTPS Badge -->
