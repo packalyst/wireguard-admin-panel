@@ -117,9 +117,9 @@
     errorMode: '403',
     ipFilter: { sourceRange: [] },
     maintenance: { enabled: false, message: '' },
-    timeAccess: { timezone: 'UTC', allowDays: [], allowStart: '', allowEnd: '' },
-    headers: { required: [] }, // [{name, value, matchType}]
-    userAgents: { blocked: [] }
+    timeAccess: { timezone: 'UTC', days: [], allowRange: '', denyRange: '' },
+    headers: [], // [{name, values, matchType, regex, required, contains}]
+    userAgents: { block: [], allow: [] }
   })
 
   // Ensure sentinel config has all required nested objects
@@ -132,12 +132,12 @@
       maintenance: { enabled: config.maintenance?.enabled || false, message: config.maintenance?.message || '' },
       timeAccess: {
         timezone: config.timeAccess?.timezone || 'UTC',
-        allowDays: config.timeAccess?.allowDays || [],
-        allowStart: config.timeAccess?.allowStart || '',
-        allowEnd: config.timeAccess?.allowEnd || ''
+        days: config.timeAccess?.days || [],
+        allowRange: config.timeAccess?.allowRange || '',
+        denyRange: config.timeAccess?.denyRange || ''
       },
-      headers: { required: config.headers?.required || [] },
-      userAgents: { blocked: config.userAgents?.blocked || [] }
+      headers: config.headers || [],
+      userAgents: { block: config.userAgents?.block || [], allow: config.userAgents?.allow || [] }
     }
   }
 
@@ -177,31 +177,31 @@
 
   function addHeader() {
     if (!formData.sentinelConfig) return
-    formData.sentinelConfig.headers.required = [...formData.sentinelConfig.headers.required, { name: '', value: '', matchType: 'exact' }]
+    formData.sentinelConfig.headers = [...formData.sentinelConfig.headers, { name: '', values: [], matchType: 'one', regex: '', required: false, contains: false }]
   }
 
   function removeHeader(index) {
     if (!formData.sentinelConfig) return
-    formData.sentinelConfig.headers.required = formData.sentinelConfig.headers.required.filter((_, i) => i !== index)
+    formData.sentinelConfig.headers = formData.sentinelConfig.headers.filter((_, i) => i !== index)
   }
 
   function addUserAgent() {
     if (!formData.sentinelConfig) return
-    formData.sentinelConfig.userAgents.blocked = [...formData.sentinelConfig.userAgents.blocked, '']
+    formData.sentinelConfig.userAgents.block = [...formData.sentinelConfig.userAgents.block, '']
   }
 
   function removeUserAgent(index) {
     if (!formData.sentinelConfig) return
-    formData.sentinelConfig.userAgents.blocked = formData.sentinelConfig.userAgents.blocked.filter((_, i) => i !== index)
+    formData.sentinelConfig.userAgents.block = formData.sentinelConfig.userAgents.block.filter((_, i) => i !== index)
   }
 
   function toggleDay(day) {
     if (!formData.sentinelConfig) return
-    const days = formData.sentinelConfig.timeAccess.allowDays
+    const days = formData.sentinelConfig.timeAccess.days
     if (days.includes(day)) {
-      formData.sentinelConfig.timeAccess.allowDays = days.filter(d => d !== day)
+      formData.sentinelConfig.timeAccess.days = days.filter(d => d !== day)
     } else {
-      formData.sentinelConfig.timeAccess.allowDays = [...days, day]
+      formData.sentinelConfig.timeAccess.days = [...days, day]
     }
   }
 
@@ -913,25 +913,25 @@
                 {/each}
               </Select>
               <Input
-                label="Start Time"
-                type="time"
-                bind:value={formData.sentinelConfig.timeAccess.allowStart}
+                label="Allow Range"
+                placeholder="09:00-18:00"
+                bind:value={formData.sentinelConfig.timeAccess.allowRange}
               />
               <Input
-                label="End Time"
-                type="time"
-                bind:value={formData.sentinelConfig.timeAccess.allowEnd}
+                label="Deny Range"
+                placeholder="12:00-13:00"
+                bind:value={formData.sentinelConfig.timeAccess.denyRange}
               />
             </div>
             <div>
-              <span class="text-xs text-muted-foreground">Allowed Days</span>
+              <span class="text-xs text-muted-foreground">Allowed Days (lowercase: mon, tue, wed, thu, fri, sat, sun)</span>
               <div class="mt-1 kt-btn-group">
                 {#each weekDays as day}
                   <Button
-                    variant={formData.sentinelConfig.timeAccess.allowDays.includes(day) ? 'success' : 'outline'}
+                    variant={formData.sentinelConfig.timeAccess.days.includes(day.substring(0, 3).toLowerCase()) ? 'success' : 'outline'}
                     size="xs"
                     icon="calendar"
-                    onclick={() => toggleDay(day)}
+                    onclick={() => toggleDay(day.substring(0, 3).toLowerCase())}
                   >
                     {day.substring(0, 3)}
                   </Button>
@@ -955,37 +955,30 @@
             <p class="text-xs text-muted-foreground">Require specific headers to be present</p>
 
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3">
-            {#each formData.sentinelConfig.headers.required as header, i}
+            {#each formData.sentinelConfig.headers as header, i}
               <div class="border border-border rounded-lg p-3 space-y-2">
                 <div class="grid grid-cols-2 gap-2">
                   <Input
                     placeholder="X-Api-Key"
                     value={header.name}
-                    oninput={(e) => formData.sentinelConfig.headers.required[i].name = e.target.value}
+                    oninput={(e) => formData.sentinelConfig.headers[i].name = e.target.value}
                     prefixIcon="key"
                   />
                   <Select
                     value={header.matchType}
-                    onchange={(e) => formData.sentinelConfig.headers.required[i].matchType = e.target.value}
+                    onchange={(e) => formData.sentinelConfig.headers[i].matchType = e.target.value}
                   >
-                    <option value="exact">Exact match</option>
-                    <option value="contains">Contains</option>
-                    <option value="regex">Regex</option>
-                    <option value="exists">Exists (any value)</option>
+                    <option value="one">Match any value</option>
+                    <option value="all">Match all values</option>
+                    <option value="none">Blacklist values</option>
                   </Select>
                 </div>
-                {#if header.matchType !== 'exists'}
-                  <Input
-                    placeholder="Expected value..."
-                    value={header.value}
-                    oninput={(e) => formData.sentinelConfig.headers.required[i].value = e.target.value}
-                    suffixAddonBtn={{ icon: 'trash', onclick: () => removeHeader(i) }}
-                  />
-                {:else}
-                  <div class="flex justify-end">
-                    <Button variant="ghost" size="xs" icon="trash" onclick={() => removeHeader(i)}>Remove</Button>
-                  </div>
-                {/if}
+                <Input
+                  placeholder="Regex pattern (optional)"
+                  value={header.regex}
+                  oninput={(e) => formData.sentinelConfig.headers[i].regex = e.target.value}
+                  suffixAddonBtn={{ icon: 'trash', onclick: () => removeHeader(i) }}
+                />
               </div>
             {/each}
             </div>
@@ -1004,13 +997,13 @@
             </div>
             <p class="text-xs text-muted-foreground">Block requests matching these patterns (regex)</p>
             <div class="space-y-2 mt-3">
-            {#if formData.sentinelConfig.userAgents.blocked.length > 0}
+            {#if formData.sentinelConfig.userAgents.block.length > 0}
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {#each formData.sentinelConfig.userAgents.blocked as ua, i}
+                {#each formData.sentinelConfig.userAgents.block as ua, i}
                   <Input
                     placeholder="(?i)bot|crawler|spider"
                     value={ua}
-                    oninput={(e) => formData.sentinelConfig.userAgents.blocked[i] = e.target.value}
+                    oninput={(e) => formData.sentinelConfig.userAgents.block[i] = e.target.value}
                     prefixIcon="robot"
                     suffixAddonBtn={{ icon: 'trash', onclick: () => removeUserAgent(i) }}
                   />
