@@ -31,12 +31,17 @@ case "${1:-}" in
         # (Functions are defined below, so we use a flag)
         RUN_UPDATE_CHECK=true
         ;;
+    backup|--backup|-b)
+        # Backup SSL certificates
+        RUN_BACKUP=true
+        ;;
     help|--help|-h)
         echo "Usage: ./manage.sh [command]"
         echo ""
         echo "Commands:"
         echo "  (none)     Interactive mode - manage containers"
         echo "  update     Check for and install updates"
+        echo "  backup     Backup SSL certificates"
         echo "  help       Show this help message"
         echo ""
         exit 0
@@ -194,6 +199,36 @@ prompt_yes_no() {
 }
 
 CERT_BACKUP_DIR="/usr/local/wgadmin/certs"
+
+# Backup all certificates (whole acme.json) - uses SSL_DOMAIN from .env
+backup_certificates() {
+    # Load SSL_DOMAIN from .env if not already set
+    if [ -z "${SSL_DOMAIN:-}" ] && [ -f ".env" ]; then
+        SSL_DOMAIN=$(grep "^SSL_DOMAIN=" .env 2>/dev/null | cut -d'=' -f2)
+    fi
+
+    if [ -z "${SSL_DOMAIN:-}" ]; then
+        echo -e "${YELLOW}No SSL_DOMAIN configured - nothing to backup${NC}"
+        return 1
+    fi
+
+    if [ ! -f "traefik/acme.json" ]; then
+        echo -e "${YELLOW}No acme.json found - nothing to backup${NC}"
+        return 1
+    fi
+
+    # Check if acme.json has any certificates
+    if command -v jq &>/dev/null; then
+        local certs=$(cat traefik/acme.json 2>/dev/null | jq -r '.letsencrypt.Certificates // empty' 2>/dev/null)
+        if [ -z "$certs" ] || [ "$certs" = "null" ]; then
+            echo -e "${YELLOW}No certificates in acme.json - nothing to backup${NC}"
+            return 1
+        fi
+    fi
+
+    # Use existing backup_certificate function with SSL_DOMAIN
+    backup_certificate "$SSL_DOMAIN"
+}
 
 backup_certificate() {
     local domain="$1"
@@ -700,6 +735,14 @@ perform_update() {
     fi
 
     echo ""
+
+    # Backup certificates before update
+    if [ -f "traefik/acme.json" ]; then
+        echo -e "${YELLOW}Backing up SSL certificates before update...${NC}"
+        backup_certificates || true
+        echo ""
+    fi
+
     echo -e "${YELLOW}Updating to commit $(git rev-parse --short $TARGET_COMMIT)...${NC}"
 
     # Stop containers before update
@@ -803,6 +846,11 @@ if [ "${RUN_UPDATE_CHECK:-}" = true ]; then
     exit 0
 fi
 
+if [ "${RUN_BACKUP:-}" = true ]; then
+    backup_certificates
+    exit 0
+fi
+
 # ===========================================
 # Check if Docker is already running
 # ===========================================
@@ -827,10 +875,11 @@ if [ "$DOCKER_RUNNING" = true ]; then
     echo "  4) Clean everything (stop, remove containers, volumes, images)"
     echo "  5) Continue to reconfigure and restart"
     echo "  6) Check for updates"
-    echo "  7) Exit"
+    echo "  7) Backup SSL certificates"
+    echo "  8) Exit"
     echo ""
 
-    read -p "Enter your choice [1-7]: " choice
+    read -p "Enter your choice [1-8]: " choice
 
     case "$choice" in
         1)
@@ -905,6 +954,10 @@ if [ "$DOCKER_RUNNING" = true ]; then
             exit 0
             ;;
         7)
+            backup_certificates
+            exit 0
+            ;;
+        8)
             echo -e "${BLUE}Exiting...${NC}"
             exit 0
             ;;
