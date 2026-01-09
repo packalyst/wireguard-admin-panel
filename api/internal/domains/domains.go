@@ -62,22 +62,46 @@ func validateSentinelConfig(sc *traefik.SentinelConfig) error {
 		return fmt.Errorf("invalid errorMode: %s", sc.ErrorMode)
 	}
 
-	// Validate time format (HH:MM)
-	timeRegex := regexp.MustCompile(`^([01]?[0-9]|2[0-3]):[0-5][0-9]$`)
+	// Validate time range format (HH:MM-HH:MM)
+	timeRangeRegex := regexp.MustCompile(`^([01]?[0-9]|2[0-3]):[0-5][0-9]-([01]?[0-9]|2[0-3]):[0-5][0-9]$`)
 	if sc.TimeAccess != nil {
-		if sc.TimeAccess.AllowStart != "" && !timeRegex.MatchString(sc.TimeAccess.AllowStart) {
-			return fmt.Errorf("invalid allowStart time format: %s (expected HH:MM)", sc.TimeAccess.AllowStart)
+		if sc.TimeAccess.AllowRange != "" && !timeRangeRegex.MatchString(sc.TimeAccess.AllowRange) {
+			return fmt.Errorf("invalid allowRange format: %s (expected HH:MM-HH:MM)", sc.TimeAccess.AllowRange)
 		}
-		if sc.TimeAccess.AllowEnd != "" && !timeRegex.MatchString(sc.TimeAccess.AllowEnd) {
-			return fmt.Errorf("invalid allowEnd time format: %s (expected HH:MM)", sc.TimeAccess.AllowEnd)
+		if sc.TimeAccess.DenyRange != "" && !timeRangeRegex.MatchString(sc.TimeAccess.DenyRange) {
+			return fmt.Errorf("invalid denyRange format: %s (expected HH:MM-HH:MM)", sc.TimeAccess.DenyRange)
+		}
+		// Validate days are valid lowercase 3-letter names
+		validDays := map[string]bool{"mon": true, "tue": true, "wed": true, "thu": true, "fri": true, "sat": true, "sun": true}
+		for _, day := range sc.TimeAccess.Days {
+			if !validDays[strings.ToLower(day)] {
+				return fmt.Errorf("invalid day: %s (expected mon, tue, wed, thu, fri, sat, sun)", day)
+			}
 		}
 	}
 
 	// Validate user agent regex patterns (try to compile them)
 	if sc.UserAgents != nil {
-		for i, pattern := range sc.UserAgents.Blocked {
+		for i, pattern := range sc.UserAgents.Block {
 			if _, err := regexp.Compile(pattern); err != nil {
-				return fmt.Errorf("invalid regex pattern at index %d: %v", i, err)
+				return fmt.Errorf("invalid block pattern at index %d: %v", i, err)
+			}
+		}
+		for i, pattern := range sc.UserAgents.Allow {
+			if _, err := regexp.Compile(pattern); err != nil {
+				return fmt.Errorf("invalid allow pattern at index %d: %v", i, err)
+			}
+		}
+	}
+
+	// Validate header rules
+	for i, h := range sc.Headers {
+		if h.Name == "" {
+			return fmt.Errorf("header rule at index %d has empty name", i)
+		}
+		if h.Regex != "" {
+			if _, err := regexp.Compile(h.Regex); err != nil {
+				return fmt.Errorf("invalid header regex at index %d: %v", i, err)
 			}
 		}
 	}
@@ -86,11 +110,11 @@ func validateSentinelConfig(sc *traefik.SentinelConfig) error {
 	if len(sc.IPFilter.SourceRange) > 100 {
 		return fmt.Errorf("too many IP ranges (max 100)")
 	}
-	if sc.Headers != nil && len(sc.Headers.Required) > 20 {
-		return fmt.Errorf("too many required headers (max 20)")
+	if len(sc.Headers) > 20 {
+		return fmt.Errorf("too many header rules (max 20)")
 	}
-	if sc.UserAgents != nil && len(sc.UserAgents.Blocked) > 50 {
-		return fmt.Errorf("too many blocked user agents (max 50)")
+	if sc.UserAgents != nil && (len(sc.UserAgents.Block)+len(sc.UserAgents.Allow)) > 50 {
+		return fmt.Errorf("too many user agent patterns (max 50)")
 	}
 
 	return nil

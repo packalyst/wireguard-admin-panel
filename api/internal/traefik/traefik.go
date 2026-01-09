@@ -745,20 +745,24 @@ type SentinelConfig struct {
 		Message string `json:"message,omitempty"`
 	} `json:"maintenance,omitempty"`
 	TimeAccess *struct {
+		Enabled    bool     `json:"enabled,omitempty"`
 		Timezone   string   `json:"timezone,omitempty"`
-		AllowDays  []string `json:"allowDays,omitempty"`
-		AllowStart string   `json:"allowStart,omitempty"`
-		AllowEnd   string   `json:"allowEnd,omitempty"`
+		Days       []string `json:"days,omitempty"`       // mon, tue, wed, thu, fri, sat, sun
+		AllowRange string   `json:"allowRange,omitempty"` // "HH:MM-HH:MM"
+		DenyRange  string   `json:"denyRange,omitempty"`  // "HH:MM-HH:MM"
 	} `json:"timeAccess,omitempty"`
-	Headers *struct {
-		Required []struct {
-			Name      string `json:"name"`
-			Value     string `json:"value,omitempty"`
-			MatchType string `json:"matchType,omitempty"` // "exact", "contains", "regex", "exists"
-		} `json:"required,omitempty"`
+	Headers []struct {
+		Name      string   `json:"name"`
+		Values    []string `json:"values,omitempty"`
+		MatchType string   `json:"matchType,omitempty"` // "one", "all", "none"
+		Regex     string   `json:"regex,omitempty"`
+		Required  bool     `json:"required,omitempty"`
+		Contains  bool     `json:"contains,omitempty"`
 	} `json:"headers,omitempty"`
 	UserAgents *struct {
-		Blocked []string `json:"blocked,omitempty"`
+		Enabled bool     `json:"enabled,omitempty"`
+		Block   []string `json:"block,omitempty"`
+		Allow   []string `json:"allow,omitempty"`
 	} `json:"userAgents,omitempty"`
 }
 
@@ -800,8 +804,8 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig) error {
 			middlewares := make([]string, len(route.Middlewares))
 			copy(middlewares, route.Middlewares)
 
-			// Add per-domain sentinel config middleware if configured
-			if route.SentinelConfig != nil {
+			// Add per-domain sentinel config middleware if configured and enabled
+			if route.SentinelConfig != nil && route.SentinelConfig.Enabled {
 				mwName := fmt.Sprintf("sentinel_domain-%s", name)
 				middlewares = append([]string{mwName}, middlewares...) // prepend
 				sentinelMiddlewares = append(sentinelMiddlewares, struct {
@@ -905,52 +909,74 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig) error {
 				}
 
 				// Time Access
-				if mw.config.TimeAccess != nil && len(mw.config.TimeAccess.AllowDays) > 0 {
+				if mw.config.TimeAccess != nil && (len(mw.config.TimeAccess.Days) > 0 || mw.config.TimeAccess.AllowRange != "" || mw.config.TimeAccess.DenyRange != "") {
 					sb.WriteString("          timeAccess:\n")
+					sb.WriteString("            enabled: true\n")
 					if mw.config.TimeAccess.Timezone != "" {
 						sb.WriteString(fmt.Sprintf("            timezone: \"%s\"\n", escapeYAMLString(mw.config.TimeAccess.Timezone)))
 					}
-					sb.WriteString("            allowDays:\n")
-					for _, day := range mw.config.TimeAccess.AllowDays {
-						sb.WriteString(fmt.Sprintf("              - \"%s\"\n", escapeYAMLString(day)))
+					if len(mw.config.TimeAccess.Days) > 0 {
+						sb.WriteString("            days:\n")
+						for _, day := range mw.config.TimeAccess.Days {
+							sb.WriteString(fmt.Sprintf("              - \"%s\"\n", escapeYAMLString(day)))
+						}
 					}
-					if mw.config.TimeAccess.AllowStart != "" {
-						sb.WriteString(fmt.Sprintf("            allowStart: \"%s\"\n", escapeYAMLString(mw.config.TimeAccess.AllowStart)))
+					if mw.config.TimeAccess.AllowRange != "" {
+						sb.WriteString(fmt.Sprintf("            allowRange: \"%s\"\n", escapeYAMLString(mw.config.TimeAccess.AllowRange)))
 					}
-					if mw.config.TimeAccess.AllowEnd != "" {
-						sb.WriteString(fmt.Sprintf("            allowEnd: \"%s\"\n", escapeYAMLString(mw.config.TimeAccess.AllowEnd)))
+					if mw.config.TimeAccess.DenyRange != "" {
+						sb.WriteString(fmt.Sprintf("            denyRange: \"%s\"\n", escapeYAMLString(mw.config.TimeAccess.DenyRange)))
 					}
 				}
 
 				// Headers
-				if mw.config.Headers != nil && len(mw.config.Headers.Required) > 0 {
+				if len(mw.config.Headers) > 0 {
 					sb.WriteString("          headers:\n")
-					sb.WriteString("            required:\n")
-					for _, h := range mw.config.Headers.Required {
-						sb.WriteString(fmt.Sprintf("              - name: \"%s\"\n", escapeYAMLString(h.Name)))
-						if h.Value != "" {
-							sb.WriteString(fmt.Sprintf("                value: \"%s\"\n", escapeYAMLString(h.Value)))
+					for _, h := range mw.config.Headers {
+						sb.WriteString(fmt.Sprintf("            - name: \"%s\"\n", escapeYAMLString(h.Name)))
+						if len(h.Values) > 0 {
+							sb.WriteString("              values:\n")
+							for _, v := range h.Values {
+								sb.WriteString(fmt.Sprintf("                - \"%s\"\n", escapeYAMLString(v)))
+							}
 						}
 						if h.MatchType != "" {
-							// Whitelist valid match types
 							matchType := h.MatchType
 							switch matchType {
-							case "exact", "contains", "regex", "exists":
+							case "one", "all", "none":
 								// valid
 							default:
-								matchType = "exact"
+								matchType = "one"
 							}
-							sb.WriteString(fmt.Sprintf("                matchType: \"%s\"\n", matchType))
+							sb.WriteString(fmt.Sprintf("              matchType: \"%s\"\n", matchType))
+						}
+						if h.Regex != "" {
+							sb.WriteString(fmt.Sprintf("              regex: \"%s\"\n", escapeYAMLString(h.Regex)))
+						}
+						if h.Required {
+							sb.WriteString("              required: true\n")
+						}
+						if h.Contains {
+							sb.WriteString("              contains: true\n")
 						}
 					}
 				}
 
 				// User Agents
-				if mw.config.UserAgents != nil && len(mw.config.UserAgents.Blocked) > 0 {
+				if mw.config.UserAgents != nil && (len(mw.config.UserAgents.Block) > 0 || len(mw.config.UserAgents.Allow) > 0) {
 					sb.WriteString("          userAgents:\n")
-					sb.WriteString("            blocked:\n")
-					for _, ua := range mw.config.UserAgents.Blocked {
-						sb.WriteString(fmt.Sprintf("              - \"%s\"\n", escapeYAMLString(ua)))
+					sb.WriteString("            enabled: true\n")
+					if len(mw.config.UserAgents.Block) > 0 {
+						sb.WriteString("            block:\n")
+						for _, ua := range mw.config.UserAgents.Block {
+							sb.WriteString(fmt.Sprintf("              - \"%s\"\n", escapeYAMLString(ua)))
+						}
+					}
+					if len(mw.config.UserAgents.Allow) > 0 {
+						sb.WriteString("            allow:\n")
+						for _, ua := range mw.config.UserAgents.Allow {
+							sb.WriteString(fmt.Sprintf("              - \"%s\"\n", escapeYAMLString(ua)))
+						}
 					}
 				}
 
