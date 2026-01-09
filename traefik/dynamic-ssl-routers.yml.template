@@ -58,7 +58,7 @@
       service: headscale
       priority: 100
       middlewares:
-        - vpn-only
+        - sentinel_vpn
         - rate-limit-strict
         - security-headers
       entryPoints:
