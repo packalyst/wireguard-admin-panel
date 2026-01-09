@@ -1571,7 +1571,7 @@
       </div>
       <div class="kt-panel-body flex items-center justify-between !py-3">
         <div class="text-xs text-muted-foreground">
-          <p class="font-medium text-foreground">VPN Admin Panel</p>
+          <p class="font-medium text-foreground">Wire Panel</p>
           <p class="mt-0.5">Headscale + WireGuard management interface</p>
         </div>
         <div class="text-[10px] text-muted-foreground text-right">

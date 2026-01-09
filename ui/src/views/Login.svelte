@@ -85,7 +85,7 @@
         </div>
       </div>
       <h1 class="text-2xl font-bold mb-2">Welcome Back</h1>
-      <p class="text-sm text-muted-foreground">Sign in to your VPN Admin Panel</p>
+      <p class="text-sm text-muted-foreground">Sign in to Wire Panel</p>
     </div>
   </div>
 

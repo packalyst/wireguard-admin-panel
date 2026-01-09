@@ -6,6 +6,7 @@
   import Login from './views/Login.svelte'
   import SetupWizard from './views/SetupWizard.svelte'
   import ConfirmModal from './components/ConfirmModal.svelte'
+  import InstallPrompt from './components/InstallPrompt.svelte'
 
   let user = $state(null)
   let checking = $state(true)
@@ -136,3 +137,6 @@
 
 <!-- Global confirm modal -->
 <ConfirmModal />
+
+<!-- PWA install prompt -->
+<InstallPrompt />

@@ -349,7 +349,7 @@
               <a href="https://github.com/packalyst/wireguard-admin-panel" target="_blank" rel="noopener noreferrer"
                 class="kt-dropdown-item font-medium">
                 <Icon name="brand-github" size={14} class="kt-dropdown-item-icon" />
-                WireGuard Admin Panel
+                Wire Panel
               </a>
               <div class="kt-dropdown-divider"></div>
               <a href="https://github.com/juanfont/headscale" target="_blank" rel="noopener noreferrer"
