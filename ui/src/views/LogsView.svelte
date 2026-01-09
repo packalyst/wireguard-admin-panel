@@ -2,7 +2,8 @@
   import { onMount, onDestroy } from 'svelte'
   import { toast, apiGet } from '../stores/app.js'
   import { lookupIPs } from '../stores/geo.js'
-  import { loadState, saveState, createDebouncedSearch, getDefaultPerPage } from '../stores/helpers.js'
+  import { createDebouncedSearch } from '../stores/helpers.js'
+  import { usePaginatedState } from '$lib/composables/index.js'
   import { formatTime, formatRelativeDate } from '../lib/utils/format.js'
   import Icon from '../components/Icon.svelte'
   import Badge from '../components/Badge.svelte'
@@ -25,34 +26,16 @@
   let isLoading = $state(false)
   let geoData = $state({})
 
-  const savedState = loadState('logs')
+  // Pagination with persistent state
+  const pagination = usePaginatedState('logs', { type: '', status: '' })
 
-  let page = $state(savedState.page || 1)
-  let perPage = $state(savedState.perPage || getDefaultPerPage())
-  let search = $state(savedState.search || '')
-  let typeFilter = $state(savedState.type || '')
-  let statusFilter = $state(savedState.status || '')
   let autoRefresh = $state(false)
   let refreshInterval = null
-  let searchQuery = $state(savedState.search || '')
-
-  const offset = $derived((page - 1) * perPage)
-
-  // Save state to localStorage
-  $effect(() => {
-    saveState('logs', {
-      page,
-      perPage,
-      search,
-      type: typeFilter,
-      status: statusFilter
-    })
-  })
+  let searchQuery = $state(pagination.search)
 
   // Debounced search
-  const debouncedSearch = createDebouncedSearch((value) => {
-    search = value
-    page = 1
+  const { search: debouncedSearch, cleanup: cleanupSearch } = createDebouncedSearch((value) => {
+    pagination.setSearch(value)
     loadData()
   })
 
@@ -65,12 +48,12 @@
     isLoading = true
     try {
       const params = new URLSearchParams({
-        limit: perPage.toString(),
-        offset: offset.toString()
+        limit: pagination.perPage.toString(),
+        offset: pagination.offset.toString()
       })
-      if (search) params.set('search', search)
-      if (typeFilter) params.set('type', typeFilter)
-      if (statusFilter) params.set('status', statusFilter)
+      if (pagination.search) params.set('search', pagination.search)
+      if (pagination.filters.type) params.set('type', pagination.filters.type)
+      if (pagination.filters.status) params.set('status', pagination.filters.status)
 
       const res = await apiGet(`/api/logs?${params}`)
       logs = res.logs || []
@@ -131,6 +114,7 @@
 
   onDestroy(() => {
     if (refreshInterval) clearInterval(refreshInterval)
+    cleanupSearch()
   })
 </script>
 
@@ -155,8 +139,8 @@
         />
         <div class="flex items-center gap-2 w-full sm:w-auto">
           <Select
-            value={typeFilter}
-            onchange={(e) => { typeFilter = e.target.value; page = 1; loadData() }}
+            value={pagination.filters.type}
+            onchange={(e) => { pagination.setFilter('type', e.target.value); loadData() }}
             class="flex-1 sm:flex-none sm:w-28"
           >
             <option value="">Type</option>
@@ -165,8 +149,8 @@
             {/each}
           </Select>
           <Select
-            value={statusFilter}
-            onchange={(e) => { statusFilter = e.target.value; page = 1; loadData() }}
+            value={pagination.filters.status}
+            onchange={(e) => { pagination.setFilter('status', e.target.value); loadData() }}
             class="flex-1 sm:flex-none sm:w-28"
           >
             <option value="">Status</option>
@@ -202,7 +186,7 @@
         <EmptyState
           icon="list-details"
           title="No logs yet"
-          description={search || typeFilter || statusFilter ? 'No results match your filters' : 'Logs will appear as traffic flows through the system'}
+          description={pagination.search || pagination.filters.type || pagination.filters.status ? 'No results match your filters' : 'Logs will appear as traffic flows through the system'}
         />
       </div>
     {:else}
@@ -362,10 +346,11 @@
       <!-- Footer -->
       <div class="kt-panel-footer">
         <Pagination
-          bind:page={page}
-          bind:perPage={perPage}
+          page={pagination.page}
+          perPage={pagination.perPage}
           total={total}
-          onPageChange={loadData}
+          onPageChange={(p) => { pagination.setPage(p); loadData() }}
+          onPerPageChange={(pp) => { pagination.setPerPage(pp); loadData() }}
         />
       </div>
     {/if}

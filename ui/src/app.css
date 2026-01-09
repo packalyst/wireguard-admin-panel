@@ -636,3 +636,20 @@ input:-webkit-autofill:active {
 .animate-shimmer {
   animation: shimmer 1.5s infinite;
 }
+
+/* Input group color variants */
+.kt-input-group-warning .kt-input-addon {
+  @apply bg-warning/15 text-warning;
+}
+
+.kt-input-group-success .kt-input-addon {
+  @apply bg-success/15 text-success;
+}
+
+.kt-input-group-info .kt-input-addon {
+  @apply bg-info/15 text-info;
+}
+
+.kt-input-group-destructive .kt-input-addon {
+  @apply bg-destructive/15 text-destructive;
+}

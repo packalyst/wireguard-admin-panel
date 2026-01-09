@@ -33,6 +33,27 @@ var (
 func init() {
 	// Initialize trusted proxies from environment
 	helper.InitTrustedProxies(helper.GetEnvOptional("TRUSTED_PROXIES", ""))
+
+	// Cleanup stale login attempts to prevent unbounded memory growth
+	go func() {
+		for {
+			time.Sleep(1 * time.Minute)
+			now := time.Now()
+			loginAttemptsMutex.Lock()
+			for ip, attempt := range loginAttempts {
+				// Remove if lockout expired
+				if !attempt.lockedAt.IsZero() && now.Sub(attempt.lockedAt) > loginLockoutTime {
+					delete(loginAttempts, ip)
+					continue
+				}
+				// Remove if window expired and not locked
+				if attempt.lockedAt.IsZero() && now.Sub(attempt.firstTry) > loginLockoutWindow {
+					delete(loginAttempts, ip)
+				}
+			}
+			loginAttemptsMutex.Unlock()
+		}
+	}()
 }
 
 // checkLoginRateLimit returns true if the IP is rate limited

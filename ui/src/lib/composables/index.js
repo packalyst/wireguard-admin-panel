@@ -8,4 +8,4 @@ export { useFilter, useSelectFilter, useMultiFilter } from './useFilter.svelte.j
 export { useModalForm, useModal, useInlineEdit } from './useModalForm.svelte.js'
 
 // Persistent state
-export { usePersistentState, usePersistentToggle, usePersistentSort } from './usePersistentState.svelte.js'
+export { usePersistentState, usePersistentToggle, usePersistentSort, usePaginatedState } from './usePersistentState.svelte.js'

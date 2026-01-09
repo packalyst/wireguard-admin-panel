@@ -46,28 +46,27 @@ type commonPortsConfig struct {
 	Ports       []CommonPort `json:"ports"`
 }
 
-var commonPorts []CommonPort
-var commonPortsLoaded bool
+var (
+	commonPorts     []CommonPort
+	commonPortsOnce sync.Once
+)
 
-// LoadCommonPorts loads the common ports from config file
+// LoadCommonPorts loads the common ports from config file (thread-safe)
 func LoadCommonPorts() []CommonPort {
-	if commonPortsLoaded {
-		return commonPorts
-	}
-
-	paths := []string{CommonPortsConfigPath, "configs/common-ports.json"}
-	for _, path := range paths {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
+	commonPortsOnce.Do(func() {
+		paths := []string{CommonPortsConfigPath, "configs/common-ports.json"}
+		for _, path := range paths {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			var config commonPortsConfig
+			if err := json.Unmarshal(data, &config); err == nil {
+				commonPorts = config.Ports
+				return
+			}
 		}
-		var config commonPortsConfig
-		if err := json.Unmarshal(data, &config); err == nil {
-			commonPorts = config.Ports
-			commonPortsLoaded = true
-			return commonPorts
-		}
-	}
+	})
 	return commonPorts
 }
 

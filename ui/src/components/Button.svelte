@@ -12,6 +12,7 @@
     class: className = '',
     onclick = undefined,
     label = undefined,
+    tooltip = undefined,
     children,
     ...restProps
   } = $props();
@@ -52,6 +53,7 @@
   disabled={disabled || loading}
   {onclick}
   class={classes}
+  data-kt-tooltip={tooltip ? '' : undefined}
   {...restProps}
 >
   {#if loading}
@@ -65,5 +67,8 @@
     {:else}
       {@render children?.()}
     {/if}
+  {/if}
+  {#if tooltip}
+    <span data-kt-tooltip-content class="kt-tooltip hidden">{tooltip}</span>
   {/if}
 </button>

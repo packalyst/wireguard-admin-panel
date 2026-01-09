@@ -95,6 +95,9 @@
 
   async function saveAcl() {
     if (!selectedVpnClient) return
+    // Capture values before async operations to avoid stale references
+    const clientId = selectedVpnClient.id
+    const nodeIp = selectedNode?._ip
     aclLoading = true
     try {
       // Build rules array from aclView state
@@ -102,7 +105,7 @@
         .filter(c => c.isEnabled)
         .map(c => ({ targetId: c.id, bidirectional: c.isBi || false }))
 
-      await apiPut(`/api/vpn/clients/${selectedVpnClient.id}/acl`, {
+      await apiPut(`/api/vpn/clients/${clientId}/acl`, {
         policy: aclPolicy,
         rules: rules
       })
@@ -111,9 +114,9 @@
       toast('Access rules saved and applied', 'success')
       // Reload data to refresh client list and ACL states
       await loader.reload()
-      // Reload current client's ACL data
-      if (selectedNode?._ip) {
-        await loadVpnClientByIp(selectedNode._ip)
+      // Reload current client's ACL data using captured IP
+      if (nodeIp) {
+        await loadVpnClientByIp(nodeIp)
       }
     } catch (e) {
       toast('Failed to save access rules: ' + e.message, 'error')
@@ -151,6 +154,7 @@
   })
 
   onDestroy(() => {
+    mounted = false
     unsubscribe('nodes_updated')
     // Clean up QR code object URL
     if (qrUrl) URL.revokeObjectURL(qrUrl)
@@ -209,6 +213,7 @@
   let qrUrl = $state(null)
   let qrLoading = $state(false)
   let qrLoadedFor = $state(null) // Track which peer/mode combo was loaded: "peerId:mode"
+  let mounted = true // Track component lifecycle for async cleanup
 
   // Delete/expire confirmation
   let confirmAction = $state(null) // 'delete' | 'expire' | null
@@ -227,9 +232,12 @@
     }
     try {
       const blob = await apiGetBlob(`/api/wg/peers/${peerId}/qr?mode=${mode}`)
+      // Skip URL creation if component unmounted during fetch
+      if (!mounted) return
       qrUrl = URL.createObjectURL(blob)
       qrLoadedFor = key
     } catch (e) {
+      if (!mounted) return
       toast('Failed to load QR code', 'error')
       qrLoadedFor = null // Allow retry on error
     } finally {

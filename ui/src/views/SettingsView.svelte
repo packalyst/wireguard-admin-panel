@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { theme, toast, apiGet, apiPost, apiPut, apiDelete, generateAdguardCredentials } from '../stores/app.js'
+  import { theme, toast, apiGet, apiPost, apiPut, apiDelete, generateAdguardCredentials, confirm } from '../stores/app.js'
   import Icon from '../components/Icon.svelte'
   import Input from '../components/Input.svelte'
   import Button from '../components/Button.svelte'
@@ -211,16 +211,18 @@
       // UI (from localStorage)
       itemsPerPage = localStorage.getItem('settings_items_per_page') || '25'
 
-      // Logs watchers
-      watcherStatuses = await apiGet('/api/logs/status')
+      // Load independent resources in parallel - each can fail without blocking others
+      const [watcherRes, jailsRes, fwStatusRes, portsRes] = await Promise.allSettled([
+        apiGet('/api/logs/status'),
+        apiGet('/api/fw/jails'),
+        apiGet('/api/fw/status'),
+        apiGet('/api/fw/ports')
+      ])
 
-      // Jails, Ports & SSH port
-      const jailsRes = await apiGet('/api/fw/jails')
-      jails = jailsRes.jails || jailsRes || []
-      const fwStatus = await apiGet('/api/fw/status')
-      if (fwStatus?.sshPort) sshPort = fwStatus.sshPort
-      const portsRes = await apiGet('/api/fw/ports')
-      ports = portsRes.ports || portsRes || []
+      if (watcherRes.status === 'fulfilled') watcherStatuses = watcherRes.value
+      if (jailsRes.status === 'fulfilled') jails = jailsRes.value.jails || jailsRes.value || []
+      if (fwStatusRes.status === 'fulfilled' && fwStatusRes.value?.sshPort) sshPort = fwStatusRes.value.sshPort
+      if (portsRes.status === 'fulfilled') ports = portsRes.value.ports || portsRes.value || []
     } catch (e) {
       toast('Failed to load settings: ' + e.message, 'error')
     } finally {
@@ -743,6 +745,18 @@
     }
   }
 
+  async function confirmRemovePort(port, protocol = 'tcp') {
+    const confirmed = await confirm({
+      title: 'Remove Port',
+      message: `Remove port ${port}/${protocol.toUpperCase()}?`,
+      description: 'This port will no longer allow incoming connections.',
+      confirmText: 'Remove'
+    })
+    if (confirmed) {
+      await removePort(port, protocol)
+    }
+  }
+
   onMount(() => {
     loadSettings()
   })
@@ -899,51 +913,40 @@
         </div>
       </div>
 
-      <!-- Session Settings -->
+      <!-- Session & Interface Settings -->
       <div class="kt-panel">
         <div class="kt-panel-header">
           <h3 class="kt-panel-title">
-            <Icon name="clock" size={16} />
-            Session
+            <Icon name="settings" size={16} />
+            Preferences
           </h3>
         </div>
         <div class="kt-panel-body">
-          <Select
-            label="Session Timeout"
-            bind:value={sessionTimeout}
-            options={[
-              { value: '1', label: '1 hour' },
-              { value: '8', label: '8 hours' },
-              { value: '24', label: '24 hours' },
-              { value: '168', label: '7 days' },
-              { value: '720', label: '30 days' }
-            ]}
-            helperText="How long until you need to login again"
-          />
-        </div>
-        <div class="kt-panel-footer">
-          <Button
-            onclick={saveSession}
-            loading={savingSession}
-            disabled={!sessionChanged}
-            size="sm"
-            icon="device-floppy"
-          >
-            Save
-          </Button>
-        </div>
-      </div>
-
-      <!-- UI Settings -->
-      <div class="kt-panel">
-        <div class="kt-panel-header">
-          <h3 class="kt-panel-title">
-            <Icon name="layout" size={16} />
-            Interface
-          </h3>
-        </div>
-        <div class="kt-panel-body">
-          <div class="flex items-center justify-between">
+          <div class="grid grid-cols-2 gap-3">
+            <Select
+              label="Session Timeout"
+              bind:value={sessionTimeout}
+              options={[
+                { value: '1', label: '1 hour' },
+                { value: '8', label: '8 hours' },
+                { value: '24', label: '24 hours' },
+                { value: '168', label: '7 days' },
+                { value: '720', label: '30 days' }
+              ]}
+            />
+            <Select
+              label="Items per page"
+              bind:value={itemsPerPage}
+              onchange={saveUISettings}
+              options={[
+                { value: '10', label: '10' },
+                { value: '25', label: '25' },
+                { value: '50', label: '50' },
+                { value: '100', label: '100' }
+              ]}
+            />
+          </div>
+          <div class="flex items-center justify-between border-t border-border pt-3">
             <div>
               <div class="text-xs font-medium text-foreground">Theme</div>
               <div class="text-[10px] text-muted-foreground">Current: {$theme}</div>
@@ -957,26 +960,72 @@
               {$theme === 'dark' ? 'Light' : 'Dark'}
             </Button>
           </div>
-          <div class="flex items-end gap-2 border-t border-border pt-3">
-            <Select
-              label="Items per page"
-              bind:value={itemsPerPage}
-              options={[
-                { value: '10', label: '10' },
-                { value: '25', label: '25' },
-                { value: '50', label: '50' },
-                { value: '100', label: '100' }
-              ]}
-              class="flex-1"
-            />
-            <Button
-              onclick={saveUISettings}
-              variant="secondary"
-              size="sm"
-              icon="device-floppy"
-              iconOnly
-            />
-          </div>
+        </div>
+        <div class="kt-panel-footer">
+          <Button
+            onclick={saveSession}
+            loading={savingSession}
+            disabled={!sessionChanged}
+            size="sm"
+            icon="device-floppy"
+          >
+            Save Session
+          </Button>
+        </div>
+      </div>
+
+      <!-- Cross-Network Router -->
+      <div class="kt-panel">
+        <div class="kt-panel-header">
+          <h3 class="kt-panel-title">
+            <Icon name="route" size={16} />
+            Cross-Network Router
+          </h3>
+          {#if routerStatus?.status === 'running'}
+            <Badge variant="success" size="sm">Running</Badge>
+          {:else if routerStatus?.status === 'starting'}
+            <Badge variant="warning" size="sm">Starting</Badge>
+          {:else}
+            <Badge variant="muted" size="sm">Disabled</Badge>
+          {/if}
+        </div>
+        <div class="kt-panel-body">
+          {#if routerStatus?.status === 'running'}
+            <div class="grid grid-cols-2 gap-2">
+              <ContentBlock variant="data" label="Router IP" value={routerStatus.ip || '—'} mono padding="sm" />
+              <ContentBlock variant="data" label="Route" value={routerStatus.advertisedRoute || '—'} mono padding="sm" />
+            </div>
+            <p class="text-[10px] text-muted-foreground">
+              Routing between WireGuard and Headscale networks.
+            </p>
+          {:else if routerStatus?.status === 'starting'}
+            <div class="flex items-center gap-2 p-2 bg-warning/10 rounded">
+              <div class="w-4 h-4 border-2 border-warning/30 border-t-warning rounded-full animate-spin"></div>
+              <div class="text-xs text-foreground">Starting up...</div>
+            </div>
+          {:else}
+            <p class="text-[10px] text-muted-foreground">
+              Enable routing between WireGuard and Headscale networks via a Tailscale container.
+            </p>
+          {/if}
+        </div>
+        <div class="kt-panel-footer">
+          {#if routerStatus?.status === 'running'}
+            <Button onclick={restartRouter} size="sm" variant="secondary" icon="refresh" disabled={routerLoading}>
+              {routerLoading ? '...' : 'Restart'}
+            </Button>
+            <Button onclick={removeRouter} size="sm" variant="destructive" icon="trash" disabled={routerLoading}>
+              {routerLoading ? '...' : 'Remove'}
+            </Button>
+          {:else if routerStatus?.status === 'starting'}
+            <Button onclick={loadRouterStatus} size="sm" variant="secondary" icon="refresh">
+              Check Status
+            </Button>
+          {:else}
+            <Button onclick={setupRouter} size="sm" icon="play" disabled={routerLoading}>
+              {routerLoading ? 'Setting up...' : 'Enable'}
+            </Button>
+          {/if}
         </div>
       </div>
 
@@ -993,31 +1042,68 @@
             Enable or disable log collection from various sources.
           </p>
           {#if watcherStatuses.length > 0}
-            <div class="flex flex-wrap gap-2">
+            <div class="space-y-2">
               {#each watcherStatuses as watcher}
                 {@const isToggling = togglingWatcher === watcher.name}
-                {@const hasError = watcher.enabled && !watcher.running && watcher.lastError}
-                <Button
-                  size="sm"
-                  variant={watcher.enabled ? (hasError ? 'destructive' : 'success') : 'outline'}
-                  icon={isToggling ? 'loader-2' : (hasError ? 'alert-triangle' : (watcher.running ? 'activity' : 'player-stop'))}
-                  loading={isToggling}
-                  onclick={() => toggleWatcher(watcher.name, !watcher.enabled)}
-                >
-                  {watcher.name}
-                  {#if watcher.processed > 0}
-                    <span class="opacity-60">({watcher.processed})</span>
+                {@const hasError = watcher.enabled && watcher.lastError}
+                <div class="flex flex-col gap-1 p-2 rounded border border-border {!watcher.enabled && 'opacity-50'}">
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                      <!-- Status indicator (not clickable) -->
+                      <div class="flex h-6 w-6 items-center justify-center rounded {watcher.enabled ? (hasError ? 'bg-destructive/10 text-destructive' : (watcher.running ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning')) : 'bg-muted text-muted-foreground'}">
+                        <Icon name={hasError ? 'alert-triangle' : (watcher.running ? 'activity' : 'circle')} size={14} />
+                      </div>
+                      <div>
+                        <span class="text-xs font-medium text-foreground capitalize">{watcher.name}</span>
+                        {#if watcher.processed > 0}
+                          <span class="text-[10px] text-muted-foreground ml-1">· {watcher.processed} processed</span>
+                        {/if}
+                      </div>
+                    </div>
+                    <!-- Action buttons -->
+                    <div class="flex items-center gap-2">
+                      {#if watcher.enabled}
+                        {#if hasError}
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            icon={isToggling ? 'loader-2' : 'refresh'}
+                            loading={isToggling}
+                            onclick={() => { toggleWatcher(watcher.name, false).then(() => toggleWatcher(watcher.name, true)) }}
+                          >
+                            Restart
+                          </Button>
+                        {/if}
+                        <Button
+                          size="xs"
+                          variant="destructive"
+                          icon={isToggling ? 'loader-2' : 'player-stop'}
+                          loading={isToggling}
+                          onclick={() => toggleWatcher(watcher.name, false)}
+                        >
+                          Stop
+                        </Button>
+                      {:else}
+                        <Button
+                          size="xs"
+                          variant="success"
+                          icon={isToggling ? 'loader-2' : 'player-play'}
+                          loading={isToggling}
+                          onclick={() => toggleWatcher(watcher.name, true)}
+                        >
+                          Start
+                        </Button>
+                      {/if}
+                    </div>
+                  </div>
+                  {#if hasError}
+                    <div class="text-[10px] text-destructive bg-destructive/10 rounded px-2 py-1">
+                      {watcher.lastError}
+                    </div>
                   {/if}
-                </Button>
+                </div>
               {/each}
             </div>
-            {#if watcherStatuses.some(w => w.lastError)}
-              <div class="mt-2 p-2 bg-destructive/10 rounded text-[10px] text-destructive">
-                {#each watcherStatuses.filter(w => w.lastError) as w}
-                  <div><strong>{w.name}:</strong> {w.lastError}</div>
-                {/each}
-              </div>
-            {/if}
           {:else}
             <p class="text-xs text-muted-foreground italic">No watchers configured</p>
           {/if}
@@ -1049,13 +1135,10 @@
               {#each jails as jail}
                 <div class="flex items-center justify-between p-2 rounded border border-border {!jail.enabled && 'opacity-50'}">
                   <div class="flex items-center gap-2">
-                    <button
-                      onclick={() => toggleJail(jail)}
-                      class="flex h-6 w-6 items-center justify-center rounded {jail.enabled ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}"
-                      title={jail.enabled ? 'Click to disable' : 'Click to enable'}
-                    >
+                    <!-- Status indicator (not clickable) -->
+                    <div class="flex h-6 w-6 items-center justify-center rounded {jail.enabled ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}">
                       <Icon name={jail.enabled ? 'shield-check' : 'shield'} size={14} />
-                    </button>
+                    </div>
                     <div>
                       <span class="text-xs font-medium text-foreground capitalize">{jail.name}</span>
                       <div class="text-[10px] text-muted-foreground">
@@ -1068,8 +1151,13 @@
                       <Badge variant="destructive" size="sm">{jail.currentlyBanned} banned</Badge>
                     {/if}
                     <div class="kt-btn-group">
-                      <Button onclick={() => openEditJail(jail)} variant="outline" size="xs" icon="edit" title="Edit" />
-                      <Button onclick={() => deleteJail(jail)} variant="outline" size="xs" icon="trash" title="Delete" />
+                      {#if jail.enabled}
+                        <Button onclick={() => toggleJail(jail)} variant="destructive" size="xs" icon="player-stop" tooltip="Stop" />
+                      {:else}
+                        <Button onclick={() => toggleJail(jail)} variant="success" size="xs" icon="player-play" tooltip="Start" />
+                      {/if}
+                      <Button onclick={() => openEditJail(jail)} variant="outline" size="xs" icon="edit" tooltip="Edit" />
+                      <Button onclick={() => deleteJail(jail)} variant="outline" size="xs" icon="trash" tooltip="Delete" />
                     </div>
                   </div>
                 </div>
@@ -1105,61 +1193,31 @@
             Firewall ports allowed for incoming connections.
           </p>
           {#if sortedPorts.length > 0}
-            <div class="rounded-lg border border-border overflow-hidden">
-              <table class="w-full text-xs">
-                <thead>
-                  <tr class="border-b border-border bg-muted/50">
-                    <th class="px-3 py-2 text-left text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Port</th>
-                    <th class="px-3 py-2 text-left text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Protocol</th>
-                    <th class="px-3 py-2 text-left text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Service</th>
-                    <th class="px-3 py-2 w-8"></th>
-                  </tr>
-                </thead>
-                <tbody class="divide-y divide-border/50">
-                  {#each sortedPorts as p}
-                    <tr class="hover:bg-muted/30 transition-colors">
-                      <td class="px-3 py-1.5">
-                        <code class="font-mono font-semibold text-foreground">{p.port}</code>
-                      </td>
-                      <td class="px-3 py-1.5">
-                        <span class="inline-flex items-center justify-center min-w-[36px] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide rounded bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">
-                          {p.protocol || 'tcp'}
-                        </span>
-                      </td>
-                      <td class="px-3 py-1.5 text-muted-foreground">
-                        {#if p.service}
-                          {p.service}
-                        {:else if p.port === 22}SSH
-                        {:else if p.port === 80}HTTP
-                        {:else if p.port === 443}HTTPS
-                        {:else if p.port === 51820}WireGuard
-                        {:else if p.port === 8080}API
-                        {:else if p.port === 8081}Admin API
-                        {:else if p.port === 8082}Traefik
-                        {:else if p.port === 8083}AdGuard
-                        {:else if p.port === 3478}STUN
-                        {:else}—
-                        {/if}
-                      </td>
-                      <td class="px-3 py-1.5">
-                        {#if !p.essential}
-                          <button
-                            onclick={() => removePort(p.port, p.protocol)}
-                            class="p-1 text-muted-foreground hover:text-destructive transition-colors"
-                            title="Remove port"
-                          >
-                            <Icon name="trash" size={12} />
-                          </button>
-                        {:else}
-                          <span class="p-1 text-muted-foreground/50" title="Essential port">
-                            <Icon name="lock" size={12} />
-                          </span>
-                        {/if}
-                      </td>
-                    </tr>
-                  {/each}
-                </tbody>
-              </table>
+            <!-- New input-based layout -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+              {#each sortedPorts as p}
+                {@const serviceName = p.service || (p.port === 22 ? 'SSH' : p.port === 80 ? 'HTTP' : p.port === 443 ? 'HTTPS' : p.port === 51820 ? 'WireGuard' : '')}
+                {#if p.essential}
+                  <Input
+                    value={p.port}
+                    disabled
+                    prefixAddon={p.protocol?.toUpperCase() || 'TCP'}
+                    suffixAddonIcon={{ icon: "lock", tooltip: `Essential: ${serviceName}` }}
+                    class="kt-input-group-warning"
+                  />
+                {:else}
+                  <Input
+                    value={p.port}
+                    disabled
+                    prefixAddon={p.protocol?.toUpperCase() || 'TCP'}
+                    suffixAddonBtn={{
+                      icon: "trash",
+                      onclick: () => confirmRemovePort(p.port, p.protocol),
+                      tooltip: "Remove port"
+                    }}
+                  />
+                {/if}
+              {/each}
             </div>
           {:else}
             <p class="text-xs text-muted-foreground italic">No ports configured</p>
@@ -1237,61 +1295,6 @@
           >
             Save
           </Button>
-        </div>
-      </div>
-
-      <!-- Cross-Network Router -->
-      <div class="kt-panel">
-        <div class="kt-panel-header">
-          <h3 class="kt-panel-title">
-            <Icon name="route" size={16} />
-            Cross-Network Router
-          </h3>
-          {#if routerStatus?.status === 'running'}
-            <Badge variant="success" size="sm">Running</Badge>
-          {:else if routerStatus?.status === 'starting'}
-            <Badge variant="warning" size="sm">Starting</Badge>
-          {:else}
-            <Badge variant="muted" size="sm">Disabled</Badge>
-          {/if}
-        </div>
-        <div class="kt-panel-body">
-          {#if routerStatus?.status === 'running'}
-            <div class="grid grid-cols-2 gap-2">
-              <ContentBlock variant="data" label="Router IP" value={routerStatus.ip || '—'} mono padding="sm" />
-              <ContentBlock variant="data" label="Route" value={routerStatus.advertisedRoute || '—'} mono padding="sm" />
-            </div>
-            <p class="text-[10px] text-muted-foreground">
-              Routing between WireGuard and Headscale networks.
-            </p>
-          {:else if routerStatus?.status === 'starting'}
-            <div class="flex items-center gap-2 p-2 bg-warning/10 rounded">
-              <div class="w-4 h-4 border-2 border-warning/30 border-t-warning rounded-full animate-spin"></div>
-              <div class="text-xs text-foreground">Starting up...</div>
-            </div>
-          {:else}
-            <p class="text-[10px] text-muted-foreground">
-              Enable routing between WireGuard and Headscale networks via a Tailscale container.
-            </p>
-          {/if}
-        </div>
-        <div class="kt-panel-footer">
-          {#if routerStatus?.status === 'running'}
-            <Button onclick={restartRouter} size="sm" variant="secondary" icon="refresh" disabled={routerLoading}>
-              {routerLoading ? '...' : 'Restart'}
-            </Button>
-            <Button onclick={removeRouter} size="sm" variant="destructive" icon="trash" disabled={routerLoading}>
-              {routerLoading ? '...' : 'Remove'}
-            </Button>
-          {:else if routerStatus?.status === 'starting'}
-            <Button onclick={loadRouterStatus} size="sm" variant="secondary" icon="refresh">
-              Check Status
-            </Button>
-          {:else}
-            <Button onclick={setupRouter} size="sm" icon="play" disabled={routerLoading}>
-              {routerLoading ? 'Setting up...' : 'Enable'}
-            </Button>
-          {/if}
         </div>
       </div>
     </div>
@@ -1374,7 +1377,7 @@
 
         <!-- IP Allowlist - Full width -->
         <div class="border-t border-border pt-3">
-          <h4 class="text-xs font-medium text-foreground mb-2">IP Allowlist (VPN-only middleware)</h4>
+          <h4 class="text-xs font-medium text-foreground mb-2">Sentinel VPN Middleware</h4>
           <Input
             type="text"
             bind:value={traefikForm.newIP}

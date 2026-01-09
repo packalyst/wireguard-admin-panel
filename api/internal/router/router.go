@@ -200,6 +200,9 @@ func (r *Router) applyMiddleware(handler http.Handler) http.Handler {
 		h = r.rateLimitMiddleware(h)
 	}
 
+	// Apply body size limit middleware
+	h = r.bodySizeLimitMiddleware(h)
+
 	// Apply logging middleware with request IDs
 	if r.config.Middleware.Logging.Enabled {
 		h = r.loggingMiddleware(h)
@@ -214,6 +217,18 @@ func (r *Router) applyMiddleware(handler http.Handler) http.Handler {
 	}
 
 	return h
+}
+
+// bodySizeLimitMiddleware limits request body size to prevent memory exhaustion
+func (r *Router) bodySizeLimitMiddleware(next http.Handler) http.Handler {
+	const maxBodySize = 10 * 1024 * 1024 // 10MB
+
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Body != nil {
+			req.Body = http.MaxBytesReader(w, req.Body, maxBodySize)
+		}
+		next.ServeHTTP(w, req)
+	})
 }
 
 // authMiddleware checks for valid session token on protected routes
@@ -369,6 +384,23 @@ var (
 type rateLimitBucket struct {
 	tokens     float64
 	lastUpdate time.Time
+}
+
+// Cleanup stale rate limit entries to prevent unbounded memory growth
+func init() {
+	go func() {
+		for {
+			time.Sleep(1 * time.Minute)
+			rateLimitMu.Lock()
+			cutoff := time.Now().Add(-5 * time.Minute)
+			for ip, bucket := range rateLimitBuckets {
+				if bucket.lastUpdate.Before(cutoff) {
+					delete(rateLimitBuckets, ip)
+				}
+			}
+			rateLimitMu.Unlock()
+		}
+	}()
 }
 
 // rateLimitMiddleware implements token bucket rate limiting per IP

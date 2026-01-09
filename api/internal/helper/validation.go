@@ -300,44 +300,7 @@ func SanitizeBlocklistURL(rawURL string) (string, error) {
 // SanitizeURL validates and returns a sanitized URL
 // Blocks only dangerous endpoints (cloud metadata)
 func SanitizeURL(rawURL string) (string, error) {
-	if rawURL == "" {
-		return "", &ValidationError{Field: "url", Message: "URL is required"}
-	}
-
-	parsed, err := url.Parse(strings.TrimSpace(rawURL))
-	if err != nil {
-		return "", &ValidationError{Field: "url", Message: "invalid URL format"}
-	}
-
-	// Only allow http and https schemes
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return "", &ValidationError{Field: "url", Message: "URL must use http or https scheme"}
-	}
-
-	// Must have a host
-	if parsed.Host == "" {
-		return "", &ValidationError{Field: "url", Message: "URL must have a host"}
-	}
-
-	host := parsed.Hostname()
-	port := parsed.Port()
-
-	// Block dangerous endpoints
-	if ip := net.ParseIP(host); ip != nil {
-		// Block link-local (169.254.x.x) - cloud metadata endpoint
-		if ip.IsLinkLocalUnicast() {
-			return "", &ValidationError{Field: "url", Message: "URL cannot point to link-local addresses (security risk)"}
-		}
-	}
-
-	// Reconstruct URL from validated components
-	var safeURL string
-	if port != "" {
-		safeURL = parsed.Scheme + "://" + host + ":" + port + parsed.RequestURI()
-	} else {
-		safeURL = parsed.Scheme + "://" + host + parsed.RequestURI()
-	}
-	return safeURL, nil
+	return SanitizeInternalServiceURL(rawURL)
 }
 
 // AllowedLogDirs contains directories where log files can be read

@@ -167,3 +167,126 @@ export function usePersistentSort(key, defaultValue = { field: '', dir: 'asc' })
     reset: state.reset
   }
 }
+
+/**
+ * Persistent pagination state with search and filters.
+ * Automatically saves to localStorage and provides computed offset.
+ *
+ * Usage:
+ *   const pagination = usePaginatedState('logs', { type: '', status: '' })
+ *
+ *   // Access state:
+ *   pagination.page, pagination.perPage, pagination.search, pagination.offset
+ *   pagination.filters.type, pagination.filters.status
+ *
+ *   // Update state:
+ *   pagination.setPage(2)
+ *   pagination.setSearch('error')
+ *   pagination.setFilter('type', 'dns')
+ *   pagination.resetPage() // Reset to page 1
+ *
+ * @param {string} key - localStorage key
+ * @param {Object} defaultFilters - Default filter values (optional)
+ * @param {number} defaultPerPage - Default items per page (uses settings if not provided)
+ * @returns {Object} Pagination state and methods
+ */
+export function usePaginatedState(key, defaultFilters = {}, defaultPerPage = null) {
+  const storageKey = `vpn_panel_${key}`
+
+  // Get default per page from settings
+  function getDefaultPerPage() {
+    if (defaultPerPage !== null) return defaultPerPage
+    try {
+      return parseInt(localStorage.getItem('settings_items_per_page') || '25')
+    } catch {
+      return 25
+    }
+  }
+
+  // Load initial value from storage
+  function loadFromStorage() {
+    try {
+      const stored = localStorage.getItem(storageKey)
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        return {
+          page: parsed.page || 1,
+          perPage: parsed.perPage || getDefaultPerPage(),
+          search: parsed.search || '',
+          filters: { ...defaultFilters, ...parsed.filters }
+        }
+      }
+    } catch {
+      // Ignore storage errors
+    }
+    return {
+      page: 1,
+      perPage: getDefaultPerPage(),
+      search: '',
+      filters: { ...defaultFilters }
+    }
+  }
+
+  let state = $state(loadFromStorage())
+
+  // Computed offset
+  const offset = $derived((state.page - 1) * state.perPage)
+
+  // Save to storage on changes
+  $effect(() => {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(state))
+    } catch {
+      // Ignore storage errors
+    }
+  })
+
+  function setPage(page) {
+    state.page = page
+  }
+
+  function setPerPage(perPage) {
+    state.perPage = perPage
+    state.page = 1 // Reset to first page when changing page size
+  }
+
+  function setSearch(search) {
+    state.search = search
+    state.page = 1 // Reset to first page on search
+  }
+
+  function setFilter(filterKey, value) {
+    state.filters[filterKey] = value
+    state.page = 1 // Reset to first page on filter change
+  }
+
+  function resetPage() {
+    state.page = 1
+  }
+
+  function reset() {
+    state = {
+      page: 1,
+      perPage: getDefaultPerPage(),
+      search: '',
+      filters: { ...defaultFilters }
+    }
+  }
+
+  return {
+    get page() { return state.page },
+    set page(v) { state.page = v },
+    get perPage() { return state.perPage },
+    set perPage(v) { setPerPage(v) },
+    get search() { return state.search },
+    set search(v) { setSearch(v) },
+    get filters() { return state.filters },
+    get offset() { return offset },
+    setPage,
+    setPerPage,
+    setSearch,
+    setFilter,
+    resetPage,
+    reset
+  }
+}

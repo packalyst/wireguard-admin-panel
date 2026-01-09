@@ -15,6 +15,7 @@ import (
 	"api/internal/database"
 	"api/internal/helper"
 	"api/internal/router"
+	"api/internal/settings"
 
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
@@ -229,7 +230,8 @@ func (s *Service) Login(username, password, totpCode, ipAddress, userAgent strin
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate session ID: %w", err)
 	}
-	expiresAt := time.Now().Add(24 * time.Hour) // 24 hour sessions
+	sessionHours := settings.GetSettingInt("session_timeout", 24)
+	expiresAt := time.Now().Add(time.Duration(sessionHours) * time.Hour)
 
 	_, err = s.db.Exec(
 		"INSERT INTO sessions (id, user_id, expires_at, ip_address, user_agent, last_active) VALUES (?, ?, ?, ?, ?, ?)",

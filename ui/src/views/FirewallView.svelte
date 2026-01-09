@@ -1,7 +1,8 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
   import { toast, apiGet, apiPost, apiDelete, confirm, setConfirmLoading } from '../stores/app.js'
-  import { loadState, saveState, createDebouncedSearch, getDefaultPerPage, lazyLoad } from '../stores/helpers.js'
+  import { createDebouncedSearch, lazyLoad } from '../stores/helpers.js'
+  import { usePaginatedState } from '$lib/composables/index.js'
   import { formatRelativeDate, formatTime } from '$lib/utils/format.js'
   import LoadingSpinner from '../components/LoadingSpinner.svelte'
   import EmptyState from '../components/EmptyState.svelte'
@@ -28,30 +29,9 @@
   let selectedBlockedEntries = $state([])
   let deletingSelectedEntries = $state(false)
 
-  // Load saved state from localStorage
-  const savedBlockedState = loadState('firewall_blocked')
-
-  // Blocked state
-  let blockedPage = $state(savedBlockedState.page || 1)
-  let blockedPerPage = $state(savedBlockedState.perPage || getDefaultPerPage())
-  let blockedSearch = $state(savedBlockedState.search || '')
-  let blockedTypeFilter = $state(savedBlockedState.type || '')
-  let blockedSourceFilter = $state(savedBlockedState.source || '')
-  let blockedSearchQuery = $state(savedBlockedState.search || '')
-
-  // Derived - offsets for API calls
-  const blockedOffset = $derived((blockedPage - 1) * blockedPerPage)
-
-  // Save state to localStorage
-  $effect(() => {
-    saveState('firewall_blocked', {
-      page: blockedPage,
-      perPage: blockedPerPage,
-      search: blockedSearch,
-      type: blockedTypeFilter,
-      source: blockedSourceFilter
-    })
-  })
+  // Pagination with persistent state
+  const blocked = usePaginatedState('firewall_blocked', { type: '', source: '' })
+  let blockedSearchQuery = $state(blocked.search)
 
   // Listen for WebSocket zone progress updates via custom event
   // (store-based approach misses rapid messages)
@@ -154,13 +134,13 @@
     loadingBlocked = true
     try {
       const params = new URLSearchParams({
-        limit: blockedPerPage.toString(),
-        offset: blockedOffset.toString(),
+        limit: blocked.perPage.toString(),
+        offset: blocked.offset.toString(),
         action: 'block' // Only show blocked entries (not allowed ports)
       })
-      if (blockedSearch) params.set('search', blockedSearch)
-      if (blockedTypeFilter) params.set('type', blockedTypeFilter)
-      if (blockedSourceFilter) params.set('source', blockedSourceFilter)
+      if (blocked.search) params.set('search', blocked.search)
+      if (blocked.filters.type) params.set('type', blocked.filters.type)
+      if (blocked.filters.source) params.set('source', blocked.filters.source)
 
       const res = await apiGet(`/api/fw/entries?${params}`)
       blockedEntries = res.entries || []
@@ -175,9 +155,8 @@
   }
 
   // Debounced search handlers
-  const debouncedBlockedSearch = createDebouncedSearch((value) => {
-    blockedSearch = value
-    blockedPage = 1
+  const { search: debouncedBlockedSearch, cleanup: cleanupBlockedSearch } = createDebouncedSearch((value) => {
+    blocked.setSearch(value)
     loadBlocked()
   })
 
@@ -187,23 +166,18 @@
   }
 
   function setBlockedTypeFilter(type) {
-    blockedTypeFilter = type
-    blockedPage = 1
+    blocked.setFilter('type', type)
     loadBlocked()
   }
 
   function setBlockedSourceFilter(source) {
-    blockedSourceFilter = source
-    blockedPage = 1
+    blocked.setFilter('source', source)
     loadBlocked()
   }
 
   function clearBlockedFilters() {
-    blockedSearch = ''
+    blocked.reset()
     blockedSearchQuery = ''
-    blockedTypeFilter = ''
-    blockedSourceFilter = ''
-    blockedPage = 1
     loadBlocked()
   }
 
@@ -572,7 +546,7 @@
   })
 
   onDestroy(() => {
-    // Cleanup handled by createDebouncedSearch helper
+    cleanupBlockedSearch()
   })
 </script>
 
@@ -619,7 +593,7 @@
                 />
                 {#if blockedTypes.length > 1}
                   <Select
-                    value={blockedTypeFilter}
+                    value={blocked.filters.type}
                     onchange={(e) => setBlockedTypeFilter(e.target.value)}
                     class="sm:w-32"
                   >
@@ -631,7 +605,7 @@
                 {/if}
                 {#if blockedSources.length > 1}
                   <Select
-                    value={blockedSourceFilter}
+                    value={blocked.filters.source}
                     onchange={(e) => setBlockedSourceFilter(e.target.value)}
                     class="sm:w-36"
                   >
@@ -697,7 +671,7 @@
                 <EmptyState
                   icon="shield-check"
                   title="No blocked entries"
-                  description={blockedSearch || blockedTypeFilter || blockedSourceFilter ? 'No results match your filters' : 'IPs, ranges, and countries will appear here when blocked'}
+                  description={blocked.search || blocked.filters.type || blocked.filters.source ? 'No results match your filters' : 'IPs, ranges, and countries will appear here when blocked'}
                 />
               </div>
             {:else}
@@ -821,10 +795,11 @@
               <!-- Footer -->
               <div class="data-table-footer">
                 <Pagination
-                  bind:page={blockedPage}
-                  bind:perPage={blockedPerPage}
+                  page={blocked.page}
+                  perPage={blocked.perPage}
                   total={blockedTotal}
-                  onPageChange={loadBlocked}
+                  onPageChange={(p) => { blocked.setPage(p); loadBlocked() }}
+                  onPerPageChange={(pp) => { blocked.setPerPage(pp); loadBlocked() }}
                 />
               </div>
             {/if}

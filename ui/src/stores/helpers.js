@@ -16,12 +16,18 @@ export function saveState(key, value) {
   }
 }
 
-// Debounced search helper - returns a function that debounces calls
+// Debounced search helper - returns { search, cleanup } for proper cleanup on unmount
 export function createDebouncedSearch(callback, delay = 400) {
   let timeout = null
-  return (value) => {
-    clearTimeout(timeout)
-    timeout = setTimeout(() => callback(value), delay)
+  return {
+    search: (value) => {
+      clearTimeout(timeout)
+      timeout = setTimeout(() => callback(value), delay)
+    },
+    cleanup: () => {
+      clearTimeout(timeout)
+      timeout = null
+    }
   }
 }
 

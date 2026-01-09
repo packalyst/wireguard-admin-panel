@@ -301,6 +301,7 @@
     bind:value={newUserName}
     label="Username"
     placeholder="Enter username"
+    disabled={creating}
   />
 
   {#snippet footer()}

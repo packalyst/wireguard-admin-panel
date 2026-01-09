@@ -86,6 +86,10 @@
   const prefixCheckboxProps = $derived(prefixCheckbox === true ? {} : prefixCheckbox);
   const suffixCheckboxProps = $derived(suffixCheckbox === true ? {} : suffixCheckbox);
 
+  // Normalize addon icon props (can be string or { icon, tooltip })
+  const suffixAddonIconProps = $derived(typeof suffixAddonIcon === 'string' ? { icon: suffixAddonIcon } : suffixAddonIcon);
+  const prefixAddonIconProps = $derived(typeof prefixAddonIcon === 'string' ? { icon: prefixAddonIcon } : prefixAddonIcon);
+
   // Determine wrapper type - any prefix/suffix uses input-group
   const hasInputGroup = $derived(prefixAddon || suffixAddon || prefixAddonIcon || suffixAddonIcon || prefixAddonBtn || suffixAddonBtn || prefixCheckbox || suffixCheckbox || prefixIconBtn || suffixIconBtn || prefixIcon || suffixIcon || hasPasswordToggle);
 
@@ -158,8 +162,11 @@
     <Button {...suffixAddonBtn} size={btnSize} class="kt-input-addon {addonSizeClass} kt-btn-outline" />
   {/if}
   {#if suffixAddonIcon}
-    <span class="kt-input-addon kt-input-addon-icon {addonSizeClass}">
-      <Icon name={suffixAddonIcon} size={14} />
+    <span class="kt-input-addon kt-input-addon-icon {addonSizeClass}" data-kt-tooltip={suffixAddonIconProps?.tooltip ? '' : undefined}>
+      <Icon name={suffixAddonIconProps?.icon} size={14} />
+      {#if suffixAddonIconProps?.tooltip}
+        <span data-kt-tooltip-content class="kt-tooltip hidden">{suffixAddonIconProps.tooltip}</span>
+      {/if}
     </span>
   {/if}
   {#if suffixAddon}
