@@ -15,8 +15,15 @@
 
     if (isStandalone) return
 
-    // Check if iOS
-    isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream
+    // Only show on mobile devices
+    const isMobile = /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+      || (navigator.maxTouchPoints > 0 && window.innerWidth < 768)
+
+    if (!isMobile) return
+
+    // Check if iOS (includes Chrome on iOS which uses WebKit)
+    isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
 
     // Check if dismissed recently (24h cooldown)
     const dismissed = localStorage.getItem('pwa-install-dismissed')
