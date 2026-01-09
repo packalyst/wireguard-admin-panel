@@ -199,6 +199,7 @@ prompt_yes_no() {
 }
 
 CERT_BACKUP_DIR="/usr/local/wgadmin/certs"
+TRAEFIK_MAIN_LOG="traefik/logs/traefik.log"
 
 # Backup all certificates (whole acme.json) - uses SSL_DOMAIN from .env
 backup_certificates() {
@@ -2021,9 +2022,9 @@ if [ "$SSL_ENABLED" = "true" ]; then
         sleep $CERT_INTERVAL
         CERT_ELAPSED=$((CERT_ELAPSED + CERT_INTERVAL))
 
-        # Check for certificate errors in Traefik logs
-        if [ -f "traefik/logs/traefik.log" ]; then
-            CERT_ERROR=$(grep -i "rateLimited\|acme.*error\|unable to generate a certificate" traefik/logs/traefik.log 2>/dev/null | tail -1 || true)
+        # Check for certificate errors in Traefik logs (for this specific domain)
+        if [ -f "$TRAEFIK_MAIN_LOG" ]; then
+            CERT_ERROR=$(grep -i "$SSL_DOMAIN" "$TRAEFIK_MAIN_LOG" 2>/dev/null | grep -i "rateLimited\|acme.*error\|unable to generate a certificate" | tail -1 || true)
             if [ -n "$CERT_ERROR" ]; then
                 break
             fi
@@ -2055,7 +2056,7 @@ if [ "$SSL_ENABLED" = "true" ]; then
             echo -e "${RED}║${NC}  Certificate error detected in Traefik logs.             ${RED}║${NC}"
         fi
         echo -e "${RED}║${NC}                                                            ${RED}║${NC}"
-        echo -e "${RED}║${NC}  Check: tail -f traefik/logs/traefik.log                   ${RED}║${NC}"
+        echo -e "${RED}║${NC}  Check: tail -f $TRAEFIK_MAIN_LOG                   ${RED}║${NC}"
         echo -e "${RED}╚════════════════════════════════════════════════════════════╝${NC}"
         echo ""
     elif [ "$CERT_OBTAINED" = "true" ]; then
@@ -2078,7 +2079,7 @@ if [ "$SSL_ENABLED" = "true" ]; then
         echo -e "${YELLOW}║${NC}  This may be normal if Let's Encrypt is slow.             ${YELLOW}║${NC}"
         echo -e "${YELLOW}║${NC}                                                            ${YELLOW}║${NC}"
         echo -e "${YELLOW}║${NC}  Monitor progress:                                         ${YELLOW}║${NC}"
-        echo -e "${YELLOW}║${NC}    tail -f traefik/logs/traefik.log                        ${YELLOW}║${NC}"
+        echo -e "${YELLOW}║${NC}    tail -f $TRAEFIK_MAIN_LOG                        ${YELLOW}║${NC}"
         echo -e "${YELLOW}║${NC}                                                            ${YELLOW}║${NC}"
         echo -e "${YELLOW}║${NC}  Check certificate status:                                 ${YELLOW}║${NC}"
         echo -e "${YELLOW}║${NC}    cat traefik/acme.json | jq '.letsencrypt.Certificates'  ${YELLOW}║${NC}"

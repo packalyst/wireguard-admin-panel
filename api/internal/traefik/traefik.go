@@ -1095,7 +1095,6 @@ func GetCertificates() ([]CertificateInfo, error) {
 func GetACMEError(domain string) string {
 	logPath := helper.GetEnv("TRAEFIK_MAIN_LOG")
 
-	// Read last 500 lines of log file
 	data, err := os.ReadFile(logPath)
 	if err != nil {
 		return ""
@@ -1110,23 +1109,59 @@ func GetACMEError(domain string) string {
 
 	domainLower := strings.ToLower(domain)
 	for i := len(lines) - 1; i >= startIdx; i-- {
-		line := strings.ToLower(lines[i])
-		// Check if line contains domain and is an ACME/certificate error
-		if strings.Contains(line, domainLower) &&
-			strings.Contains(line, "error") &&
-			(strings.Contains(line, "acme") || strings.Contains(line, "certificate") || strings.Contains(line, "unable to obtain")) {
+		line := lines[i]
+		lineLower := strings.ToLower(line)
 
-			// Extract error message - look for msg="..."
-			if idx := strings.Index(lines[i], "msg="); idx != -1 {
-				msg := lines[i][idx+4:]
-				// Remove quotes if present
-				msg = strings.Trim(msg, "\"")
-				// Truncate if too long
+		// Check if line contains domain and is an ACME/certificate error
+		if strings.Contains(lineLower, domainLower) &&
+			(strings.Contains(lineLower, "unable to obtain") ||
+				(strings.Contains(lineLower, "acme") && strings.Contains(lineLower, "error"))) {
+
+			// Try to extract meaningful error message
+			// Format 1: msg="..." (key=value format)
+			if idx := strings.Index(line, "msg="); idx != -1 {
+				msg := line[idx+4:]
+				if strings.HasPrefix(msg, "\"") {
+					msg = msg[1:]
+					if endIdx := strings.Index(msg, "\""); endIdx != -1 {
+						msg = msg[:endIdx]
+					}
+				}
 				if len(msg) > 200 {
 					msg = msg[:200] + "..."
 				}
 				return msg
 			}
+
+			// Format 2: "msg":"..." (JSON format)
+			if idx := strings.Index(line, "\"msg\":\""); idx != -1 {
+				msg := line[idx+7:]
+				if endIdx := strings.Index(msg, "\""); endIdx != -1 {
+					msg = msg[:endIdx]
+				}
+				if len(msg) > 200 {
+					msg = msg[:200] + "..."
+				}
+				return msg
+			}
+
+			// Format 3: error="..."
+			if idx := strings.Index(line, "error=\""); idx != -1 {
+				msg := line[idx+7:]
+				if endIdx := strings.Index(msg, "\""); endIdx != -1 {
+					msg = msg[:endIdx]
+				}
+				if len(msg) > 200 {
+					msg = msg[:200] + "..."
+				}
+				return msg
+			}
+
+			// Fallback: check for rate limit
+			if strings.Contains(lineLower, "ratelimited") || strings.Contains(lineLower, "rate limit") {
+				return "Rate limited by Let's Encrypt"
+			}
+
 			return "Certificate generation failed"
 		}
 	}
