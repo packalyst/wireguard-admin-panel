@@ -51,6 +51,26 @@ http:
       entryPoints:
         - web
 
+    # Block PWA files on non-main domains (prevent Chrome install prompt on other domains)
+    block-pwa-catchall:
+      rule: "!Host(`${SERVER_IP}`) && !Host(`${ADMIN_DOMAIN}`) && (Path(`/manifest.json`) || Path(`/sw.js`) || Path(`/icon.svg`))"
+      service: ui
+      priority: 5
+      middlewares:
+        - sentinel_drop
+      entryPoints:
+        - web
+
+    block-pwa-catchall-secure:
+      rule: "!Host(`${SERVER_IP}`) && !Host(`${ADMIN_DOMAIN}`) && (Path(`/manifest.json`) || Path(`/sw.js`) || Path(`/icon.svg`))"
+      service: ui
+      priority: 5
+      middlewares:
+        - sentinel_drop
+      entryPoints:
+        - websecure
+      tls: {}
+
     # Catchall for unmatched domains - lowest priority
     # Any domain not configured will get dropped silently
     catchall-drop:

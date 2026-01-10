@@ -463,7 +463,7 @@
                   <Icon name="world-www" size={16} />
                 </div>
                 <div class="min-w-0">
-                  <code class="font-medium text-sm text-foreground">{route.domain}</code>
+                  <a href="http://{route.domain}" target="_blank" rel="noopener" class="kt-link kt-link-underlined kt-link-dashed">{route.domain}</a>
                   {#if route.description}
                     <p class="text-[11px] text-muted-foreground truncate">{route.description}</p>
                   {/if}
@@ -557,7 +557,11 @@
                     <Badge variant="muted" size="sm">{mw.replace('@file', '')}</Badge>
                   {/each}
                   {#if (route.middlewares || []).filter(m => !m.includes('vpn-only')).length > 2}
-                    <span class="text-[10px] text-muted-foreground">+{route.middlewares.filter(m => !m.includes('vpn-only')).length - 2}</span>
+                    {@const extraMws = (route.middlewares || []).filter(m => !m.includes('vpn-only')).slice(2)}
+                    <span class="text-[10px] text-muted-foreground cursor-help" data-kt-tooltip>
+                      +{extraMws.length}
+                      <span data-kt-tooltip-content class="kt-tooltip hidden">{extraMws.map(m => m.replace('@file', '')).join(', ')}</span>
+                    </span>
                   {/if}
                 </div>
 
