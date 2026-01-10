@@ -6,6 +6,7 @@
   let show = $state(false)
   let deferredPrompt = $state(null)
   let isIOS = $state(false)
+  let isSafari = $state(false)
   let isStandalone = $state(false)
 
   onMount(() => {
@@ -24,6 +25,10 @@
     // Check if iOS (includes Chrome on iOS which uses WebKit)
     isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
       || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+
+    // Check if Safari (not Chrome/Firefox/etc on iOS)
+    const ua = navigator.userAgent
+    isSafari = isIOS && /Safari/.test(ua) && !/CriOS|FxiOS|OPiOS|EdgiOS/.test(ua)
 
     // Check if dismissed recently (24h cooldown)
     const dismissed = localStorage.getItem('pwa-install-dismissed')
@@ -87,26 +92,44 @@
       <!-- Content -->
       <div class="px-4 py-3">
         {#if isIOS}
-          <div class="flex items-start gap-3 text-xs text-muted-foreground">
-            <div class="flex flex-col items-center gap-1">
-              <div class="w-8 h-8 rounded-lg bg-muted flex items-center justify-center">
-                <Icon name="external-link" size={16} />
+          {#if isSafari}
+            <!-- Safari on iOS - can install -->
+            <p class="text-xs text-muted-foreground mb-3">
+              To install this app on your iPhone:
+            </p>
+            <div class="flex items-center gap-3 text-xs">
+              <div class="flex items-center gap-2 flex-1">
+                <div class="w-7 h-7 rounded-lg bg-primary/20 flex items-center justify-center flex-shrink-0">
+                  <Icon name="share" size={14} class="text-primary" />
+                </div>
+                <span class="text-foreground">Tap <strong>Share</strong></span>
               </div>
-              <span class="text-[10px]">1. Tap</span>
-            </div>
-            <div class="flex-1 pt-2">
-              <Icon name="chevron-right" size={14} class="text-muted-foreground/50" />
-            </div>
-            <div class="flex flex-col items-center gap-1">
-              <div class="w-8 h-8 rounded-lg bg-muted flex items-center justify-center">
-                <Icon name="plus" size={16} />
+              <Icon name="chevron-right" size={14} class="text-muted-foreground/30" />
+              <div class="flex items-center gap-2 flex-1">
+                <div class="w-7 h-7 rounded-lg bg-success/20 flex items-center justify-center flex-shrink-0">
+                  <Icon name="plus-square" size={14} class="text-success" />
+                </div>
+                <span class="text-foreground"><strong>Add to Home</strong></span>
               </div>
-              <span class="text-[10px]">2. Add</span>
             </div>
-          </div>
-          <p class="text-[11px] text-muted-foreground mt-2 text-center">
-            Tap the <strong>Share</strong> button, then <strong>"Add to Home Screen"</strong>
-          </p>
+            <p class="text-[11px] text-muted-foreground mt-3 text-center">
+              Look for the Share icon <Icon name="share" size={10} class="inline" /> in Safari's toolbar
+            </p>
+          {:else}
+            <!-- Chrome/Firefox on iOS - must switch to Safari -->
+            <div class="flex items-start gap-3">
+              <div class="w-9 h-9 rounded-lg bg-warning/20 flex items-center justify-center flex-shrink-0">
+                <Icon name="alert-triangle" size={18} class="text-warning" />
+              </div>
+              <div class="text-xs">
+                <p class="text-foreground font-medium mb-1">Open in Safari to install</p>
+                <p class="text-muted-foreground">iOS only allows app installation from Safari. Copy this URL and open it in Safari.</p>
+              </div>
+            </div>
+            <Button onclick={() => navigator.clipboard.writeText(window.location.href)} size="sm" variant="secondary" icon="copy" class="w-full mt-3">
+              Copy URL
+            </Button>
+          {/if}
         {:else}
           <p class="text-xs text-muted-foreground">
             Install for quick access, works offline, and feels like a native app.
