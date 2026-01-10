@@ -101,20 +101,20 @@
             <div class="flex items-center gap-3 text-xs">
               <div class="flex items-center gap-2 flex-1">
                 <div class="w-7 h-7 rounded-lg bg-primary/20 flex items-center justify-center flex-shrink-0">
-                  <Icon name="share-2" size={14} class="text-primary" />
+                  <Icon name="logout" size={14} class="text-primary rotate-[-90deg]" />
                 </div>
                 <span class="text-foreground">Tap <strong>Share</strong></span>
               </div>
               <Icon name="chevron-right" size={14} class="text-muted-foreground/30" />
               <div class="flex items-center gap-2 flex-1">
                 <div class="w-7 h-7 rounded-lg bg-success/20 flex items-center justify-center flex-shrink-0">
-                  <Icon name="square-plus" size={14} class="text-success" />
+                  <Icon name="plus" size={14} class="text-success" />
                 </div>
                 <span class="text-foreground"><strong>Add to Home</strong></span>
               </div>
             </div>
             <p class="text-[11px] text-muted-foreground mt-3 text-center">
-              Look for the Share icon <Icon name="share-2" size={10} class="inline" /> in Safari's toolbar
+              Tap <Icon name="logout" size={10} class="inline rotate-[-90deg]" /> in Safari's toolbar, then "Add to Home Screen"
             </p>
           {:else}
             <!-- Chrome/Firefox on iOS - must switch to Safari -->
