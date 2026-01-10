@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte'
+  import { toast } from '../stores/app.js'
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
 
@@ -100,20 +101,20 @@
             <div class="flex items-center gap-3 text-xs">
               <div class="flex items-center gap-2 flex-1">
                 <div class="w-7 h-7 rounded-lg bg-primary/20 flex items-center justify-center flex-shrink-0">
-                  <Icon name="share" size={14} class="text-primary" />
+                  <Icon name="share-2" size={14} class="text-primary" />
                 </div>
                 <span class="text-foreground">Tap <strong>Share</strong></span>
               </div>
               <Icon name="chevron-right" size={14} class="text-muted-foreground/30" />
               <div class="flex items-center gap-2 flex-1">
                 <div class="w-7 h-7 rounded-lg bg-success/20 flex items-center justify-center flex-shrink-0">
-                  <Icon name="plus-square" size={14} class="text-success" />
+                  <Icon name="square-plus" size={14} class="text-success" />
                 </div>
                 <span class="text-foreground"><strong>Add to Home</strong></span>
               </div>
             </div>
             <p class="text-[11px] text-muted-foreground mt-3 text-center">
-              Look for the Share icon <Icon name="share" size={10} class="inline" /> in Safari's toolbar
+              Look for the Share icon <Icon name="share-2" size={10} class="inline" /> in Safari's toolbar
             </p>
           {:else}
             <!-- Chrome/Firefox on iOS - must switch to Safari -->
@@ -126,7 +127,7 @@
                 <p class="text-muted-foreground">iOS only allows app installation from Safari. Copy this URL and open it in Safari.</p>
               </div>
             </div>
-            <Button onclick={() => navigator.clipboard.writeText(window.location.href)} size="sm" variant="secondary" icon="copy" class="w-full mt-3">
+            <Button onclick={() => { navigator.clipboard.writeText(window.location.href); toast('URL copied to clipboard', 'success') }} size="sm" variant="secondary" icon="copy" class="w-full mt-3">
               Copy URL
             </Button>
           {/if}
