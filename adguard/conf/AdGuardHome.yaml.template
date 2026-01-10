@@ -92,7 +92,7 @@ querylog:
   dir_path: ""
   ignored: []
   interval: ${ADGUARD_QUERYLOG_INTERVAL}
-  size_memory: 1000
+  size_memory: 1
   enabled: true
   file_enabled: true
 statistics:
