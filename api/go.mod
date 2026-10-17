@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/SherClockHolmes/webpush-go v1.4.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/ip2location/ip2location-go/v9 v9.7.0
+	github.com/ip2location/ip2location-go/v9 v9.8.0
 	github.com/mattn/go-sqlite3 v1.14.18
 	github.com/oschwald/maxminddb-golang v1.12.0
 	github.com/pquerna/otp v1.4.0
