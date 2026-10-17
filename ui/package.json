@@ -14,7 +14,7 @@
     "@sveltejs/vite-plugin-svelte": "^6.2.1",
     "rollup-plugin-visualizer": "^6.0.5",
     "svelte": "^5.43.8",
-    "vite": "^7.2.4"
+    "vite": "^8.3.4"
   },
   "dependencies": {
     "@keenthemes/ktui": "^1.0.29",
