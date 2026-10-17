@@ -21,7 +21,7 @@
     "@tailwindcss/vite": "^4.1.17",
     "leaflet": "^1.9.4",
     "marked": "^18.0.11",
-    "mermaid": "^11.17.2",
+    "mermaid": "^12.2.0",
     "tailwindcss": "^4.1.17",
     "uplot": "^1.6.32"
   }
